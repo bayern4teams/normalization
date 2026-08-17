@@ -180,6 +180,8 @@ module = [
     "lingua.*",
     "i18naddress.*",
     "clickhouse_connect.*",
+    "openpyxl.*",
+    "pymysql.*",
 ]
 ignore_missing_imports = true
 

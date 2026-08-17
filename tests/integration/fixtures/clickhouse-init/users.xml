@@ -1,0 +1,24 @@
+<!--
+  Provisions a genuinely restricted read-only ClickHouse user via the
+  `readonly` profile setting (readonly=1: the server rejects any
+  non-SELECT query for connections using this profile — enforced
+  server-side, not by our connector code). Mounted at
+  /etc/clickhouse-server/users.d/ so it merges into the default config.
+-->
+<clickhouse>
+    <profiles>
+        <readonly_profile>
+            <readonly>1</readonly>
+        </readonly_profile>
+    </profiles>
+    <users>
+        <readonly_user>
+            <password>readonly_pass</password>
+            <networks>
+                <ip>::/0</ip>
+            </networks>
+            <profile>readonly_profile</profile>
+            <quota>default</quota>
+        </readonly_user>
+    </users>
+</clickhouse>

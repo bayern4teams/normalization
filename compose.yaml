@@ -62,6 +62,11 @@ services:
       start_period: 20s
 
   # --- demo read-only source containers (integration tests / spikes only) ---
+  # Every one of these provisions a genuinely restricted `readonly_user` at
+  # the database level (not just "our connector code has no write method")
+  # via the init scripts under tests/integration/fixtures/ — see
+  # docs/adr/ADR-013-normalization-storage.md and
+  # tests/integration/test_readonly_connectors.py.
   demo-postgres:
     image: postgres:16-alpine
     environment:
@@ -70,6 +75,8 @@ services:
       POSTGRES_DB: source_demo
     ports:
       - "5434:5432"
+    volumes:
+      - ./tests/integration/fixtures/postgres-init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U source_admin -d source_demo"]
       interval: 5s
@@ -83,6 +90,8 @@ services:
       MYSQL_DATABASE: source_demo
     ports:
       - "3307:3306"
+    volumes:
+      - ./tests/integration/fixtures/mysql-init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
       interval: 5s
@@ -91,10 +100,32 @@ services:
 
   demo-mongo:
     image: mongo:7
+    environment:
+      # Root credentials are required to enable auth at all — without a
+      # root user, MongoDB runs with NO authentication and every connection
+      # (including one claiming to be "readonly_user") has full read/write
+      # access regardless of role. This is why demo-mongo previously had no
+      # meaningful read-only guarantee.
+      MONGO_INITDB_ROOT_USERNAME: source_admin
+      MONGO_INITDB_ROOT_PASSWORD: source_admin
     ports:
       - "27018:27017"
+    volumes:
+      - ./tests/integration/fixtures/mongo-init:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      test:
+        [
+          "CMD",
+          "mongosh",
+          "-u",
+          "source_admin",
+          "-p",
+          "source_admin",
+          "--authenticationDatabase",
+          "admin",
+          "--eval",
+          "db.adminCommand('ping')",
+        ]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -103,8 +134,16 @@ services:
     image: clickhouse/clickhouse-server:24.9-alpine
     ports:
       - "8124:8123"
+    volumes:
+      - ./tests/integration/fixtures/clickhouse-init:/docker-entrypoint-initdb.d:ro
+      - ./tests/integration/fixtures/clickhouse-init/users.xml:/etc/clickhouse-server/users.d/readonly_user.xml:ro
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:8123/ping"]
+      # 127.0.0.1, not localhost: on this image's Alpine/musl resolver,
+      # "localhost" resolves ::1 first and the IPv6 loopback listener does
+      # not accept connections even with listen_host set to the wildcard —
+      # confirmed empirically (M1) by testing both from inside the
+      # container. 127.0.0.1 sidesteps the resolution ambiguity entirely.
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8123/ping"]
       interval: 5s
       timeout: 3s
       retries: 10

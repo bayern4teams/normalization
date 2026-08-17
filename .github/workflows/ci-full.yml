@@ -139,31 +139,45 @@ jobs:
         run: bash services/libpostal/_data_cache/download_data.sh
         working-directory: services/libpostal/_data_cache
 
-      - name: Build libpostal sidecar image
-        run: docker compose -f compose.yaml build libpostal api
+      - name: Build all images
+        run: docker compose -f compose.yaml build
 
       - name: Bring up full stack
+        # No service names -> starts every service in compose.yaml,
+        # including the demo-postgres/mysql/mongo/clickhouse sources the
+        # read-only connector tests below need (none of them carry a
+        # `profiles:` restriction, so they're part of the default set).
         run: docker compose -f compose.yaml up -d
 
-      - name: Wait for health
+      - name: Wait for all healthchecked services to report healthy
         run: |
-          for i in $(seq 1 30); do
-            if docker compose ps --format json | grep -q '"Health":"healthy"'; then
+          # Counts healthy vs. total services carrying a healthcheck —
+          # NOT just "does at least one show up healthy", which is what an
+          # earlier version of this step did and could pass while other
+          # services (e.g. demo-mysql, api) were still starting.
+          expected=$(docker compose config --format json | python3 -c "import json,sys; c=json.load(sys.stdin); print(sum(1 for s in c['services'].values() if 'healthcheck' in s))")
+          for i in $(seq 1 60); do
+            healthy=$(docker compose ps --format json | python3 -c "import json,sys; rows=[json.loads(l) for l in sys.stdin if l.strip()]; print(sum(1 for r in rows if r.get('Health') == 'healthy'))")
+            echo "healthy=$healthy/$expected (attempt $i)"
+            if [ "$healthy" -eq "$expected" ]; then
               break
             fi
             sleep 5
           done
           docker compose ps
+          healthy=$(docker compose ps --format json | python3 -c "import json,sys; rows=[json.loads(l) for l in sys.stdin if l.strip()]; print(sum(1 for r in rows if r.get('Health') == 'healthy'))")
+          if [ "$healthy" -ne "$expected" ]; then
+            echo "::error::Only $healthy/$expected services became healthy before timeout"
+            docker compose logs --tail=100
+            exit 1
+          fi
 
       - name: Liveness smoke checks
         run: |
           curl -sf http://localhost:8081/health
           curl -sf http://localhost:8080/health
 
-      - name: Read-only connector write-attempt failure tests
-        run: uv run pytest -m integration tests/integration/test_readonly_connectors.py -q
-
-      - name: Integration test suite
+      - name: Integration test suite (includes read-only connector write-attempt checks)
         run: uv run pytest -m integration -q
 
       - name: Compose logs on failure

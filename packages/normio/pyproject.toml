@@ -3,7 +3,20 @@ name = "normio"
 version = "0.1.0"
 description = "normalization-engine :: normio"
 requires-python = ">=3.12,<3.14"
-dependencies = []
+dependencies = [
+    "normcore",
+    "pyarrow>=17.0,<18",
+    "duckdb>=1.1,<2",
+    "sqlalchemy>=2.0,<3",
+    "psycopg[binary]>=3.2,<4",
+    "pymysql>=1.1,<2",
+    "pymongo>=4.9,<5",
+    "clickhouse-connect>=0.8,<1",
+    "openpyxl>=3.1,<4",
+]
+
+[tool.uv.sources]
+normcore = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]
