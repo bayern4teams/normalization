@@ -1210,6 +1210,18 @@ requires-dist = [
 name = "normanalysis"
 version = "0.1.0"
 source = { editable = "packages/normanalysis" }
+dependencies = [
+    { name = "normcore" },
+    { name = "opentelemetry-api" },
+    { name = "opentelemetry-sdk" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "normcore", editable = "packages/normcore" },
+    { name = "opentelemetry-api", specifier = ">=1.27,<2" },
+    { name = "opentelemetry-sdk", specifier = ">=1.27,<2" },
+]
 
 [[package]]
 name = "normapi"
