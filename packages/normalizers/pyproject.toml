@@ -3,7 +3,10 @@ name = "normalizers"
 version = "0.1.0"
 description = "normalization-engine :: normalizers"
 requires-python = ">=3.12,<3.14"
-dependencies = []
+dependencies = ["normcore", "pyarrow>=17.0,<18"]
+
+[tool.uv.sources]
+normcore = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

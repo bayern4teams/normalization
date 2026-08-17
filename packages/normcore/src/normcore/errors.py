@@ -24,6 +24,20 @@ class NormalizationError(BaseModel):
     library_version: str | None = None
 
 
+class NormalizationWarning(BaseModel):
+    """A non-fatal diagnostic attached to a run or a value — e.g. "accent
+    removal creates additional collisions" (§78). Distinct from
+    NormalizationError: a warning never changes a value's status or
+    blocks the run, it only surfaces information for review (§92, §93).
+    """
+
+    field: str
+    record_ref: str | None = None
+    code: str
+    message: str
+    severity: str = "warning"
+
+
 class NormalizerFailure(Exception):
     """Raised by a Normalizer implementation when it cannot process a value.
 

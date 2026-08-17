@@ -1186,6 +1186,16 @@ provides-extras = ["dev"]
 name = "normalizers"
 version = "0.1.0"
 source = { editable = "packages/normalizers" }
+dependencies = [
+    { name = "normcore" },
+    { name = "pyarrow" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "normcore", editable = "packages/normcore" },
+    { name = "pyarrow", specifier = ">=17.0,<18" },
+]
 
 [[package]]
 name = "normanalysis"
@@ -1216,6 +1226,22 @@ source = { editable = "packages/normdict" }
 name = "normexec"
 version = "0.1.0"
 source = { editable = "packages/normexec" }
+dependencies = [
+    { name = "blake3" },
+    { name = "duckdb" },
+    { name = "normcore" },
+    { name = "polars" },
+    { name = "pyarrow" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "blake3", specifier = ">=0.4,<1" },
+    { name = "duckdb", specifier = ">=1.1,<2" },
+    { name = "normcore", editable = "packages/normcore" },
+    { name = "polars", specifier = ">=1.9,<2" },
+    { name = "pyarrow", specifier = ">=17.0,<18" },
+]
 
 [[package]]
 name = "normio"

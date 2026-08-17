@@ -121,3 +121,24 @@ class ProfileStatus(StrEnum):
     DRAFT = "DRAFT"
     ACTIVE = "ACTIVE"
     DEPRECATED = "DEPRECATED"
+
+
+class RunStatus(StrEnum):
+    """Source.txt §70 — NormalizationRun.status."""
+
+    PENDING = "PENDING"
+    RUNNING = "RUNNING"
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
+    PARTIAL = "PARTIAL"
+
+
+class OnErrorAction(StrEnum):
+    """Per-step error handling within a pipeline (distinct from the
+    field-level ErrorPolicy, which governs the field's overall outcome —
+    this governs whether a single failing STEP aborts the remaining steps
+    in that field's pipeline or is skipped so later steps still run).
+    """
+
+    ABORT_PIPELINE = "ABORT_PIPELINE"
+    SKIP_STEP = "SKIP_STEP"
