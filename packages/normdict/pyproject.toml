@@ -3,7 +3,7 @@ name = "normdict"
 version = "0.1.0"
 description = "normalization-engine :: normdict"
 requires-python = ">=3.12,<3.14"
-dependencies = []
+dependencies = ["blake3>=0.4,<1", "pydantic>=2.9,<3"]
 
 [build-system]
 requires = ["hatchling"]

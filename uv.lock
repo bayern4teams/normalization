@@ -1230,6 +1230,16 @@ source = { editable = "packages/normcore" }
 name = "normdict"
 version = "0.1.0"
 source = { editable = "packages/normdict" }
+dependencies = [
+    { name = "blake3" },
+    { name = "pydantic" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "blake3", specifier = ">=0.4,<1" },
+    { name = "pydantic", specifier = ">=2.9,<3" },
+]
 
 [[package]]
 name = "normexec"

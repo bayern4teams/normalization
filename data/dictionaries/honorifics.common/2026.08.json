@@ -1,0 +1,29 @@
+{
+  "id": "honorifics.common",
+  "version": "2026.08",
+  "locale": "en",
+  "source": "curated (M1 seed — expanded with localized equivalents in M4 per Source.txt §22)",
+  "license": "CC0-1.0",
+  "created_at": "2026-08-17T00:00:00Z",
+  "entries": {
+    "Mr": "Mr",
+    "Mr.": "Mr",
+    "Mister": "Mr",
+    "Mrs": "Mrs",
+    "Mrs.": "Mrs",
+    "Ms": "Ms",
+    "Ms.": "Ms",
+    "Miss": "Miss",
+    "Dr": "Dr",
+    "Dr.": "Dr",
+    "Doctor": "Dr",
+    "Prof": "Prof",
+    "Prof.": "Prof",
+    "Professor": "Prof",
+    "Sir": "Sir",
+    "Madam": "Madam",
+    "Rev": "Rev",
+    "Rev.": "Rev",
+    "Reverend": "Rev"
+  }
+}
