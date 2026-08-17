@@ -7,6 +7,12 @@ is the stable contract everything else is built against.
 """
 
 from normcore.context import NormalizationContext
+from normcore.contract import (
+    NORMALIZED_VALUE_ARROW_SCHEMA,
+    arrow_row_to_normalized_value,
+    normalized_value_json_schema,
+    normalized_value_to_arrow_row,
+)
 from normcore.dispatch import Dispatcher, NoNormalizerRegisteredError, NormalizerRegistry
 from normcore.enums import (
     ErrorPolicy,
@@ -42,6 +48,7 @@ from normcore.run import NormalizationRun, NormalizationRunMetrics, Normalizatio
 from normcore.trace import TraceStep
 
 __all__ = [
+    "NORMALIZED_VALUE_ARROW_SCHEMA",
     "ComponentVersionInfo",
     "Dispatcher",
     "ErrorPolicy",
@@ -74,4 +81,7 @@ __all__ = [
     "TraceStep",
     "ValidationOutcome",
     "apply_error_policy",
+    "arrow_row_to_normalized_value",
+    "normalized_value_json_schema",
+    "normalized_value_to_arrow_row",
 ]
