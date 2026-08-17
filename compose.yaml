@@ -47,6 +47,7 @@ services:
       NORM_LIBPOSTAL_URL: http://libpostal:8081
       NORM_SIDECAR_DUCKDB_PATH: /data/sidecar/catalog.duckdb
       NORM_SIDECAR_PARQUET_ROOT: /data/sidecar/parquet
+      NORM_DICTIONARIES_DIR: /app/data/dictionaries
     volumes:
       - sidecar_data:/data/sidecar
     depends_on:

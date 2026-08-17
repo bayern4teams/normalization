@@ -22,7 +22,7 @@ from normcore.rules import ComponentVersionInfo, ExplanationText, ValidationOutc
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from normcore.interfaces import StepSpec
+    from normcore.interfaces import ComponentVersion, Explanation, StepSpec, ValidationResult
 
 _VERSION = "0.1.0"
 
@@ -81,16 +81,16 @@ class PassthroughNormalizer:
             names=["original", "display", "comparison", "status"],
         )
 
-    def validate(self, value: str | None, ctx: NormalizationContext) -> ValidationOutcome:
+    def validate(self, value: str | None, ctx: NormalizationContext) -> ValidationResult:
         return ValidationOutcome(is_valid=value is not None, status="UNVALIDATED")
 
-    def explain(self, result: NormalizedValue) -> ExplanationText:
+    def explain(self, result: NormalizedValue) -> Explanation:
         return ExplanationText(
             plain_language="No transformation was applied.",
             technical="PassthroughNormalizer: identity mapping, no rules applied.",
         )
 
-    def version(self) -> ComponentVersionInfo:
+    def version(self) -> ComponentVersion:
         return ComponentVersionInfo(name=self.name, version=_VERSION)
 
     def steps(self) -> Sequence[StepSpec]:

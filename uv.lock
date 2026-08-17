@@ -1215,6 +1215,22 @@ source = { editable = "packages/normanalysis" }
 name = "normapi"
 version = "0.1.0"
 source = { editable = "packages/normapi" }
+dependencies = [
+    { name = "fastapi" },
+    { name = "normalizers" },
+    { name = "normcore" },
+    { name = "normdict" },
+    { name = "uvicorn", extra = ["standard"] },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "fastapi", specifier = ">=0.115,<1" },
+    { name = "normalizers", editable = "packages/normalizers" },
+    { name = "normcore", editable = "packages/normcore" },
+    { name = "normdict", editable = "packages/normdict" },
+    { name = "uvicorn", extras = ["standard"], specifier = ">=0.31,<1" },
+]
 
 [[package]]
 name = "normcli"

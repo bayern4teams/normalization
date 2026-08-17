@@ -23,8 +23,17 @@ if TYPE_CHECKING:
 
 
 class ComponentVersion(Protocol):
-    name: str
-    version: str
+    """Declared with `@property` (not plain attributes) so both mutable
+    and frozen/immutable concrete implementations satisfy it — mypy treats
+    a plain `name: str` Protocol attribute as requiring a *settable*
+    member, which a frozen pydantic model's read-only field cannot
+    provide even though it is structurally compatible for reading.
+    """
+
+    @property
+    def name(self) -> str: ...
+    @property
+    def version(self) -> str: ...
 
 
 class StepSpec(Protocol):
@@ -35,29 +44,46 @@ class StepSpec(Protocol):
     A step whose observed behavior contradicts its claimed class fails the
     build; this is what makes Source.txt §80's reversibility UI trustworthy
     rather than aspirational.
+
+    `@property`-based (not plain attributes) so both mutable step classes
+    and frozen pydantic models (e.g. `normcore.rules.NormalizationStep`)
+    satisfy it — see `ComponentVersion` above for why this matters.
     """
 
-    step_id: str
-    operation: str
-    claimed_reversibility: Reversibility
-    lossy: bool
+    @property
+    def step_id(self) -> str: ...
+    @property
+    def operation(self) -> str: ...
+    @property
+    def claimed_reversibility(self) -> Reversibility: ...
+    @property
+    def lossy(self) -> bool: ...
 
 
 class ValidationResult(Protocol):
-    is_valid: bool
-    status: str
-    reason: str | None
+    """`@property`-based for the same reason as `ComponentVersion` above —
+    concrete implementations are frozen pydantic models."""
+
+    @property
+    def is_valid(self) -> bool: ...
+    @property
+    def status(self) -> str: ...
+    @property
+    def reason(self) -> str | None: ...
 
 
 class Explanation(Protocol):
     """Backs the "Why did this change?" UX — Source.txt §117.
 
     `plain_language` is what a normal-mode user sees; `technical` is only
-    surfaced in expert/admin mode (§86, §88).
+    surfaced in expert/admin mode (§86, §88). `@property`-based for the
+    same reason as `ComponentVersion` above.
     """
 
-    plain_language: str
-    technical: str
+    @property
+    def plain_language(self) -> str: ...
+    @property
+    def technical(self) -> str: ...
 
 
 @runtime_checkable
