@@ -1,0 +1,46 @@
+# License allow-list enforced by scripts/check_licenses.py in ci-full and gate
+# workflows. Mirrors docs/dependency-inventory.md § Allow-list.
+#
+# Categories:
+#   allowed        - unrestricted use, including modification/vendoring
+#   allowed_unmodified_dynamic_only
+#                  - permitted ONLY as an unmodified, dynamically-imported
+#                    dependency (never vendored/patched in-tree). Currently
+#                    used for LGPL packages: pycountry, python-stdnum.
+#   denied         - build fails if this license appears anywhere in the
+#                    resolved dependency tree.
+
+[allowed]
+licenses = [
+    "MIT",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "Apache-2.0",
+    "ISC",
+    "Unlicense",
+    "CC0-1.0",
+    "Python-2.0",
+    "PSF-2.0",
+    "0BSD",
+]
+
+[allowed_unmodified_dynamic_only]
+licenses = ["LGPL-2.1-only", "LGPL-2.1-or-later", "LGPL-3.0-only", "LGPL-3.0-or-later"]
+# nameparser confirmed LGPL via PyPI classifier "GNU Library or Lesser General
+# Public License (LGPL)" as of 2.1.0 (2026-08-07) — see docs/dependency-inventory.md.
+packages = ["pycountry", "python-stdnum", "nameparser"]
+
+[denied]
+licenses = [
+    "GPL-2.0-only",
+    "GPL-2.0-or-later",
+    "GPL-3.0-only",
+    "GPL-3.0-or-later",
+    "AGPL-3.0-only",
+    "AGPL-3.0-or-later",
+    "SSPL-1.0",
+]
+# Explicitly named because they are candidates the spec (Source.txt) suggests
+# but which research (docs/normalization-tool-evaluation.md) rejected on
+# license grounds. Any reintroduction must go through ADR-015.
+explicitly_rejected_packages = ["Unidecode", "text-unidecode", "abydos"]

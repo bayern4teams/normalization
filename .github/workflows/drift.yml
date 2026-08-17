@@ -1,0 +1,73 @@
+name: drift
+
+# Nightly job satisfying Source.txt §73: detect when an upstream library,
+# ICU/Unicode/CLDR release, or dictionary source would change our
+# normalized output BEFORE we deliberately upgrade to it. Re-resolves all
+# pinned dependencies to their current latest versions into a throwaway
+# lock, runs the full golden corpus against that environment, and diffs
+# output against the corpus's committed expectations.
+
+on:
+  schedule:
+    - cron: "17 3 * * *" # 03:17 UTC daily — arbitrary offset to avoid GitHub's on-the-hour load spike
+  workflow_dispatch: {}
+
+jobs:
+  drift-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: false # deliberately do NOT use the pinned cache — we want latest
+
+      - run: uv python install 3.12
+
+      - name: Resolve latest versions into a throwaway lock (does not touch committed uv.lock)
+        run: uv sync --all-extras --upgrade
+
+      - name: Record resolved-latest env fingerprint
+        run: uv run python scripts/env_fingerprint.py --json > env-latest.json
+
+      - name: Run full golden corpus against latest-resolved environment
+        run: >
+          uv run pytest -m golden
+          --golden-report=golden-latest-results.json
+          -q --continue-on-collection-errors || true
+
+      - name: Diff against committed golden expectations
+        id: diff
+        run: |
+          uv run python -m normcli drift-diff \
+            --results golden-latest-results.json \
+            --committed tests/golden/expectations/ \
+            --env env-latest.json \
+            --out drift-report.md
+          echo "has_drift=$(uv run python -m normcli drift-diff --results golden-latest-results.json --committed tests/golden/expectations/ --env env-latest.json --check-only)" >> "$GITHUB_OUTPUT"
+
+      - name: Open issue on drift
+        if: steps.diff.outputs.has_drift == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const body = fs.readFileSync('drift-report.md', 'utf8');
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `Upstream drift detected: ${new Date().toISOString().slice(0,10)}`,
+              body,
+              labels: ['drift', 'upstream-dependency'],
+            });
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: drift-report-${{ github.run_id }}
+          path: |
+            drift-report.md
+            env-latest.json
+            golden-latest-results.json

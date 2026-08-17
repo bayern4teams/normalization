@@ -1,0 +1,43 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+.venv/
+venv/
+.uv/
+uv.lock.tmp
+
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.hypothesis/
+htmlcov/
+.coverage
+.coverage.*
+coverage.xml
+
+node_modules/
+dist/
+build/
+ui/.vite/
+
+data/dictionaries/**/*.local.json
+out/
+*.parquet
+!tests/**/*.parquet
+
+# libpostal model data — large binaries fetched by
+# services/libpostal/_data_cache/download_data.sh, never committed.
+# See docs/adr/ADR-005-address-normalization.md for why this is
+# pre-fetched on the host rather than downloaded during `docker build`.
+services/libpostal/_data_cache/*.tar.gz
+services/libpostal/_data_cache/*.log
+
+.env
+.env.*
+!.env.example
+
+*.log
+
+.DS_Store
+Thumbs.db

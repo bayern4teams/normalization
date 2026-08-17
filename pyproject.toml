@@ -1,0 +1,196 @@
+[project]
+name = "normalization-engine"
+version = "0.1.0"
+description = "Data Normalization & Standardization Engine for the Entity Resolution platform (upstream of Data Discovery and Splink)."
+readme = "README.md"
+requires-python = ">=3.12,<3.14"
+license = { text = "Proprietary" }
+
+dependencies = [
+    # --- core / contracts ---
+    "pydantic>=2.9,<3",
+    "pydantic-settings>=2.5,<3",
+    "blake3>=0.4,<1",
+    "xxhash>=3.5,<4",
+    "structlog>=24.4,<25",
+    "opentelemetry-api>=1.27,<2",
+    "opentelemetry-sdk>=1.27,<2",
+
+    # --- unicode / text ---
+    "PyICU>=2.14,<3",
+    "ftfy>=6.3,<7",
+    "charset-normalizer>=3.4,<4",
+    "anyascii>=0.3.2,<1",
+    "regex>=2024.9.11",
+
+    # --- names / phonetics ---
+    "nameparser>=2.1.0,<3",  # LGPL — unmodified/dynamic-import only, see scripts/license_policy.toml
+    "jellyfish>=1.1,<2",
+
+    # --- company ---
+    "cleanco>=2.3,<3",
+
+    # --- phone / email ---
+    "phonenumbers>=8.13,<9",
+    "email-validator>=2.2,<3",
+
+    # --- dates ---
+    "dateparser>=1.4.2,<2",
+    "python-dateutil>=2.9,<3",
+    "ciso8601>=2.3,<3",
+
+    # --- country / language / locale ---
+    "pycountry>=24.6,<25",
+    "Babel>=2.16,<3",
+    "lingua-language-detector>=1.4,<2",
+
+    # --- identifiers ---
+    "python-stdnum>=1.20,<2",
+
+    # --- numeric / currency / unit ---
+    "Pint>=0.24,<1",
+
+    # --- fuzzy (analysis only, never core normalization) ---
+    "rapidfuzz>=3.10,<4",
+
+    # --- address ---
+    "google-i18n-address>=3,<4",
+    "httpx>=0.27,<1",  # libpostal sidecar client
+
+    # --- batch execution ---
+    "polars>=1.9,<2",
+    "duckdb>=1.1,<2",
+    "pyarrow>=17.0,<18",
+
+    # --- api ---
+    "fastapi>=0.115,<1",
+    "uvicorn[standard]>=0.31,<1",
+    "sqlalchemy>=2.0,<3",
+    "asyncpg>=0.29,<1",
+    "alembic>=1.13,<2",
+
+    # --- connectors ---
+    "psycopg[binary]>=3.2,<4",
+    "pymysql>=1.1,<2",
+    "pymongo>=4.9,<5",
+    "clickhouse-connect>=0.8,<1",
+
+    # --- workspace packages (editable) ---
+    "normcore",
+    "normalizers",
+    "normdict",
+    "normexec",
+    "normio",
+    "normanalysis",
+    "normapi",
+    "normcli",
+]
+
+[tool.uv.sources]
+# PyICU has no official PyPI wheels for any platform (sdist only, requires
+# system ICU + pkg-config at build time). On Windows there is no pkg-config/
+# icu-config toolchain by default, so we pull cgohlke's prebuilt wheels
+# directly (see docs/adr/ADR-001-unicode-strategy.md). On Linux/macOS the
+# sdist builds fine once `libicu-dev`/`pkg-config` (or `icu4c`) are installed
+# — see .github/workflows/ci-full.yml's apt-get step and README's dev setup.
+pyicu = [
+    { url = "https://github.com/cgohlke/pyicu-build/releases/download/v2.16.2/pyicu-2.16.2-cp312-cp312-win_amd64.whl", marker = "sys_platform == 'win32' and python_full_version >= '3.12' and python_full_version < '3.13'" },
+    { url = "https://github.com/cgohlke/pyicu-build/releases/download/v2.16.2/pyicu-2.16.2-cp313-cp313-win_amd64.whl", marker = "sys_platform == 'win32' and python_full_version >= '3.13' and python_full_version < '3.14'" },
+]
+normcore = { workspace = true }
+normalizers = { workspace = true }
+normdict = { workspace = true }
+normexec = { workspace = true }
+normio = { workspace = true }
+normanalysis = { workspace = true }
+normapi = { workspace = true }
+normcli = { workspace = true }
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3,<9",
+    "pytest-cov>=5.0,<6",
+    "pytest-asyncio>=0.24,<1",
+    "pytest-benchmark>=4.0,<5",
+    "hypothesis>=6.112,<7",
+    "mypy>=1.11,<2",
+    "ruff>=0.6,<1",
+    "mutmut>=3.2,<4",
+    "pip-audit>=2.7,<3",
+    "playwright>=1.47,<2",
+    "types-python-dateutil",
+]
+
+[tool.uv]
+package = false # root is a virtual umbrella project — no source of its own, just aggregates workspace members
+
+[tool.uv.workspace]
+members = ["packages/*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["packages", "tests", "scripts", "spikes"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "C4", "SIM", "PL", "RUF"]
+ignore = ["PLR0913", "PLR2004"]
+
+[tool.ruff.lint.per-file-ignores]
+# spikes/ are throwaway M0 scripts proving risky integrations work (see
+# docs/normalization-architecture.md §3) — not shipped gate deliverables.
+# They intentionally print long explanatory lines and, for the confusables
+# spike specifically, contain deliberate look-alike Unicode characters
+# (Cyrillic 'а' substituted for Latin 'a') as the actual subject under test.
+"spikes/*" = ["E501", "RUF001", "RUF002", "RUF003", "PLW0603"]
+# scripts/env_fingerprint.py imports icu/phonenumbers lazily and optionally
+# inside try/except ImportError blocks — these are capability probes, not
+# structural imports, and must not fail the module at import time.
+"scripts/env_fingerprint.py" = ["PLC0415"]
+# tests/unit/test_env_fingerprint.py manipulates sys.path to import the
+# scripts/ directory as a module before importing from it — the import must
+# come after the path mutation.
+"tests/unit/test_env_fingerprint.py" = ["PLC0415"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+namespace_packages = true
+explicit_package_bases = true
+mypy_path = "packages/normcore/src:packages/normalizers/src:packages/normdict/src:packages/normexec/src:packages/normio/src:packages/normanalysis/src:packages/normapi/src:packages/normcli/src"
+plugins = ["pydantic.mypy"]
+
+# Third-party libraries with no type stubs / py.typed marker as of M0.
+# Re-check at each milestone gate — several of these (phonenumbers,
+# dateparser) have improved stub coverage over time; remove entries once
+# upstream ships py.typed.
+[[tool.mypy.overrides]]
+module = [
+    "pyarrow.*",
+    "icu.*",
+    "postal.*",
+    "dateparser.*",
+    "cleanco.*",
+    "jellyfish.*",
+    "nameparser.*",
+    "stdnum.*",
+    "ftfy.*",
+    "anyascii.*",
+    "charset_normalizer.*",
+    "lingua.*",
+    "i18naddress.*",
+    "clickhouse_connect.*",
+]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+markers = [
+    "unit: fast isolated unit tests",
+    "golden: golden/regression corpus tests",
+    "property: hypothesis property tests (idempotency, determinism)",
+    "contract: JSON Schema / Arrow schema conformance tests",
+    "integration: requires docker compose services",
+    "e2e: full end-to-end UI/API flows",
+    "bench: performance benchmarks",
+]
+testpaths = ["tests"]

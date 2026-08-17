@@ -1,0 +1,213 @@
+name: gate
+
+# The heavyweight milestone gate. Runs everything in ci-full PLUS:
+# benchmarks vs. the recorded baseline, byte-identical determinism replay,
+# full idempotency corpus, mutation testing (from M8), E2E, SBOM generation,
+# and verification-pack scaffolding. Blocks on the PRECEDING milestone's
+# signed sign-off (scripts/check_signoff.py) before anything else runs.
+#
+# Trigger: manual dispatch naming the milestone, or push to a milestone/*
+# branch. Target: under 90 minutes.
+
+on:
+  workflow_dispatch:
+    inputs:
+      milestone:
+        description: "Milestone being gated (e.g. M0, M1, ... M8)"
+        required: true
+        type: choice
+        options: [M0, M1, M2, M3, M4, M5, M6, M7, M8]
+  push:
+    branches:
+      - "milestone/**"
+
+concurrency:
+  group: gate-${{ github.ref }}
+  cancel-in-progress: false # never cancel a gate run mid-flight
+
+jobs:
+  signoff-precondition:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      milestone: ${{ steps.resolve.outputs.milestone }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history needed for commit-ancestry check
+
+      - id: resolve
+        run: |
+          if [ -n "${{ github.event.inputs.milestone }}" ]; then
+            echo "milestone=${{ github.event.inputs.milestone }}" >> "$GITHUB_OUTPUT"
+          else
+            # derive from branch name milestone/M<n>-*
+            M=$(echo "${{ github.ref_name }}" | grep -oE 'M[0-9]+' | head -1)
+            echo "milestone=$M" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+      - run: uv python install 3.12
+      - run: uv sync --all-extras
+
+      - name: Check preceding milestone sign-off
+        run: >
+          uv run python scripts/check_signoff.py
+          --milestone ${{ steps.resolve.outputs.milestone }}
+
+  full-suite:
+    needs: signoff-precondition
+    uses: ./.github/workflows/ci-full.yml
+
+  benchmarks:
+    needs: signoff-precondition
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+      - run: uv python install 3.12
+      - run: uv sync --all-extras
+
+      - name: Run benchmark suite
+        run: uv run pytest -m bench --benchmark-json=bench-results.json -q
+
+      - name: Compare against recorded baseline (fail on >10% throughput / >15% p95 regression)
+        run: >
+          uv run python -m normcli bench-compare
+          --current bench-results.json
+          --baseline tests/bench/baseline.json
+          --max-throughput-regression 0.10
+          --max-p95-regression 0.15
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bench-results-${{ needs.signoff-precondition.outputs.milestone }}
+          path: bench-results.json
+
+  determinism-replay:
+    needs: signoff-precondition
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+      - run: uv python install 3.12
+      - run: uv sync --all-extras
+
+      - name: Cache libpostal model data
+        id: libpostal-data-cache
+        uses: actions/cache@v4
+        with:
+          path: services/libpostal/_data_cache/*.tar.gz
+          key: libpostal-data-v1.0.0-${{ hashFiles('services/libpostal/_data_cache/download_data.sh') }}
+
+      - name: Pre-fetch libpostal model data (see ADR-005)
+        if: steps.libpostal-data-cache.outputs.cache-hit != 'true'
+        run: bash services/libpostal/_data_cache/download_data.sh
+        working-directory: services/libpostal/_data_cache
+
+      - run: docker compose up -d
+      - run: sleep 15
+
+      - name: Run demo dataset twice in separate processes, byte-compare
+        run: |
+          uv run python -m normcli run --profile demo --source demo_pg --out ./out/run1
+          uv run python -m normcli run --profile demo --source demo_pg --out ./out/run2
+          uv run python -m normcli diff ./out/run1 ./out/run2 --require-identical
+
+      - name: Full idempotency corpus
+        run: uv run pytest -m property tests/property/test_idempotency.py -q --hypothesis-seed=0
+
+      - run: docker compose down -v
+        if: always()
+
+  mutation-testing:
+    needs: signoff-precondition
+    if: >
+      needs.signoff-precondition.outputs.milestone == 'M8'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+      - run: uv python install 3.12
+      - run: uv sync --all-extras
+      - name: mutmut on normcore + normalizers
+        run: |
+          uv run mutmut run --paths-to-mutate packages/normcore/src,packages/normalizers/src || true
+          uv run mutmut results
+          uv run python -m normcli mutation-score-gate --min-score 0.75
+
+  e2e:
+    needs: signoff-precondition
+    if: >
+      contains(fromJSON('["M7","M8"]'), needs.signoff-precondition.outputs.milestone)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+      - run: uv python install 3.12
+      - run: uv sync --all-extras
+
+      - name: Cache libpostal model data
+        id: libpostal-data-cache
+        uses: actions/cache@v4
+        with:
+          path: services/libpostal/_data_cache/*.tar.gz
+          key: libpostal-data-v1.0.0-${{ hashFiles('services/libpostal/_data_cache/download_data.sh') }}
+
+      - name: Pre-fetch libpostal model data (see ADR-005)
+        if: steps.libpostal-data-cache.outputs.cache-hit != 'true'
+        run: bash services/libpostal/_data_cache/download_data.sh
+        working-directory: services/libpostal/_data_cache
+
+      - run: docker compose up -d --build
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+      - run: npm --prefix ui ci
+      - run: npx --prefix ui playwright install --with-deps chromium
+      - run: npm --prefix ui run build
+      - run: npm --prefix ui run test:e2e
+      - run: docker compose down -v
+        if: always()
+
+  sbom-and-pack:
+    needs: [signoff-precondition, full-suite, benchmarks, determinism-replay]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+      - run: uv python install 3.12
+      - run: uv sync --all-extras
+
+      - name: Generate SBOM
+        run: uv run python -m normcli sbom --out sbom-${{ needs.signoff-precondition.outputs.milestone }}.json
+
+      - name: Scaffold verification pack (human fills in the sign-off block)
+        run: >
+          uv run python -m normcli gate
+          --milestone ${{ needs.signoff-precondition.outputs.milestone }}
+          --emit docs/verification/${{ needs.signoff-precondition.outputs.milestone }}-verification-pack.md
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gate-artifacts-${{ needs.signoff-precondition.outputs.milestone }}
+          path: |
+            sbom-*.json
+            docs/verification/*-verification-pack.md

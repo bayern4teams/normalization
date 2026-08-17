@@ -1,0 +1,4070 @@
+You are a senior staff-level data architect, data engineer, data quality engineer, NLP/text-processing engineer, database engineer, backend engineer, frontend engineer, UX engineer, and production software architect.
+
+You are building the DATA NORMALIZATION LAYER for a production-grade Entity Resolution platform.
+
+IMPORTANT:
+
+This component runs BEFORE the previously designed:
+
+Data Discovery & Entity Context Engine
+
+and therefore BEFORE:
+
+- schema discovery
+- profiling used for discovery
+- key discovery
+- relationship discovery
+- schema matching
+- graph construction
+- entity extraction
+- canonical matching dataset construction
+- Splink
+
+The final pipeline is:
+
+RAW USER DATABASES
+        ↓
+NORMALIZATION ENGINE        ← CURRENT SCOPE
+        ↓
+DATA DISCOVERY / ENTITY CONTEXT ENGINE
+        ↓
+ENTITY-SCOPED CANONICAL DATASET
+        ↓
+SPLINK
+
+DO NOT implement the Data Discovery Engine.
+DO NOT implement Splink.
+
+Your job is to implement the best possible production-grade Data Normalization & Standardization Engine.
+
+============================================================
+0. MOST IMPORTANT DESIGN PRINCIPLE
+============================================================
+
+NORMALIZATION MUST NOT MEAN:
+
+"lowercase everything, remove punctuation, trim spaces"
+
+That is insufficient and dangerous.
+
+Normalization must be:
+
+- field-aware
+- semantic
+- locale-aware
+- deterministic where possible
+- lossless by default
+- reversible where practical
+- versioned
+- explainable
+- auditable
+- configurable
+- reproducible
+- scalable
+- safe for entity resolution
+
+The system must distinguish:
+
+1. Raw value
+2. Repaired value
+3. Canonical semantic value
+4. Search/comparison normalization
+5. Optional lossy/transliterated value
+6. Derived structured components
+
+Never collapse these into one field.
+
+============================================================
+1. ABSOLUTE DATA PRESERVATION RULE
+============================================================
+
+NEVER overwrite raw source data.
+
+For every normalized field preserve:
+
+original_value
+
+and produce one or more:
+
+normalized_value
+comparison_value
+search_value
+ascii_value
+parsed_value
+structured_value
+validation_status
+normalization_status
+normalization_version
+rule_trace
+
+Example:
+
+original:
+" José  García, Jr. "
+
+display_normalized:
+"José García, Jr."
+
+comparison_normalized:
+"jose garcia jr"
+
+ascii_transliterated:
+"jose garcia jr"
+
+parsed:
+
+first_name:
+José
+
+last_name:
+García
+
+suffix:
+Jr.
+
+Every transformation must be inspectable.
+
+============================================================
+2. MULTI-VIEW NORMALIZATION
+============================================================
+
+DO NOT create one universal normalized column.
+
+Create explicit normalization views:
+
+A. DISPLAY_NORMALIZED
+Safe human-readable canonical representation.
+
+B. COMPARISON_NORMALIZED
+Designed for equality/fuzzy comparison.
+
+C. SEARCH_NORMALIZED
+Designed for lookup/search.
+
+D. ASCII_NORMALIZED
+Optional lossy transliteration.
+
+E. STRUCTURED_NORMALIZED
+Parsed fields/components.
+
+F. VALIDATED_VALUE
+Value after semantic validation.
+
+G. DERIVED_FEATURES
+Additional deterministic fields.
+
+Example:
+
+email:
+original
+display
+comparison
+domain
+local_part
+ascii/domain normalized
+validation
+
+phone:
+original
+comparison = E.164 where possible
+country_code
+national_number
+extension
+is_possible
+is_valid
+region
+
+address:
+original
+display normalized
+libpostal parsed components
+search representation
+optional expansions
+
+============================================================
+3. OPEN-SOURCE-FIRST REQUIREMENT
+============================================================
+
+Do NOT implement specialized normalization logic from scratch if a mature open-source library already provides the required functionality.
+
+Before implementing any component:
+
+1. Search for existing open-source tools.
+2. Read official repository.
+3. Read official documentation.
+4. Read source code relevant to the required functionality.
+5. Check release activity.
+6. Check license.
+7. Check supported languages/locales.
+8. Check known limitations.
+9. Check performance.
+10. Check Python/runtime compatibility.
+11. Check security implications.
+12. Check whether it can operate in batch.
+13. Check whether it can operate deterministically.
+14. Check whether it supports our required metadata/traceability.
+15. Decide whether to reuse, wrap, fork, or implement custom logic.
+
+DO NOT blindly install every candidate library.
+
+Create a small, well-defined normalization stack.
+
+============================================================
+4. MANDATORY RESEARCH PHASE
+============================================================
+
+Before coding, investigate the following projects in depth.
+
+Do NOT trust descriptions in this prompt as authoritative.
+
+Use the official repositories/documentation as the source of truth.
+
+------------------------------------------------------------
+4.1 ICU / Unicode
+------------------------------------------------------------
+
+Official:
+
+https://github.com/unicode-org/icu
+
+Documentation:
+
+https://unicode-org.github.io/icu/
+
+Investigate:
+
+- Unicode normalization
+- NFC
+- NFD
+- NFKC
+- NFKD
+- case mapping
+- case folding
+- locale-aware transforms
+- transliteration
+- Unicode properties
+- script detection
+- grapheme handling
+- confusable handling where appropriate
+- locale-aware behavior
+
+ICU must be the primary reference for robust international text handling.
+
+Do NOT replace Unicode-aware processing with ASCII-only regexes.
+
+------------------------------------------------------------
+4.2 ftfy
+------------------------------------------------------------
+
+Official repository:
+
+https://github.com/rspeer/python-ftfy
+
+Official docs:
+
+https://ftfy.readthedocs.io/
+
+Investigate use for:
+
+- mojibake
+- broken Unicode
+- bad decoding artifacts
+- quote corruption
+- text repair
+
+Use ftfy only where the input actually looks corrupted.
+
+Do NOT blindly run aggressive text repair on every string.
+
+The normalization system should detect/record when text repair was applied.
+
+------------------------------------------------------------
+4.3 libpostal
+------------------------------------------------------------
+
+Official repository:
+
+https://github.com/openvenues/libpostal
+
+Investigate:
+
+- international address parsing
+- address normalization
+- address expansion
+- component extraction
+- language handling
+- parser model
+- performance
+- memory requirements
+- deployment requirements
+
+Use libpostal for address processing if it proves suitable.
+
+Do NOT implement a global address parser from scratch.
+
+Be aware that address normalization is inherently ambiguous.
+
+Preserve:
+
+original address
+parsed components
+normalized representation
+optional expansions
+
+Do NOT collapse all address variants into one potentially destructive string.
+
+------------------------------------------------------------
+4.4 python-phonenumbers / libphonenumber
+------------------------------------------------------------
+
+Official repository:
+
+https://github.com/daviddrysdale/python-phonenumbers
+
+Upstream:
+
+https://github.com/google/libphonenumber
+
+Investigate:
+
+- parsing
+- country/region context
+- E.164
+- international formatting
+- national formatting
+- validation
+- possible number
+- valid number
+- extensions
+- metadata
+- carrier/timezone if needed
+- ambiguous local numbers
+
+Phone normalization must NEVER be based on:
+
+"remove all non-digits and keep the last 10 digits"
+
+unless explicitly configured for a specific domain.
+
+Use libphonenumber semantics.
+
+If country context is unknown, do not pretend it is known.
+
+Support:
+
+- source country
+- inferred country
+- ambiguity state
+
+------------------------------------------------------------
+4.5 email-validator
+------------------------------------------------------------
+
+Official repository:
+
+https://github.com/JoshData/python-email-validator
+
+Investigate:
+
+- syntax validation
+- normalization
+- internationalized domains
+- internationalized local parts
+- parsing
+- normalization behavior
+- deliverability checks
+- IDN
+- Unicode safety
+- domain normalization
+
+IMPORTANT:
+
+Email normalization must distinguish:
+
+1. syntactic normalization
+2. domain normalization
+3. provider-specific semantics
+
+DO NOT invent provider-specific rules.
+
+For example:
+
+DO NOT automatically remove dots from Gmail local parts.
+
+DO NOT automatically remove plus tags.
+
+Such behavior is provider-specific and can cause false merges.
+
+Only enable provider-specific transformations with explicit configuration and evidence.
+
+------------------------------------------------------------
+4.6 dateparser
+------------------------------------------------------------
+
+Official:
+
+https://github.com/scrapinghub/dateparser
+
+Investigate:
+
+- multilingual dates
+- locale detection
+- timestamps
+- timezone handling
+- relative dates
+- ambiguous dates
+- non-Gregorian calendars
+- parser settings
+- false-positive behavior
+
+Use dateparser where appropriate.
+
+BUT:
+
+Date parsing must be conservative.
+
+"01/02/03" must not silently become an arbitrary date without locale/context.
+
+Record:
+
+parsed_date
+source_locale
+assumption
+confidence
+ambiguity
+
+------------------------------------------------------------
+4.7 python-nameparser
+------------------------------------------------------------
+
+Official:
+
+https://github.com/derek73/python-nameparser
+
+Investigate:
+
+- title
+- first
+- middle
+- last
+- suffix
+- nickname
+- parsing behavior
+- language/format limitations
+
+Use it as a parsing component where appropriate.
+
+Do not assume Western name parsing works universally.
+
+The architecture must allow alternative locale-specific strategies.
+
+------------------------------------------------------------
+4.8 cleanco
+------------------------------------------------------------
+
+Official/package source:
+
+https://pypi.org/project/cleanco/
+
+Investigate:
+
+- company suffix removal
+- company type detection
+- jurisdiction hints
+- custom terms
+- limitations
+- false positives
+
+Potential usage:
+
+"Acme Corporation"
+→ "Acme"
+
+But do NOT blindly remove tokens that happen to resemble legal suffixes.
+
+Example:
+
+"The Limited"
+must not automatically become:
+"The"
+
+Company-name normalization must be conservative.
+
+============================================================
+5. ADDITIONAL LIBRARIES TO EVALUATE
+============================================================
+
+Investigate and compare:
+
+RapidFuzz
+https://github.com/rapidfuzz/RapidFuzz
+
+pycountry
+https://github.com/pycountry/pycountry
+
+Pint
+https://github.com/hgrecco/pint
+
+Unidecode
+https://github.com/avian2/unidecode
+
+OpenRefine
+https://github.com/OpenRefine/OpenRefine
+
+wordfreq
+https://github.com/rspeer/wordfreq
+
+Awesome Entity Resolution
+https://github.com/OlivierBinette/Awesome-Entity-Resolution
+
+Do NOT assume every one of these should become a dependency.
+
+Evaluate each one.
+
+For example:
+
+RapidFuzz may be useful for validation/analysis or derived comparison keys, but this normalization layer must not accidentally become a record-linkage engine.
+
+Unidecode may be useful for optional ASCII/transliteration fields, but its output is lossy and must never replace the primary Unicode representation.
+
+pycountry can help canonicalize ISO country/language/currency/script codes.
+
+Pint may help normalize physical quantities and units.
+
+OpenRefine can serve as a reference for interactive cleaning UX and reconciliation workflows; do not necessarily embed OpenRefine.
+
+wordfreq may help language-aware diagnostics in certain contexts, but do not treat its data as an authoritative current dictionary.
+
+============================================================
+6. TOOL EVALUATION DOCUMENT
+============================================================
+
+Before implementation create:
+
+/docs/normalization-tool-evaluation.md
+
+For every library evaluate:
+
+- capability
+- supported languages
+- supported locales
+- accuracy characteristics
+- limitations
+- performance
+- memory
+- license
+- maintenance
+- API
+- batch support
+- deterministic behavior
+- suitability for production
+- suitability for our use case
+- whether to integrate
+- whether to wrap
+- whether to avoid
+- fallback strategy
+
+Create a matrix:
+
+Capability
+Preferred tool
+Secondary tool
+Why
+Limitations
+Custom logic required
+
+============================================================
+7. NORMALIZATION DOMAIN MODEL
+============================================================
+
+Create explicit normalization domain objects.
+
+At minimum:
+
+NormalizationProfile
+NormalizationRule
+NormalizationPipeline
+NormalizationStep
+FieldNormalizationConfig
+NormalizedValue
+NormalizationResult
+NormalizationTrace
+NormalizationVersion
+NormalizationRun
+NormalizationError
+NormalizationWarning
+FieldSemanticType
+
+Suggested conceptual model:
+
+NormalizationProfile
+
+    id
+    name
+    version
+    description
+    status
+    locale_policy
+    default_operations
+    created_at
+    updated_at
+
+NormalizationRule
+
+    id
+    name
+    field_type
+    operation
+    parameters
+    priority
+    enabled
+
+NormalizationResult
+
+    original_value
+    repaired_value
+    display_value
+    comparison_value
+    search_value
+    ascii_value
+    structured_value
+    status
+    confidence
+    warnings
+    trace
+
+============================================================
+8. RAW DATA MUST REMAIN IMMUTABLE
+============================================================
+
+Never update source database values.
+
+The normalization engine should operate:
+
+- read-only
+- sidecar
+- staging
+- derived-column
+- materialized-view
+- external normalization store
+
+depending on the source architecture.
+
+Preferred output:
+
+source record
++
+normalized derivatives
+
+Do NOT mutate customer source systems.
+
+============================================================
+9. NORMALIZATION PIPELINE ARCHITECTURE
+============================================================
+
+Normalization is a pipeline.
+
+Example:
+
+RAW
+ ↓
+Decode
+ ↓
+Unicode Repair
+ ↓
+Unicode Normalization
+ ↓
+Whitespace Normalization
+ ↓
+Locale-Aware Case Mapping
+ ↓
+Punctuation Policy
+ ↓
+Field-Specific Parser
+ ↓
+Semantic Standardization
+ ↓
+Canonical Representation
+ ↓
+Optional Transliteration
+ ↓
+Validation
+ ↓
+Derived Variants
+ ↓
+Trace / Audit
+
+The exact pipeline must depend on field semantics.
+
+Do NOT apply the same pipeline to:
+
+name
+phone
+email
+address
+date
+amount
+identifier
+
+============================================================
+10. GENERAL TEXT NORMALIZATION
+============================================================
+
+Implement a safe baseline for generic strings.
+
+Potential steps:
+
+- Unicode decoding correctness
+- ftfy repair when evidence indicates mojibake
+- Unicode normalization
+- whitespace normalization
+- control-character handling
+- line-break normalization
+- zero-width character handling
+- non-printing character handling
+- quote normalization where safe
+- dash/hyphen normalization where safe
+- punctuation policy
+- case folding where appropriate
+
+But:
+
+DO NOT blindly remove punctuation.
+
+DO NOT blindly strip accents.
+
+DO NOT blindly transliterate.
+
+DO NOT blindly lowercase.
+
+Every operation must be field-profile dependent.
+
+============================================================
+11. UNICODE POLICY
+============================================================
+
+Define a Unicode strategy.
+
+Support:
+
+NFC
+NFD
+NFKC
+NFKD
+
+Default policy should be conservative.
+
+Document when each normalization form is used.
+
+Be careful:
+
+NFKC is compatibility normalization and can change distinctions.
+
+Do not automatically use NFKC on every identifier without testing.
+
+Keep original Unicode representation.
+
+============================================================
+12. CASE NORMALIZATION
+============================================================
+
+Support:
+
+lowercase
+uppercase
+Unicode casefold
+locale-aware transformations where required
+
+Default:
+
+casefold for comparison-oriented general text where semantically safe.
+
+Do not force lowercase on:
+
+case-sensitive identifiers
+password-like fields
+codes where case matters
+provider-specific identifiers
+
+Store:
+
+original
+case-normalized
+
+============================================================
+13. WHITESPACE NORMALIZATION
+============================================================
+
+Normalize:
+
+- repeated spaces
+- tabs
+- line breaks
+- leading/trailing whitespace
+- non-breaking spaces
+- zero-width spaces
+
+Example:
+
+"  John   Smith "
+→
+"John Smith"
+
+Comparison representation:
+
+"john smith"
+
+Record every transformation.
+
+============================================================
+14. PUNCTUATION NORMALIZATION
+============================================================
+
+Support field-specific policies.
+
+Example:
+
+NAME:
+
+"Smith, Jr."
+may become:
+"Smith Jr"
+
+but retain structured suffix separately.
+
+ADDRESS:
+
+"10-12 Baker St."
+must not necessarily become:
+"1012 Baker St"
+
+PHONE:
+
+"+44 (0)20 1234 5678"
+
+must use phone parser, not generic punctuation stripping.
+
+EMAIL:
+
+"john.smith@example.com"
+
+must use email semantics.
+
+============================================================
+15. DIACRITICS / ACCENTS
+============================================================
+
+Never make accent stripping the universal default.
+
+Preserve:
+
+José
+García
+François
+Müller
+
+as Unicode.
+
+Create optional comparison variant:
+
+Jose
+Garcia
+Francois
+Muller
+
+when appropriate.
+
+The system should expose:
+
+accent_preserved
+accent_stripped
+
+as separate representations.
+
+============================================================
+16. TRANSLITERATION
+============================================================
+
+Support optional transliteration.
+
+Example:
+
+José García
+→
+jose garcia
+
+For non-Latin scripts:
+
+consider transliteration variants only when useful.
+
+IMPORTANT:
+
+ASCII transliteration is lossy.
+
+Never replace original Unicode with transliterated output.
+
+The Unidecode documentation explicitly warns that transliteration is not a substitute for proper Unicode support.
+
+============================================================
+17. CONFUSABLE / LOOK-ALIKE HANDLING
+============================================================
+
+Investigate Unicode confusables.
+
+Examples:
+
+Latin A
+Cyrillic А
+
+Latin O
+Greek Ο
+
+These can cause identifier confusion.
+
+Implement detection carefully.
+
+Do NOT automatically convert every confusable to another character.
+
+Provide:
+
+confusable_detected
+confusable_count
+confusable_warning
+
+and optional comparison-safe representation.
+
+============================================================
+18. CONTROL CHARACTERS
+============================================================
+
+Detect:
+
+- null characters
+- BOM
+- zero-width joiners
+- zero-width non-joiners
+- soft hyphens
+- invisible formatting characters
+
+Remove only where safe.
+
+Always trace the operation.
+
+============================================================
+19. GENERIC STRING DERIVATIVES
+============================================================
+
+Potential derived representations:
+
+original
+trimmed
+unicode_normalized
+casefolded
+punctuation_normalized
+whitespace_normalized
+accent_stripped
+transliterated
+alphanumeric_only
+tokenized
+sorted_tokens
+
+Do NOT create every variant for every field.
+
+Only create variants appropriate for semantic field type.
+
+============================================================
+20. PERSON NAME NORMALIZATION
+============================================================
+
+Names require a dedicated pipeline.
+
+Example:
+
+"Dr. John A. Smith Jr."
+
+Produce:
+
+original:
+Dr. John A. Smith Jr.
+
+display:
+Dr. John A. Smith Jr.
+
+parsed:
+
+title:
+Dr.
+
+first_name:
+John
+
+middle_name:
+A.
+
+last_name:
+Smith
+
+suffix:
+Jr.
+
+comparison:
+
+john smith
+
+accent_preserved:
+
+José García
+
+accent_stripped:
+
+jose garcia
+
+Potential phonetic representation:
+
+configured separately
+
+Do not aggressively reorder names unless cultural/locale rules justify it.
+
+============================================================
+21. NAME TOKENIZATION
+============================================================
+
+Support:
+
+title
+first
+middle
+last
+suffix
+nickname
+
+Examples:
+
+Mr John Smith
+Dr John Smith
+John Smith Jr
+John A. Smith
+Smith, John
+
+Must preserve ambiguity.
+
+Example:
+
+"Smith John"
+
+could be:
+
+last, first
+
+or:
+
+first, last
+
+Do not silently choose without context when ambiguous.
+
+============================================================
+22. NAME HONORIFICS
+============================================================
+
+Normalize:
+
+Mr
+Mrs
+Ms
+Dr
+Prof
+Sir
+
+and common localized equivalents where supported.
+
+Maintain:
+
+original_title
+canonical_title
+
+Do not treat title as identity evidence unless explicitly configured downstream.
+
+============================================================
+23. NAME SUFFIXES
+============================================================
+
+Normalize:
+
+Jr
+Jr.
+Junior
+
+Sr
+Sr.
+Senior
+
+III
+IV
+
+Store:
+
+suffix_raw
+suffix_canonical
+
+Do not simply delete suffixes from original data.
+
+============================================================
+24. NICKNAMES / ALIASES
+============================================================
+
+DO NOT automatically map:
+
+Robert → Bob
+William → Bill
+Elizabeth → Liz
+
+unless an explicit curated dictionary or configured policy exists.
+
+This is not generic normalization.
+
+If implemented later, it must be:
+
+- optional
+- locale-aware
+- dictionary-versioned
+- traceable
+
+============================================================
+25. PHONETIC NAME VARIANTS
+============================================================
+
+Evaluate:
+
+Soundex
+NYSIIS
+Metaphone
+Match Rating
+
+Use only when appropriate.
+
+Keep:
+
+phonetic_name
+
+as a derived field.
+
+Do not replace the canonical name with phonetic output.
+
+============================================================
+26. COMPANY NAME NORMALIZATION
+============================================================
+
+Company names require a separate pipeline.
+
+Example:
+
+"Acme Corporation"
+"ACME Corp."
+"Acme, Inc."
+"ACME Incorporated"
+
+Potential comparison representation:
+
+"acme"
+
+But preserve:
+
+original
+legal_name
+comparison_name
+organization_type
+
+Use cleanco or another validated tool where appropriate.
+
+Do NOT blindly strip:
+
+Ltd
+Inc
+Corp
+Limited
+
+from every string.
+
+Example:
+
+"The Limited"
+
+should not automatically become:
+
+"The"
+
+when evidence suggests "Limited" is part of the brand name.
+
+============================================================
+27. COMPANY SUFFIX CONFIGURATION
+============================================================
+
+Maintain versioned legal-entity dictionaries.
+
+Examples:
+
+Inc
+Incorporated
+Corp
+Corporation
+LLC
+Ltd
+Limited
+PLC
+GmbH
+AG
+S.A.
+B.V.
+N.V.
+S.r.l.
+
+These dictionaries must be:
+
+- locale-aware
+- versioned
+- editable
+- auditable
+
+Allow user custom terms.
+
+============================================================
+28. COMPANY NAME STRUCTURE
+============================================================
+
+Extract where possible:
+
+legal_name
+base_name
+organization_type
+jurisdiction_hint
+
+Do not turn jurisdiction hints into facts.
+
+Example:
+
+"Some Big Pharma Oy"
+
+could suggest Finland, but this is not definitive.
+
+Store:
+
+jurisdiction_hint
+not:
+jurisdiction = Finland
+
+============================================================
+29. ADDRESS NORMALIZATION
+============================================================
+
+Addresses are one of the highest-risk normalization domains.
+
+Use libpostal where appropriate.
+
+Pipeline:
+
+raw address
+ ↓
+Unicode cleanup
+ ↓
+parser
+ ↓
+components
+ ↓
+component normalization
+ ↓
+canonical structured address
+ ↓
+optional expansion variants
+
+Potential components:
+
+house_number
+road
+unit
+level
+staircase
+po_box
+postcode
+city
+state
+country
+suburb
+district
+building
+entrance
+
+Do not reduce every address to one lossy string.
+
+============================================================
+30. ADDRESS DISPLAY VS COMPARISON
+============================================================
+
+Example:
+
+Original:
+
+"10-12 Baker St., London, W1U 3BW, UK"
+
+Display:
+
+"10-12 Baker St., London, W1U 3BW, UK"
+
+Structured:
+
+house_number:
+10-12
+
+road:
+Baker St
+
+city:
+London
+
+postcode:
+W1U 3BW
+
+country:
+GB
+
+Comparison fields:
+
+house_number
+road
+city
+postcode
+country
+
+This structured representation should be available downstream.
+
+============================================================
+31. ADDRESS EXPANSION
+============================================================
+
+Evaluate libpostal expansion carefully.
+
+Example:
+
+"st"
+may expand to:
+"street"
+
+Do not produce one arbitrary expansion as truth.
+
+Store:
+
+expansion_candidates
+
+and:
+
+primary_normalized
+
+only where safe.
+
+============================================================
+32. POSTAL CODE NORMALIZATION
+============================================================
+
+Postal codes should be:
+
+- Unicode normalized
+- whitespace normalized
+- case-normalized where appropriate
+- punctuation-normalized where appropriate
+- country-aware
+
+Do NOT use one universal postal-code rule across countries.
+
+Country context matters.
+
+Example:
+
+UK:
+W1U 3BW
+
+US:
+02110
+
+Canada:
+M5V 3A8
+
+Keep country-specific formatting.
+
+============================================================
+33. COUNTRY NORMALIZATION
+============================================================
+
+Use ISO resources.
+
+Evaluate pycountry.
+
+Normalize:
+
+United States
+USA
+US
+U.S.
+US
+
+to:
+
+US
+
+Similarly:
+
+United Kingdom
+UK
+Great Britain
+
+must be handled carefully.
+
+Do not assume "Great Britain" and "United Kingdom" are always semantically identical in every context.
+
+Store:
+
+country_name
+alpha2
+alpha3
+numeric
+original
+
+============================================================
+34. LANGUAGE NORMALIZATION
+============================================================
+
+Normalize language identifiers using ISO standards where possible.
+
+Examples:
+
+English
+en
+eng
+
+→ canonical code:
+en
+
+Keep:
+
+source_value
+canonical_code
+
+============================================================
+35. SCRIPT NORMALIZATION
+============================================================
+
+Detect script where useful:
+
+Latin
+Cyrillic
+Greek
+Arabic
+Han
+etc.
+
+Store:
+
+script
+confidence
+
+Do not transliterate by default just because the script is non-Latin.
+
+============================================================
+36. PHONE NORMALIZATION
+============================================================
+
+Use libphonenumber/python-phonenumbers.
+
+Inputs:
+
+"+1 (415) 555-0142"
+"415-555-0142"
+"+14155550142"
+
+may map to the same E.164 representation where country context allows.
+
+Output:
+
+original
+parsed
+country_code
+national_number
+extension
+e164
+international_format
+national_format
+is_possible
+is_valid
+region
+validation_message
+
+Country context:
+
+explicit
+inferred
+unknown
+
+If no country can be safely inferred:
+
+status:
+AMBIGUOUS
+
+Do not guess.
+
+============================================================
+37. PHONE DEFAULT REGION
+============================================================
+
+Allow configuration:
+
+source_default_region
+field_default_region
+user_default_region
+
+Precedence:
+
+explicit record context
+→ source context
+→ field config
+→ user/project config
+
+Store which context was used.
+
+============================================================
+38. PHONE EXTENSIONS
+============================================================
+
+Handle:
+
++1 415 555 0142 ext 123
+
+Store:
+
+phone:
++14155550142
+
+extension:
+123
+
+Never merge extension into the canonical phone number.
+
+============================================================
+39. EMAIL NORMALIZATION
+============================================================
+
+Use email-validator or a better verified library if research finds one.
+
+Separate:
+
+display_name
+local_part
+domain
+normalized_address
+domain_ascii/IDNA where appropriate
+validation
+
+Examples:
+
+" John Smith <john.smith@example.com> "
+
+→
+
+display_name:
+John Smith
+
+email:
+john.smith@example.com
+
+Do not apply provider-specific local-part normalization by default.
+
+Never:
+
+remove dots
+remove plus-tags
+alter local-part punctuation
+
+unless explicitly configured for a verified provider/domain policy.
+
+============================================================
+40. EMAIL DOMAIN NORMALIZATION
+============================================================
+
+Normalize:
+
+case
+Unicode/IDNA
+trailing dot where appropriate
+whitespace
+invalid characters
+
+Be careful with internationalized domains.
+
+Preserve original domain.
+
+============================================================
+41. EMAIL VALIDATION
+============================================================
+
+Validation statuses:
+
+VALID_SYNTAX
+INVALID_SYNTAX
+INTERNATIONALIZED
+UNKNOWN
+POSSIBLY_DELIVERABLE
+UNDELIVERABLE
+
+Do not perform network deliverability checks by default.
+
+Normalization must remain deterministic and fast.
+
+============================================================
+42. URL NORMALIZATION
+============================================================
+
+Where URL fields exist, support:
+
+- scheme normalization
+- host lowercasing
+- default port removal
+- trailing slash policy
+- percent encoding normalization where safe
+- IDN normalization
+- fragment policy
+- tracking parameter policy
+
+DO NOT strip query parameters blindly.
+
+Use field-specific configuration.
+
+============================================================
+43. DATE NORMALIZATION
+============================================================
+
+Normalize dates to canonical representation.
+
+Prefer:
+
+ISO 8601
+
+For date-only:
+
+YYYY-MM-DD
+
+For datetime:
+
+UTC or explicit timezone-aware ISO representation.
+
+Store timezone assumptions.
+
+Example:
+
+"03/04/2024"
+
+must not silently become:
+
+2024-04-03
+
+without locale context.
+
+If ambiguous:
+
+status:
+AMBIGUOUS
+
+Require policy.
+
+============================================================
+44. TIMEZONE NORMALIZATION
+============================================================
+
+Support:
+
+UTC
+IANA timezone identifiers
+
+Example:
+
+America/New_York
+Europe/London
+
+Avoid storing only:
+
+EST
+CST
+
+when exact IANA zone is available.
+
+============================================================
+45. NON-GREGORIAN DATES
+============================================================
+
+Evaluate dateparser/calendar support.
+
+If the system converts:
+
+Jalali
+Hijri
+etc.
+
+to Gregorian:
+
+store:
+
+original_calendar
+original_value
+canonical_date
+calendar_conversion_method
+confidence
+
+Do not silently erase the source representation.
+
+============================================================
+46. NUMERIC NORMALIZATION
+============================================================
+
+Handle:
+
+thousands separators
+decimal separators
+currency signs
+negative formats
+parentheses
+scientific notation
+localized numerals
+
+Examples:
+
+"1,234.56"
+"1.234,56"
+"£1,234.56"
+"(1,234.56)"
+
+Need locale/context.
+
+Do not assume comma always means thousands.
+
+============================================================
+47. CURRENCY NORMALIZATION
+============================================================
+
+Normalize:
+
+$
+USD
+US$
+US Dollars
+
+to:
+
+USD
+
+But:
+
+"$" is ambiguous.
+
+Do not infer USD without context.
+
+Use:
+
+country
+locale
+source metadata
+column semantics
+
+to infer currency.
+
+Store:
+
+original_currency
+canonical_currency
+currency_confidence
+
+============================================================
+48. UNIT NORMALIZATION
+============================================================
+
+If data contains physical quantities:
+
+Use Pint or another mature units library where appropriate.
+
+Example:
+
+5 km
+5000 m
+
+can become:
+
+5000 meter
+
+Preserve:
+
+original_value
+original_unit
+canonical_value
+canonical_unit
+
+Do not convert numeric values without knowing the dimension.
+
+============================================================
+49. IDENTIFIER NORMALIZATION
+============================================================
+
+Identifiers require special caution.
+
+Examples:
+
+customer IDs
+passport numbers
+tax IDs
+national IDs
+product SKUs
+order IDs
+
+Possible transformations:
+
+- whitespace removal
+- separator normalization
+- case normalization
+- Unicode digit normalization
+- check-digit validation
+- zero-padding only when specification requires it
+
+Do not remove leading zeros universally.
+
+Example:
+
+"000123"
+must NOT automatically become:
+"123"
+
+============================================================
+50. UUID NORMALIZATION
+============================================================
+
+Support:
+
+uppercase/lowercase
+braces
+hyphens
+
+Example:
+
+"{550E8400-E29B-41D4-A716-446655440000}"
+
+→
+
+550e8400-e29b-41d4-a716-446655440000
+
+But retain original.
+
+============================================================
+51. POSTCODE / TAX ID / BUSINESS ID
+============================================================
+
+Create country-aware specialized normalization hooks.
+
+Do not use one global regex.
+
+Architecture:
+
+IdentifierNormalizer
+    ├── generic
+    ├── country-specific
+    ├── domain-specific
+    └── custom rules
+
+============================================================
+52. BOOLEAN NORMALIZATION
+============================================================
+
+Normalize:
+
+true
+True
+TRUE
+yes
+Yes
+Y
+1
+
+into:
+
+canonical boolean
+
+but only when column semantics justify it.
+
+Preserve original.
+
+Reject ambiguous values:
+
+maybe
+unknown
+N/A
+
+into:
+
+NULL / UNKNOWN
+
+according to configured policy.
+
+============================================================
+53. MISSING VALUE NORMALIZATION
+============================================================
+
+Detect common missing sentinels:
+
+NULL
+null
+None
+N/A
+NA
+N.A.
+unknown
+UNKNOWN
+-
+--
+empty
+whitespace
+
+BUT:
+
+Do not globally map:
+
+"unknown"
+
+to NULL for every field.
+
+Example:
+
+Person name:
+"Unknown"
+
+may mean literal name or missing.
+
+Use field-aware policy.
+
+Store:
+
+missing_reason
+
+if inferable.
+
+============================================================
+54. NULL VS EMPTY VS UNKNOWN
+============================================================
+
+These must remain distinguishable.
+
+Examples:
+
+NULL
+EMPTY_STRING
+UNKNOWN_VALUE
+NOT_APPLICABLE
+REDACTED
+INVALID
+PARSING_FAILED
+
+Do not flatten them all to null.
+
+============================================================
+55. NUMERIC / TEXT CONFUSION
+============================================================
+
+Be careful with:
+
+"00123"
+vs
+123
+
+Do not cast identifier-like text to numeric.
+
+Use semantic type inference before coercion.
+
+============================================================
+56. TOKEN NORMALIZATION
+============================================================
+
+For comparison/search representations, support:
+
+tokenization
+token sorting
+token deduplication
+token normalization
+
+BUT:
+
+Do not sort tokens for:
+
+- addresses
+- natural names
+- free text
+
+unless explicitly configured.
+
+Token sorting may be useful for unordered entity names such as:
+
+"Smith John"
+
+but must be opt-in.
+
+============================================================
+57. ABBREVIATION NORMALIZATION
+============================================================
+
+Abbreviations should be dictionary-driven.
+
+Examples:
+
+St.
+Street
+
+Rd.
+Road
+
+Ave.
+Avenue
+
+But abbreviation expansion must be:
+
+- locale-aware
+- field-aware
+- versioned
+
+Do not create a universal expansion dictionary.
+
+============================================================
+58. DICTIONARY FRAMEWORK
+============================================================
+
+Implement a versioned dictionary subsystem.
+
+Dictionaries may include:
+
+- country names
+- language names
+- currencies
+- scripts
+- legal entity suffixes
+- honorifics
+- address abbreviations
+- units
+- known missing values
+- domain-specific aliases
+
+Every dictionary has:
+
+id
+version
+locale
+source
+license
+entries
+created_at
+
+============================================================
+59. USER CUSTOM DICTIONARIES
+============================================================
+
+Allow user/project-specific dictionaries.
+
+Example:
+
+company suffixes
+custom abbreviations
+domain-specific missing markers
+known aliases
+postal conventions
+
+Allow:
+
+Import
+Edit
+Add
+Delete
+Version
+Rollback
+
+Never mutate built-in dictionaries.
+
+============================================================
+60. SEMANTIC NORMALIZATION
+============================================================
+
+Normalization should be based on semantic field type.
+
+Example:
+
+field:
+phone
+
+→ phone normalizer
+
+field:
+email
+
+→ email normalizer
+
+field:
+person_name
+
+→ name normalizer
+
+field:
+company_name
+
+→ company normalizer
+
+field:
+address
+
+→ address normalizer
+
+field:
+date_of_birth
+
+→ date normalizer
+
+field:
+customer_id
+
+→ identifier normalizer
+
+Do not apply generic string cleaning blindly.
+
+============================================================
+61. AUTOMATIC FIELD TYPE DETECTION
+============================================================
+
+The system may automatically suggest semantic type.
+
+Example:
+
+mobile
+→ PHONE
+confidence 0.98
+
+dob
+→ DATE
+confidence 0.97
+
+customer_name
+→ PERSON_NAME
+confidence 0.95
+
+user_id
+→ IDENTIFIER
+confidence 0.91
+
+The user must be able to override.
+
+============================================================
+62. NORMALIZATION PROFILE AUTO-GENERATION
+============================================================
+
+After semantic typing, generate a proposed normalization profile.
+
+Example:
+
+first_name:
+
+Unicode:
+NFC
+
+Case:
+casefold comparison variant
+
+Whitespace:
+collapse
+
+Accents:
+preserve + optional stripped variant
+
+Parser:
+name parser
+
+Phonetic:
+optional
+
+phone:
+
+Parser:
+libphonenumber
+
+Output:
+E.164
+
+Validation:
+possible + valid
+
+email:
+
+Parser:
+email-validator
+
+Case:
+domain normalization
+
+Local part:
+preserve
+
+address:
+
+Parser:
+libpostal
+
+Output:
+structured components
+
+The user sees this profile before it is applied.
+
+============================================================
+63. SAFE DEFAULTS
+============================================================
+
+Default behavior must be conservative.
+
+Safe defaults:
+
+- preserve raw
+- preserve Unicode
+- trim whitespace
+- normalize obvious Unicode corruption when confidently detected
+- parse semantic fields
+- create comparison variants
+- do not perform irreversible transformations by default
+- do not apply provider-specific email rules
+- do not infer country without context
+- do not delete leading zeros
+- do not discard punctuation from identifiers unless configured
+
+============================================================
+64. LOSSY TRANSFORMATIONS
+============================================================
+
+Every lossy operation must be marked:
+
+LOSSY
+
+Examples:
+
+ASCII transliteration
+accent removal
+token deletion
+company suffix stripping
+punctuation deletion
+stopword removal
+
+The UI must show:
+
+⚠ Lossy transformation
+
+and explain:
+
+"This creates an additional comparison representation; the original value is preserved."
+
+============================================================
+65. NORMALIZATION TRACE
+============================================================
+
+Every transformed value must be able to show:
+
+Original
+Step 1
+Step 2
+Step 3
+Final
+
+Example:
+
+Original:
+" José   García, Jr. "
+
+Step 1:
+Unicode repair:
+No change
+
+Step 2:
+Whitespace:
+"José García, Jr."
+
+Step 3:
+Name parsing:
+first=José
+last=García
+suffix=Jr
+
+Step 4:
+Comparison:
+"jose garcia"
+
+Step 5:
+Suffix:
+"jr"
+
+Provide machine-readable trace.
+
+============================================================
+66. NORMALIZATION CONFIDENCE
+============================================================
+
+Every parser/inference-heavy operation must produce:
+
+confidence
+status
+reason
+
+Examples:
+
+PHONE:
+0.99
+
+DATE:
+0.98
+
+ADDRESS:
+0.94
+
+NAME:
+0.86
+
+If confidence is low:
+
+status:
+NEEDS_REVIEW
+
+Do not silently force a normalization.
+
+============================================================
+67. NORMALIZATION STATUS
+============================================================
+
+Possible statuses:
+
+NORMALIZED
+UNCHANGED
+REPAIRED
+PARSED
+AMBIGUOUS
+INVALID
+FAILED
+PARTIAL
+NEEDS_REVIEW
+
+============================================================
+68. ERROR HANDLING
+============================================================
+
+Never crash the full pipeline because one value is malformed.
+
+Record:
+
+field
+record
+operation
+error
+severity
+raw-safe preview
+rule
+library version
+
+Continue processing according to policy.
+
+============================================================
+69. FIELD-LEVEL ERROR POLICY
+============================================================
+
+Policy options:
+
+FAIL_RECORD
+SKIP_FIELD
+RETURN_ORIGINAL
+RETURN_NULL
+MARK_INVALID
+
+Defaults should be conservative.
+
+For critical identity fields, consider:
+
+RETURN_ORIGINAL
++
+INVALID status
+
+rather than silently dropping the value.
+
+============================================================
+70. NORMALIZATION RUNS
+============================================================
+
+Every normalization execution is a run.
+
+NormalizationRun:
+
+id
+profile_id
+version
+source_snapshot
+started_at
+finished_at
+records_processed
+fields_processed
+changed_values
+warnings
+errors
+status
+
+============================================================
+71. IDEMPOTENCY
+============================================================
+
+Normalization should be idempotent where possible.
+
+Example:
+
+normalize(normalize(x)) == normalize(x)
+
+where semantically appropriate.
+
+Tests must verify idempotency.
+
+============================================================
+72. DETERMINISM
+============================================================
+
+Same:
+
+input
+profile
+library versions
+configuration
+
+must produce the same output.
+
+Do not introduce non-deterministic LLM behavior into the core normalization pipeline.
+
+============================================================
+73. VERSION LOCKING
+============================================================
+
+Normalization output can change when external dictionaries or libraries change.
+
+Therefore record:
+
+library versions
+dictionary versions
+normalization profile version
+Unicode/ICU version
+model/data versions where relevant
+
+============================================================
+74. NORMALIZATION REGRESSION TESTING
+============================================================
+
+Maintain golden test cases.
+
+Every normalization rule must have:
+
+input
+expected output
+reason
+expected status
+
+Include:
+
+- Unicode
+- accents
+- mojibake
+- names
+- companies
+- addresses
+- phones
+- emails
+- dates
+- identifiers
+- numbers
+- currencies
+- units
+- missing values
+
+============================================================
+75. CROSS-LANGUAGE TESTING
+============================================================
+
+The engine must be international.
+
+Create tests for:
+
+English
+French
+German
+Spanish
+Italian
+Portuguese
+Dutch
+Polish
+Turkish
+Russian
+Greek
+Arabic
+Hebrew
+Chinese
+Japanese
+Korean
+Hindi
+and other relevant languages.
+
+Do not assume Latin script.
+
+============================================================
+76. CULTURAL SAFETY
+============================================================
+
+Avoid assumptions such as:
+
+- first token is always first name
+- last token is always surname
+- address order is universal
+- country can be inferred from postal code alone
+- company suffix always indicates jurisdiction
+- email provider rules apply universally
+
+When uncertain:
+
+mark ambiguity.
+
+============================================================
+77. NORMALIZATION PROFILING
+============================================================
+
+Before running the full normalization pipeline, show a preview.
+
+For each field:
+
+Rows:
+1,000,000
+
+Changed:
+832,000
+
+Unchanged:
+168,000
+
+Warnings:
+4,920
+
+Errors:
+31
+
+Potentially lossy:
+140,000
+
+Show top transformation patterns.
+
+============================================================
+78. IMPACT ANALYSIS
+============================================================
+
+Before accepting a normalization profile, show:
+
+Unique values before
+Unique values after
+
+Collision count before
+Collision count after
+
+Null count before
+Null count after
+
+Average length before
+Average length after
+
+Potential information loss
+
+Example:
+
+first_name
+
+Unique before:
+82,400
+
+Unique after:
+74,200
+
+New collisions:
+8,200
+
+Warning:
+"Accent removal creates additional collisions."
+
+This is critical.
+
+============================================================
+79. COLLISION ANALYSIS
+============================================================
+
+Normalization can create false equivalences.
+
+Example:
+
+José
+Jose
+
+may be intentional.
+
+But:
+
+"AB-001"
+"AB001"
+
+may or may not be equivalent.
+
+The UI must show newly created collisions.
+
+Example:
+
+NORMALIZATION COLLISION
+
+Normalized:
+"jose garcia"
+
+Original values:
+
+José García
+Jose Garcia
+JOSÉ GARCÍA
+
+Count:
+3
+
+Allow user to inspect whether the normalization rule is appropriate.
+
+============================================================
+80. REVERSIBILITY ANALYSIS
+============================================================
+
+For each rule classify:
+
+LOSSLESS
+REVERSIBLE
+PARTIALLY REVERSIBLE
+LOSSY
+
+Display this in UI.
+
+============================================================
+81. NORMALIZATION RULE BUILDER
+============================================================
+
+Provide a visual rule builder.
+
+Example:
+
+Field:
+first_name
+
+Pipeline:
+
+1. Unicode Repair
+2. NFC
+3. Trim
+4. Collapse Whitespace
+5. Casefold Comparison Variant
+6. Accent-Stripped Variant
+7. Name Parsing
+8. Phonetic Variant
+
+Each step:
+
+drag/drop
+enable/disable
+configure
+preview
+show impact
+
+============================================================
+82. BEFORE / AFTER UI
+============================================================
+
+Every rule must support live examples.
+
+Example:
+
+BEFORE:
+"  José García, Jr.  "
+
+AFTER:
+"José García Jr"
+
+Comparison:
+"jose garcia"
+
+Parsed:
+
+first_name:
+José
+
+last_name:
+García
+
+suffix:
+Jr
+
+Show the exact transformation trace.
+
+============================================================
+83. SAMPLE-BASED PREVIEW
+============================================================
+
+Allow the user to select:
+
+10 rows
+100 rows
+1,000 rows
+custom sample
+
+Show:
+
+original
+normalized
+status
+warnings
+
+Never require full-dataset processing just to inspect a rule.
+
+============================================================
+84. PROFILE AUTO-SUGGESTIONS
+============================================================
+
+System should suggest:
+
+Field type
+Recommended normalization
+Potential risks
+
+Example:
+
+FIELD:
+phone
+
+Recommended:
+libphonenumber parser
+
+Risk:
+Country ambiguity
+
+FIELD:
+address
+
+Recommended:
+libpostal
+
+Risk:
+Address parsing ambiguity
+
+FIELD:
+first_name
+
+Recommended:
+Unicode normalization + name parsing
+
+Risk:
+Culture-dependent name order
+
+============================================================
+85. USER CONTROL
+============================================================
+
+Every recommendation:
+
+Accept
+Modify
+Reject
+
+No silent changes.
+
+============================================================
+86. EXPERT MODE
+============================================================
+
+Expert users can inspect:
+
+- exact pipeline
+- regex
+- Unicode forms
+- locale
+- dictionary versions
+- library versions
+- parsing settings
+- validation settings
+- error policy
+- lossy transformations
+- performance options
+
+============================================================
+87. NORMAL MODE
+============================================================
+
+Normal users should see:
+
+Field
+Detected Type
+Recommended Normalization
+Preview
+Warnings
+Impact
+Apply
+
+Do not expose every regex.
+
+============================================================
+88. ADMIN / ENGINEERING MODE
+============================================================
+
+Engineering users can see:
+
+- rule definitions
+- versioning
+- dependency versions
+- benchmarks
+- cache statistics
+- errors
+- transformation counts
+
+============================================================
+89. NORMALIZATION UI
+============================================================
+
+Main navigation:
+
+Normalization Overview
+Profiles
+Fields
+Rules
+Preview
+Runs
+Warnings
+Collisions
+Dictionaries
+Quality
+Settings
+
+============================================================
+90. NORMALIZATION OVERVIEW
+============================================================
+
+Dashboard:
+
+Fields analyzed
+Fields normalized
+Rows processed
+Values changed
+Potential collisions
+Ambiguous values
+Errors
+Warnings
+
+Example:
+
+12.4M rows
+
+Fields:
+184
+
+Changed values:
+8.2M
+
+Warnings:
+14,200
+
+Potential collisions:
+82,000
+
+============================================================
+91. FIELD DETAIL UI
+============================================================
+
+Show:
+
+Field
+Detected semantic type
+Normalization profile
+Completeness
+Unique ratio
+Before/After distributions
+Sample values
+Warnings
+Collision impact
+Rule trace
+
+============================================================
+92. COLLISION DASHBOARD
+============================================================
+
+Critical feature.
+
+Show:
+
+New collisions created by normalization.
+
+Example:
+
+Normalized:
+"jose garcia"
+
+Original:
+José García
+Jose Garcia
+JOSÉ GARCÍA
+
+Allow:
+
+Accept rule
+Reject rule
+Inspect
+Whitelist collision
+Change configuration
+
+============================================================
+93. QUALITY DASHBOARD
+============================================================
+
+Show:
+
+Invalid phone values
+Ambiguous dates
+Failed addresses
+Malformed emails
+Unknown country codes
+Unrecognized units
+Unsupported scripts
+
+Each metric drills down.
+
+============================================================
+94. NORMALIZATION RUN UI
+============================================================
+
+Run detail:
+
+Profile
+Version
+Source
+Rows
+Fields
+Duration
+Changes
+Warnings
+Errors
+Library versions
+
+Actions:
+
+View Changes
+View Errors
+Compare With Previous
+Rollback Profile
+
+============================================================
+95. PROFILE VERSIONING
+============================================================
+
+Support:
+
+v1
+v2
+v3
+
+Example:
+
+Normalization Profile v2
+
+Changed:
+- email domain normalization
+- phone default region
+- name accent variant
+
+Do not overwrite old profiles.
+
+============================================================
+96. A/B NORMALIZATION
+============================================================
+
+Allow comparison:
+
+Profile v1
+vs
+Profile v2
+
+Metrics:
+
+unique values
+collision rate
+invalid rate
+changed value %
+downstream impact
+
+This helps optimize normalization safely.
+
+============================================================
+97. NORMALIZATION IMPACT ON DOWNSTREAM ENTITY RESOLUTION
+============================================================
+
+This system is upstream of key discovery and entity resolution.
+
+Therefore expose metrics useful to downstream systems:
+
+Before normalization:
+unique ratio
+
+After:
+unique ratio
+
+Before:
+candidate key uniqueness
+
+After:
+candidate key uniqueness
+
+Before:
+cross-source overlap
+
+After:
+cross-source overlap
+
+Do not perform Splink.
+
+Just expose downstream-relevant diagnostics.
+
+============================================================
+98. API DESIGN
+============================================================
+
+Create APIs such as:
+
+POST /normalization/profiles
+GET /normalization/profiles
+
+GET /normalization/fields
+
+POST /normalization/preview
+
+POST /normalization/runs
+
+GET /normalization/runs/{id}
+
+GET /normalization/runs/{id}/errors
+
+GET /normalization/runs/{id}/collisions
+
+POST /normalization/profiles/{id}/versions
+
+POST /normalization/dictionaries
+
+GET /normalization/dictionaries
+
+POST /normalization/field-test
+
+GET /normalization/impact
+
+============================================================
+99. INTERNAL NORMALIZER INTERFACE
+============================================================
+
+Create a pluggable interface.
+
+Example:
+
+Normalizer
+
+    can_handle(field_type, context)
+    normalize(value, context)
+    validate(value, context)
+    explain(result)
+    version()
+
+Implement adapters:
+
+GenericTextNormalizer
+UnicodeNormalizer
+NameNormalizer
+CompanyNormalizer
+AddressNormalizer
+PhoneNormalizer
+EmailNormalizer
+DateNormalizer
+CountryNormalizer
+IdentifierNormalizer
+NumericNormalizer
+CurrencyNormalizer
+UnitNormalizer
+URLNormalizer
+
+Each must be independently testable.
+
+============================================================
+100. NO UNIVERSAL CLEAN FUNCTION
+============================================================
+
+DO NOT create one function like:
+
+normalize_string(value)
+
+and apply it everywhere.
+
+Instead:
+
+normalize(value, semantic_type, context, profile)
+
+============================================================
+101. CONTEXT OBJECT
+============================================================
+
+Normalization may depend on:
+
+field_name
+semantic_type
+country
+locale
+language
+source
+table
+entity_type
+project
+user_profile
+custom_dictionary
+
+Context must be explicit.
+
+============================================================
+102. PERFORMANCE
+============================================================
+
+The system may process millions/billions of values.
+
+Requirements:
+
+- vectorized/batch processing where possible
+- streaming
+- chunking
+- cache repeated values
+- deduplicate normalization calls
+- dictionary caching
+- parser object reuse
+- parallel processing where safe
+- avoid Python per-row overhead when possible
+- use database pushdown only when semantics are safe
+- materialize normalized values once
+
+Repeated values should be normalized once per profile/version.
+
+============================================================
+103. NORMALIZATION CACHE
+============================================================
+
+Cache:
+
+raw_value_hash
+profile_version
+semantic_type
+context_hash
+→ normalized result
+
+Be careful with memory.
+
+Use:
+
+LRU
+persistent cache
+or database-backed cache
+
+depending on workload.
+
+Never leak sensitive raw values through cache keys.
+
+Hash where appropriate.
+
+============================================================
+104. BATCH PROCESSING
+============================================================
+
+Support:
+
+single value
+batch
+column
+table
+dataset
+
+Every normalizer must have batch APIs where practical.
+
+============================================================
+105. DATABASE INTEGRATION
+============================================================
+
+Do not mutate user source tables by default.
+
+Preferred:
+
+read
+→ normalize
+→ derived storage
+
+Support:
+
+- external staging table
+- derived table
+- temporary/materialized representation
+- application-side pipeline
+
+Choose based on database capabilities.
+
+============================================================
+106. RAW / NORMALIZED STORAGE STRATEGY
+============================================================
+
+Recommended logical layout:
+
+source fields
++
+normalized fields
++
+trace metadata
+
+Example:
+
+first_name_raw
+first_name_display
+first_name_compare
+first_name_ascii
+first_name_phonetic
+first_name_status
+
+Do not physically require exactly these names if a better schema exists.
+
+The logical distinction must remain.
+
+============================================================
+107. DATA CONTRACT
+============================================================
+
+Define normalized value contract.
+
+Example:
+
+NormalizedValue:
+
+original
+display
+comparison
+search
+ascii
+structured
+status
+confidence
+warnings
+trace
+profile_version
+library_versions
+
+============================================================
+108. TESTING
+============================================================
+
+Create comprehensive tests.
+
+Test categories:
+
+Unicode
+text repair
+names
+companies
+addresses
+phones
+emails
+dates
+countries
+languages
+identifiers
+numbers
+currency
+units
+missing values
+ambiguity
+lossy transforms
+collision behavior
+idempotency
+determinism
+performance
+
+============================================================
+109. GOLDEN TEST DATA
+============================================================
+
+Use American and Western European examples only.
+
+Names:
+
+John Smith
+Emily Johnson
+Michael Brown
+Olivia Davis
+James Anderson
+Charlotte Taylor
+Sophia Miller
+Daniel Wilson
+Sophie Martin
+Lukas Schneider
+
+Companies:
+
+Acme Technologies Inc.
+Northstar Logistics GmbH
+Hawthorne Manufacturing LLC
+Borealis Energy Ltd.
+
+Emails:
+
+john.smith@example.com
+emily.johnson@example.com
+michael.brown@example.com
+
+Phone examples:
+
++1 415 555 0142
++44 20 8366 1177
+
+Addresses:
+
+10-12 Baker St, London W1U 3BW, UK
+1600 Pennsylvania Avenue NW, Washington, DC 20500, USA
+
+Use synthetic data only.
+
+============================================================
+110. EDGE CASE TESTS
+============================================================
+
+Must include:
+
+- mojibake
+- mixed Unicode normalization forms
+- zero-width characters
+- emoji
+- non-Latin scripts
+- punctuation
+- accented names
+- multiple surnames
+- initials
+- titles
+- suffixes
+- ambiguous dates
+- invalid phones
+- ambiguous phones
+- extensions
+- internationalized email
+- invalid emails
+- ID leading zeros
+- numeric identifiers
+- missing values
+- conflicting country context
+- malformed addresses
+- mixed units
+- currencies
+- duplicate normalization outputs
+
+============================================================
+111. COLLISION TESTS
+============================================================
+
+Test that normalization does not unexpectedly collapse distinct values.
+
+Example:
+
+A:
+AB-001
+
+B:
+AB001
+
+If the domain policy is unknown:
+
+Do not silently assume equality.
+
+Mark:
+
+POTENTIAL_COLLISION
+
+============================================================
+112. FALSE-MERGE SAFETY
+============================================================
+
+The normalization layer must optimize for:
+
+reducing superficial variation
+
+without:
+
+creating semantic equivalence that does not exist.
+
+Normalization is NOT entity resolution.
+
+Do not transform values simply because doing so makes them match more often.
+
+============================================================
+113. NORMALIZATION SHOULD HELP, NOT PRETEND TO KNOW
+============================================================
+
+Examples:
+
+José → Jose
+
+could be a useful comparison representation.
+
+But:
+
+Robert → Bob
+
+is an alias/entity relationship, not ordinary normalization.
+
+John Smith → Smith John
+
+could be a parsing/reordering candidate, but must retain ambiguity.
+
+Acme Inc → Acme
+
+may be useful comparison representation, but legal-name data must remain.
+
+The system must distinguish:
+
+normalization
+standardization
+parsing
+canonicalization
+aliasing
+entity resolution
+
+============================================================
+114. DATA QUALITY FLAGS
+============================================================
+
+Output flags such as:
+
+MOJIBAKE_FIXED
+UNICODE_NORMALIZED
+AMBIGUOUS_LOCALE
+AMBIGUOUS_DATE
+PHONE_INVALID
+PHONE_REGION_INFERRED
+EMAIL_INVALID
+ADDRESS_PARSE_PARTIAL
+POTENTIAL_COLLISION
+LOSSY_TRANSFORMATION
+UNKNOWN_SEMANTIC_TYPE
+PARSER_FALLBACK
+CUSTOM_RULE_APPLIED
+
+============================================================
+115. DICTIONARY MANAGEMENT UI
+============================================================
+
+Provide:
+
+Built-in dictionaries
+Project dictionaries
+Custom dictionaries
+
+Columns:
+
+dictionary
+version
+source
+license
+entries
+locale
+status
+
+Allow import/export.
+
+============================================================
+116. RULE BUILDER UX
+============================================================
+
+Visual pipeline:
+
+Step 1
+Unicode Repair
+
+Step 2
+NFC
+
+Step 3
+Trim
+
+Step 4
+Collapse whitespace
+
+Step 5
+Semantic parser
+
+Step 6
+Comparison variant
+
+Step 7
+Validation
+
+Allow drag/drop.
+
+Every step can be:
+
+enabled
+disabled
+configured
+tested
+
+============================================================
+117. EXPLANATION UX
+============================================================
+
+Every normalized value must support:
+
+"Why did this change?"
+
+Example:
+
+Original:
+"  ACME, Inc.  "
+
+Changed to:
+"acme"
+
+Reason:
+
+"Removed punctuation, normalized whitespace, lowercased comparison representation, and stripped recognized legal entity suffix."
+
+Do not expose implementation jargon to normal users.
+
+Expert users can inspect the technical trace.
+
+============================================================
+118. NORMALIZATION PREVIEW UX
+============================================================
+
+Two-column:
+
+BEFORE
+AFTER
+
+with expandable:
+
+DETAILS
+
+and:
+
+TRACE
+
+Example:
+
+José García, Jr.
+
+↓
+
+display:
+José García, Jr.
+
+comparison:
+jose garcia jr
+
+parsed:
+first=José
+last=García
+suffix=Jr.
+
+============================================================
+119. CHANGE IMPACT UI
+============================================================
+
+Before applying a profile:
+
+Preview:
+
+Rows affected:
+4,820,000
+
+Unique values:
+-2.3%
+
+New collisions:
+82,000
+
+Invalid values:
++120
+
+Lossy operations:
+140,000
+
+Warnings:
+230
+
+Primary warning:
+
+⚠ This change significantly increases collisions.
+
+Buttons:
+
+Apply
+Cancel
+Edit Profile
+
+============================================================
+120. SAFE ROLLBACK
+============================================================
+
+Profiles are versioned.
+
+Never mutate historical outputs.
+
+Support:
+
+Activate Profile
+Deactivate Profile
+Rollback to Previous
+
+============================================================
+121. NORMALIZATION COMPARISON WORKSPACE
+============================================================
+
+Allow:
+
+Profile v1
+vs
+Profile v2
+
+For the same sample show:
+
+Value
+v1
+v2
+Difference
+Reason
+
+============================================================
+122. OBSERVABILITY
+============================================================
+
+Track:
+
+values processed
+values changed
+values unchanged
+parser failures
+validation failures
+cache hit ratio
+average latency
+p95 latency
+p99 latency
+library calls
+rows/sec
+
+============================================================
+123. SECURITY
+============================================================
+
+Do not expose sensitive raw data in:
+
+logs
+traces
+errors
+metrics
+browser devtools where avoidable
+
+Mask:
+
+email
+phone
+IDs
+addresses
+
+Support configurable PII visibility.
+
+============================================================
+124. OPEN-SOURCE LICENSE TRACKING
+============================================================
+
+Maintain:
+
+/docs/dependency-inventory.md
+
+For every dependency:
+
+name
+version
+license
+source
+purpose
+transitive risk
+upgrade notes
+
+Particularly verify licenses before adopting:
+
+ICU
+libpostal
+phonenumbers
+email-validator
+dateparser
+nameparser
+cleanco
+RapidFuzz
+pycountry
+Pint
+Unidecode
+OpenRefine-related components
+
+============================================================
+125. ARCHITECTURE DECISION RECORDS
+============================================================
+
+Create:
+
+ADR-001-unicode-strategy
+ADR-002-text-repair
+ADR-003-name-normalization
+ADR-004-company-normalization
+ADR-005-address-normalization
+ADR-006-phone-normalization
+ADR-007-email-normalization
+ADR-008-date-normalization
+ADR-009-identifier-normalization
+ADR-010-country-language-standardization
+ADR-011-currency-unit-normalization
+ADR-012-lossy-transform-policy
+ADR-013-normalization-storage
+ADR-014-normalization-versioning
+ADR-015-library-selection
+ADR-016-performance-architecture
+
+============================================================
+126. REQUIRED DOCUMENTATION
+============================================================
+
+Produce:
+
+/docs/normalization-architecture.md
+/docs/normalization-tool-evaluation.md
+/docs/normalization-rules.md
+/docs/normalization-data-contract.md
+/docs/normalization-testing.md
+/docs/normalization-performance.md
+/docs/dependency-inventory.md
+/docs/adr/*
+
+============================================================
+127. IMPLEMENTATION PHASES
+============================================================
+
+PHASE 1:
+Research + dependency/tool evaluation
+
+PHASE 2:
+Core normalization interfaces
+
+PHASE 3:
+Unicode/text normalization
+
+PHASE 4:
+Name normalization
+
+PHASE 5:
+Company normalization
+
+PHASE 6:
+Phone normalization
+
+PHASE 7:
+Email normalization
+
+PHASE 8:
+Address normalization
+
+PHASE 9:
+Date/time normalization
+
+PHASE 10:
+Country/language/script normalization
+
+PHASE 11:
+Identifiers
+
+PHASE 12:
+Numeric/currency/unit normalization
+
+PHASE 13:
+Dictionary engine
+
+PHASE 14:
+Trace/versioning
+
+PHASE 15:
+Impact/collision analysis
+
+PHASE 16:
+UI/UX
+
+PHASE 17:
+Performance and scale
+
+PHASE 18:
+Testing and golden dataset
+
+============================================================
+128. DEVELOPMENT RULE
+============================================================
+
+Do not implement the entire system at once.
+
+After every phase:
+
+- run tests
+- benchmark
+- inspect examples
+- inspect collisions
+- inspect lossiness
+- verify deterministic behavior
+- update documentation
+- update ADRs
+
+============================================================
+129. DO NOT USE LLM FOR CORE NORMALIZATION
+============================================================
+
+LLMs may optionally help with:
+
+- suggesting semantic field type
+- suggesting a normalization profile
+- explaining warnings
+- generating candidate custom rules
+
+But the final normalization transformation must be deterministic and reproducible.
+
+LLM output must not directly mutate normalized data.
+
+============================================================
+130. AUTONOMOUS RESEARCH REQUIREMENT
+============================================================
+
+The Agent MUST search for additional open-source projects beyond the explicitly listed libraries.
+
+Search for:
+
+- multilingual name normalization
+- address standardization
+- company-name normalization
+- phone normalization
+- email normalization
+- international date parsing
+- country/language normalization
+- identifier validation
+- numeric/currency locale handling
+- Unicode/security processing
+- data cleaning
+- large-scale batch normalization
+
+For each newly discovered candidate:
+
+evaluate it using the same tool-evaluation matrix.
+
+Do not assume the initial shortlist is complete.
+
+============================================================
+131. BEST-OF-BREED SELECTION
+============================================================
+
+The goal is NOT:
+
+"Use every open-source library."
+
+The goal is:
+
+"Use the best verified component for each domain."
+
+For example, it may be that:
+
+Unicode:
+ICU
+
+Text repair:
+ftfy
+
+Address:
+libpostal
+
+Phone:
+libphonenumber/python-phonenumbers
+
+Email:
+email-validator
+
+Date:
+dateparser
+
+Name:
+nameparser + custom deterministic wrapper
+
+Company:
+cleanco + custom policy
+
+Country:
+pycountry
+
+Units:
+Pint
+
+Fuzzy utility:
+RapidFuzz
+
+But these are STARTING CANDIDATES, NOT final decisions.
+
+The agent must verify them.
+
+============================================================
+132. FINAL TOOL EVALUATION REPORT
+============================================================
+
+For each selected library answer:
+
+Why this library?
+What exact capability do we use?
+What do we NOT use?
+What are its limitations?
+What does it do to edge cases?
+Is it deterministic?
+Is it multilingual?
+How does versioning work?
+What is the license?
+What is the performance profile?
+What happens if it fails?
+What fallback do we use?
+
+============================================================
+133. NORMALIZATION OUTPUT CONTRACT
+============================================================
+
+The final output for every value must be machine-readable.
+
+Conceptual structure:
+
+{
+    "original": "...",
+    "display": "...",
+    "comparison": "...",
+    "search": "...",
+    "ascii": "...",
+    "structured": {...},
+    "status": "...",
+    "confidence": 0.98,
+    "warnings": [...],
+    "trace": [...],
+    "profile_version": "...",
+    "library_versions": {...}
+}
+
+Do not force this exact JSON structure if the application's backend architecture requires a better model.
+
+But every semantic component must remain available.
+
+============================================================
+134. HANDOFF TO DATA DISCOVERY
+============================================================
+
+The output of this project must be usable by the previously designed Data Discovery & Entity Context Engine.
+
+It should receive:
+
+- normalized schema metadata
+- semantic types
+- normalized comparison values
+- parsed components
+- country/language metadata
+- validation flags
+- collision diagnostics
+- stable versioned normalization profile
+
+============================================================
+135. HANDOFF TO SPLINK
+============================================================
+
+Ultimately, the normalization layer feeds:
+
+Data Discovery
+→ Entity Context
+→ Canonical Matching Dataset
+→ Splink
+
+This project must STOP before Splink.
+
+============================================================
+136. FINAL ACCEPTANCE CRITERIA
+============================================================
+
+The implementation is complete only when:
+
+1. Raw values are preserved.
+2. Normalized values are versioned.
+3. Every transformation is traceable.
+4. Unicode is handled correctly.
+5. Mojibake can be detected/repaired.
+6. Names are parsed safely.
+7. Company names are standardized conservatively.
+8. Addresses are parsed internationally.
+9. Phones are parsed/validated canonically.
+10. Emails are parsed/normalized conservatively.
+11. Dates are parsed with locale awareness.
+12. Country/language/script values are standardized.
+13. Identifiers preserve leading zeros.
+14. Numbers/currencies are locale-aware.
+15. Units can be standardized when configured.
+16. Missing values remain semantically distinguishable.
+17. Lossy transformations are explicitly marked.
+18. Collision analysis exists.
+19. Impact analysis exists.
+20. Rule profiles are versioned.
+21. Results are deterministic.
+22. Results are idempotent where applicable.
+23. Large datasets can be processed in batches.
+24. Users can inspect before/after.
+25. Users can inspect why a transformation happened.
+26. Users can approve/reject profiles.
+27. Experts can configure detailed rules.
+28. Dependencies are documented and licensed.
+29. Open-source components are reused where appropriate.
+30. Custom code exists only where justified.
+31. Full regression tests exist.
+32. The output is ready for the downstream discovery engine.
+33. No Splink logic is implemented here.
+
+============================================================
+137. FIRST TASK BEFORE CODING
+============================================================
+
+DO NOT START IMPLEMENTATION IMMEDIATELY.
+
+First:
+
+1. Inspect the existing repository.
+2. Inspect existing architecture.
+3. Inspect current runtime/language.
+4. Inspect dependency management.
+5. Research every listed open-source library.
+6. Search for additional alternatives.
+7. Create the tool comparison matrix.
+8. Recommend the final normalization stack.
+9. Explain what will be custom-built.
+10. Create ADRs.
+11. Produce implementation plan.
+12. Ask clarification questions only where genuinely necessary.
+
+Then, and only then, begin implementation.
+
+DO NOT GUESS.
+
+DO NOT TRUST THIS PROMPT AS THE FINAL SOURCE OF TRUTH FOR LIBRARY CAPABILITIES.
+
+VERIFY EVERYTHING AGAINST OFFICIAL DOCUMENTATION AND SOURCE CODE.

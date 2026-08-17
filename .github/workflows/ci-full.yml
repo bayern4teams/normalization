@@ -1,0 +1,175 @@
+name: ci-full
+
+# Runs on every PR. Target: under 25 minutes. Full unit/golden/property/
+# contract test matrix, coverage gate, license gate, dependency audit,
+# secret scan, sidecar image build, and docker-compose integration tests.
+
+on:
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-full-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test-matrix:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python-version: ["3.12", "3.13"]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      - name: Set up Python ${{ matrix.python-version }}
+        run: uv python install ${{ matrix.python-version }}
+
+      - name: Install ICU dev headers (PyICU sdist build requirement on Linux — Windows uses a prebuilt wheel, see ADR-001)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libicu-dev pkg-config
+
+      - name: Sync
+        run: uv sync --all-extras
+
+      - name: Ruff lint
+        run: uv run ruff check .
+
+      - name: mypy --strict
+        run: uv run mypy packages
+
+      - name: Unit + golden + property + contract tests with coverage
+        run: >
+          uv run pytest -m "unit or golden or property or contract"
+          --cov=packages --cov-report=xml --cov-report=term-missing
+          --cov-fail-under=80 -q
+
+      - name: Core-package coverage floor (normcore, normalizers >= 90%)
+        run: >
+          uv run pytest -m "unit or golden or property or contract"
+          --cov=packages/normcore/src/normcore
+          --cov=packages/normalizers/src/normalizers
+          --cov-fail-under=90 -q
+
+      - name: Upload coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-${{ matrix.os }}-py${{ matrix.python-version }}
+          path: coverage.xml
+
+  license-and-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+      - run: uv python install 3.12
+      - run: uv sync --all-extras
+
+      - name: License allow-list gate
+        run: uv run python scripts/check_licenses.py
+
+      - name: pip-audit
+        run: uv run pip-audit --strict
+
+      - name: Secret scan (gitleaks)
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: PII-leak test (no raw values in logs/metrics/traces at default visibility)
+        run: uv run pytest -m unit tests/unit/test_pii_masking.py -q
+
+  splink-absence-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Assert no Splink / record-linkage primitives anywhere in the tree
+        run: |
+          set -e
+          if grep -riE "splink|record[_-]?linkage|probabilistic[_-]?matching" \
+               --include="*.py" --include="*.toml" --include="*.txt" \
+               -l packages/ pyproject.toml 2>/dev/null; then
+            echo "BLOCKED: Splink / record-linkage reference found. This project stops before Splink (Source.txt §135)." >&2
+            exit 1
+          fi
+          echo "OK: no Splink/record-linkage references found."
+
+  integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+      - run: uv python install 3.12
+      - run: uv sync --all-extras
+
+      - name: Cache libpostal model data
+        id: libpostal-data-cache
+        uses: actions/cache@v4
+        with:
+          path: services/libpostal/_data_cache/*.tar.gz
+          # Keyed on the download script's content, not a version number —
+          # the three data files are pinned to release v1.0.0 independently
+          # of the libpostal code tag (see ADR-005), so they only need to be
+          # re-fetched if the script itself changes.
+          key: libpostal-data-v1.0.0-${{ hashFiles('services/libpostal/_data_cache/download_data.sh') }}
+
+      - name: Pre-fetch libpostal model data (host-side, single-connection, resumable)
+        if: steps.libpostal-data-cache.outputs.cache-hit != 'true'
+        # Required before `docker build`: the Dockerfile COPYs these tarballs
+        # in and disables libpostal's own in-container 12-way-parallel
+        # downloader, which was found unreliable on bandwidth-constrained
+        # connections during M0 (see ADR-005). GitHub-hosted runners
+        # typically have far better bandwidth than that finding's dev
+        # machine, but this script is the single supported path regardless
+        # of runner bandwidth, and the cache above avoids repeating it.
+        run: bash services/libpostal/_data_cache/download_data.sh
+        working-directory: services/libpostal/_data_cache
+
+      - name: Build libpostal sidecar image
+        run: docker compose -f compose.yaml build libpostal api
+
+      - name: Bring up full stack
+        run: docker compose -f compose.yaml up -d
+
+      - name: Wait for health
+        run: |
+          for i in $(seq 1 30); do
+            if docker compose ps --format json | grep -q '"Health":"healthy"'; then
+              break
+            fi
+            sleep 5
+          done
+          docker compose ps
+
+      - name: Liveness smoke checks
+        run: |
+          curl -sf http://localhost:8081/health
+          curl -sf http://localhost:8080/health
+
+      - name: Read-only connector write-attempt failure tests
+        run: uv run pytest -m integration tests/integration/test_readonly_connectors.py -q
+
+      - name: Integration test suite
+        run: uv run pytest -m integration -q
+
+      - name: Compose logs on failure
+        if: failure()
+        run: docker compose logs --tail=200
+
+      - name: Tear down
+        if: always()
+        run: docker compose down -v
