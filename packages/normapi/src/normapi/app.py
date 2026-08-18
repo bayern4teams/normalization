@@ -12,12 +12,17 @@ from pathlib import Path
 
 import blake3
 from fastapi import FastAPI
+from normalizers.address import AddressNormalizer, LibpostalClient
 from normalizers.company import CompanyNormalizer
+from normalizers.country import CountryNormalizer
+from normalizers.date import DateNormalizer
 from normalizers.email import EmailNormalizer
 from normalizers.generic_text import GenericTextNormalizer
+from normalizers.language import LanguageNormalizer
 from normalizers.name import NameNormalizer
 from normalizers.passthrough import PassthroughNormalizer
 from normalizers.phone import PhoneNormalizer
+from normalizers.script import ScriptNormalizer
 
 from normapi.routes import router
 from normapi.store import InMemoryStore
@@ -42,6 +47,11 @@ _SCAFFOLD_ENV_ID = blake3.blake3(b"normapi-m1-scaffold-env-id").hexdigest()
 # instead.
 _DEFAULT_DICTIONARIES_DIR = Path(os.environ.get("NORM_DICTIONARIES_DIR", "data/dictionaries"))
 
+# Set in compose.yaml to http://libpostal:8081 (the sidecar's in-network
+# address). Defaults to localhost for `uv run uvicorn` outside Docker,
+# matching the port compose.yaml also exposes on the host.
+_DEFAULT_LIBPOSTAL_URL = os.environ.get("NORM_LIBPOSTAL_URL", "http://localhost:8081")
+
 
 def create_app(*, dictionaries_dir: Path | None = None) -> FastAPI:
     app = FastAPI(
@@ -65,6 +75,11 @@ def create_app(*, dictionaries_dir: Path | None = None) -> FastAPI:
     registry.register(CompanyNormalizer(loader))
     registry.register(PhoneNormalizer())
     registry.register(EmailNormalizer())
+    registry.register(AddressNormalizer(LibpostalClient(_DEFAULT_LIBPOSTAL_URL)))
+    registry.register(DateNormalizer())
+    registry.register(CountryNormalizer())
+    registry.register(LanguageNormalizer())
+    registry.register(ScriptNormalizer())
 
     app.state.store = InMemoryStore()
     app.state.dispatcher = Dispatcher(registry, env_id=_SCAFFOLD_ENV_ID)
