@@ -13,16 +13,21 @@ from pathlib import Path
 import blake3
 from fastapi import FastAPI
 from normalizers.address import AddressNormalizer, LibpostalClient
+from normalizers.boolean import BooleanNormalizer
 from normalizers.company import CompanyNormalizer
 from normalizers.country import CountryNormalizer
+from normalizers.currency import CurrencyNormalizer
 from normalizers.date import DateNormalizer
 from normalizers.email import EmailNormalizer
 from normalizers.generic_text import GenericTextNormalizer
+from normalizers.identifier import IdentifierNormalizer, UuidNormalizer
 from normalizers.language import LanguageNormalizer
 from normalizers.name import NameNormalizer
+from normalizers.numeric import NumericNormalizer
 from normalizers.passthrough import PassthroughNormalizer
 from normalizers.phone import PhoneNormalizer
 from normalizers.script import ScriptNormalizer
+from normalizers.unit import UnitNormalizer
 
 from normapi.routes import router
 from normapi.store import InMemoryStore
@@ -80,6 +85,12 @@ def create_app(*, dictionaries_dir: Path | None = None) -> FastAPI:
     registry.register(CountryNormalizer())
     registry.register(LanguageNormalizer())
     registry.register(ScriptNormalizer())
+    registry.register(IdentifierNormalizer())
+    registry.register(UuidNormalizer())
+    registry.register(NumericNormalizer())
+    registry.register(CurrencyNormalizer())
+    registry.register(UnitNormalizer())
+    registry.register(BooleanNormalizer())
 
     app.state.store = InMemoryStore()
     app.state.dispatcher = Dispatcher(registry, env_id=_SCAFFOLD_ENV_ID)
