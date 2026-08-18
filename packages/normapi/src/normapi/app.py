@@ -28,11 +28,12 @@ from normalizers.passthrough import PassthroughNormalizer
 from normalizers.phone import PhoneNormalizer
 from normalizers.script import ScriptNormalizer
 from normalizers.unit import UnitNormalizer
+from normalizers.url import URLNormalizer
 
 from normapi.routes import router
 from normapi.store import InMemoryStore
 from normcore import Dispatcher, NormalizerRegistry
-from normdict import DictionaryLoader
+from normdict import CustomDictionaryStore, DictionaryLoader
 
 # Real env_id computation (scripts/env_fingerprint.py) hashes actual
 # resolved package/ICU/dictionary versions and is intentionally a
@@ -57,8 +58,18 @@ _DEFAULT_DICTIONARIES_DIR = Path(os.environ.get("NORM_DICTIONARIES_DIR", "data/d
 # matching the port compose.yaml also exposes on the host.
 _DEFAULT_LIBPOSTAL_URL = os.environ.get("NORM_LIBPOSTAL_URL", "http://localhost:8081")
 
+# Custom (user) dictionaries live in a completely separate root from the
+# built-in dictionaries dir above — CustomDictionaryStore refuses to ever
+# write into it (§59), so the two are kept physically apart, not just
+# logically.
+_DEFAULT_CUSTOM_DICTIONARIES_DIR = Path(
+    os.environ.get("NORM_CUSTOM_DICTIONARIES_DIR", "data/custom-dictionaries")
+)
 
-def create_app(*, dictionaries_dir: Path | None = None) -> FastAPI:
+
+def create_app(
+    *, dictionaries_dir: Path | None = None, custom_dictionaries_dir: Path | None = None
+) -> FastAPI:
     app = FastAPI(
         title="Normalization Engine API",
         description="Source.txt §98 API surface.",
@@ -66,6 +77,9 @@ def create_app(*, dictionaries_dir: Path | None = None) -> FastAPI:
     )
 
     loader = DictionaryLoader(dictionaries_dir or _DEFAULT_DICTIONARIES_DIR)
+    custom_store = CustomDictionaryStore(
+        custom_dictionaries_dir or _DEFAULT_CUSTOM_DICTIONARIES_DIR, loader
+    )
 
     # PassthroughNormalizer registers first (covers every type as a
     # placeholder), then real adapters register after it and win for the
@@ -91,10 +105,12 @@ def create_app(*, dictionaries_dir: Path | None = None) -> FastAPI:
     registry.register(CurrencyNormalizer())
     registry.register(UnitNormalizer())
     registry.register(BooleanNormalizer())
+    registry.register(URLNormalizer())
 
     app.state.store = InMemoryStore()
     app.state.dispatcher = Dispatcher(registry, env_id=_SCAFFOLD_ENV_ID)
     app.state.dictionary_loader = loader
+    app.state.custom_dictionary_store = custom_store
 
     app.include_router(router)
 

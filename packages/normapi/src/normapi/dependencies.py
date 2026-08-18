@@ -12,7 +12,7 @@ from fastapi import Request
 if TYPE_CHECKING:
     from normapi.store import InMemoryStore
     from normcore import Dispatcher
-    from normdict import DictionaryLoader
+    from normdict import CustomDictionaryStore, DictionaryLoader
 
 
 def get_store(request: Request) -> InMemoryStore:
@@ -25,3 +25,7 @@ def get_dispatcher(request: Request) -> Dispatcher:
 
 def get_dictionary_loader(request: Request) -> DictionaryLoader:
     return request.app.state.dictionary_loader  # type: ignore[no-any-return]
+
+
+def get_custom_dictionary_store(request: Request) -> CustomDictionaryStore:
+    return request.app.state.custom_dictionary_store  # type: ignore[no-any-return]

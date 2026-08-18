@@ -2,7 +2,10 @@
 
 Status: living document — every row must remain accurate as implementation
 proceeds; update in the same PR that touches the corresponding module or
-test. Last updated: M0 (2026-08-17).
+test. Last updated: M6 (2026-08-18) — only the rows M6 actually touched
+were refreshed. This file was not updated during M2–M5 despite its own
+stated policy (a pre-existing gap, not introduced by M6, flagged in the
+M6 verification pack rather than silently remediated for every row).
 
 Maps every numbered section of the original specification (`Source.txt`,
 138 sections numbered §0–§137) to the milestone and phase that implements
@@ -58,7 +61,7 @@ Legend — **Mile.**: milestone; **Ph.**: implementation phase per §127.
 | 39 | Email normalization | M3 | 7 | `normalizers.email` | `tests/golden/test_email.py` |
 | 40 | Email domain normalization | M3 | 7 | `normalizers.email` | `tests/golden/test_email_domain.py` |
 | 41 | Email validation | M3 | 7 | `normalizers.email` | `tests/golden/test_email_validation.py` |
-| 42 | URL normalization | M5 | 12 | `normalizers.url` | `tests/golden/test_url.py` |
+| 42 | URL normalization | M6 (planned M5; delivered late as a discovered gap against §99's adapter list) | 12 | `normalizers.url` | `tests/unit/test_url_normalizer.py` |
 | 43 | Date normalization | M4 | 9 | `normalizers.date` | `tests/golden/test_date.py` |
 | 44 | Timezone normalization | M4 | 9 | `normalizers.date` | `tests/golden/test_timezone.py` |
 | 45 | Non-Gregorian dates | M4 | 9 | `normalizers.date` | `tests/golden/test_nongregorian_dates.py` |
@@ -74,8 +77,8 @@ Legend — **Mile.**: milestone; **Ph.**: implementation phase per §127.
 | 55 | Numeric / text confusion | M5 | 11 | `normalizers.identifier` | `tests/golden/test_numeric_text_confusion.py` |
 | 56 | Token normalization | M2 | 3 | `normalizers.generic_text` | `tests/golden/test_tokenization.py` |
 | 57 | Abbreviation normalization | M2, M6 | 3, 13 | `normdict` | `tests/golden/test_abbreviations.py` |
-| 58 | Dictionary framework | M1 (read), M6 (full) | 2, 13 | `normdict` | `tests/unit/test_dictionary_framework.py` |
-| 59 | User custom dictionaries | M6 | 13 | `normdict` | `tests/unit/test_custom_dictionaries.py` |
+| 58 | Dictionary framework | M1 (read), M6 (full) | 2, 13 | `normdict.loader`, `normdict.custom_store` | `tests/unit/test_normdict.py`, `tests/unit/test_custom_dictionary_store.py` |
+| 59 | User custom dictionaries | M6 | 13 | `normdict.custom_store.CustomDictionaryStore` | `tests/unit/test_custom_dictionary_store.py`, `tests/golden/test_m6_corpus.py` |
 | 60 | Semantic normalization | M1 (dispatch), M7 (UI) | 2, 16 | `normcore.dispatch`, `normapi` | `tests/unit/test_semantic_dispatch.py` |
 | 61 | Automatic field type detection | M7 | 16 | `normanalysis.type_detection` | `tests/unit/test_type_detection.py` |
 | 62 | Normalization profile auto-generation | M7 | 16 | `normanalysis.profile_suggestion` | `tests/unit/test_profile_autogen.py` |
@@ -86,17 +89,17 @@ Legend — **Mile.**: milestone; **Ph.**: implementation phase per §127.
 | 67 | Normalization status | M1 | 2 | `normcore.enums.NormalizationStatus` | `tests/contract/test_status_enum.py` |
 | 68 | Error handling | M1 | 2 | `normcore.errors` | `tests/unit/test_error_handling.py` |
 | 69 | Field-level error policy | M1 | 2 | `normcore.errors.ErrorPolicy` | `tests/unit/test_error_policy.py` |
-| 70 | Normalization runs | M1 (model), M6 (full) | 2, 14 | `normcore.run` | `tests/integration/test_runs.py` |
-| 71 | Idempotency | M2+ | 3–12 | `normcore` testing helpers | `tests/property/test_idempotency.py` |
+| 70 | Normalization runs | M1 (model), M6 (full) | 2, 14 | `normcore.run`, `normapi.store.InMemoryStore.execute_run` | `tests/unit/test_run_execution.py` |
+| 71 | Idempotency | M2+ (unit/property), M6 (runtime-sampled) | 3–12, 14 | `normcore` testing helpers, `normanalysis.invariant_sampler` | `tests/property/test_idempotency_determinism.py`, `tests/unit/test_analysis_m6.py` |
 | 72 | Determinism | M2+ | 3–12 | `normcore` testing helpers | `tests/property/test_determinism.py` |
 | 73 | Version locking | M1, M6 | 2, 14 | `scripts/env_fingerprint.py` | `tests/unit/test_env_fingerprint.py` |
 | 74 | Normalization regression testing | M2+, finalized M8 | 3–18 | `tests/golden/` | `tests/golden/*` |
 | 75 | Cross-language testing | M2, finalized M8 | 3, 18 | `tests/golden/cross_language/` | `tests/golden/cross_language/*` |
 | 76 | Cultural safety | M3, M4, M8 | 4, 8–10, 18 | — | `tests/unit/test_cultural_safety.py` |
-| 77 | Normalization profiling | M6 | 15 | `normanalysis.profiling` | `tests/unit/test_profiling.py` |
-| 78 | Impact analysis | M6 | 15 | `normanalysis.impact` | `tests/unit/test_impact_analysis.py` |
-| 79 | Collision analysis | M6 | 15 | `normanalysis.collision` | `tests/unit/test_collision_analysis.py` |
-| 80 | Reversibility analysis | M6 | 15 | `normanalysis.reversibility` | `tests/property/test_reversibility.py` |
+| 77 | Normalization profiling | M6 | 15 | `normanalysis.profiling` | `tests/unit/test_analysis_m6.py`, `tests/golden/test_m6_corpus.py` |
+| 78 | Impact analysis | M6 | 15 | `normanalysis.impact` | `tests/unit/test_analysis_m6.py`, `tests/golden/test_m6_corpus.py` |
+| 79 | Collision analysis | M6 | 15 | `normanalysis.collisions` | `tests/unit/test_analysis_m6.py`, `tests/golden/test_m6_corpus.py` |
+| 80 | Reversibility analysis | M2–M5 (classification, per-rule), M7 (UI display) | 3–15, 16 | `normcore.enums.Reversibility`, per-normalizer `steps()` | `tests/golden/test_reversibility.py` |
 | 81 | Normalization rule builder | M7 | 16 | `ui/src/features/rule-builder` | `tests/e2e/test_rule_builder.spec.ts` |
 | 82 | Before / after UI | M7 | 16 | `ui/src/features/preview` | `tests/e2e/test_before_after.spec.ts` |
 | 83 | Sample-based preview | M7 | 16 | `normapi` preview endpoint, UI | `tests/e2e/test_sample_preview.spec.ts` |
@@ -111,10 +114,10 @@ Legend — **Mile.**: milestone; **Ph.**: implementation phase per §127.
 | 92 | Collision dashboard | M7 | 16 | `ui/src/features/collisions` | `tests/e2e/test_collision_dashboard.spec.ts` |
 | 93 | Quality dashboard | M7 | 16 | `ui/src/features/quality` | `tests/e2e/test_quality_dashboard.spec.ts` |
 | 94 | Normalization run UI | M7 | 16 | `ui/src/features/runs` | `tests/e2e/test_run_detail.spec.ts` |
-| 95 | Profile versioning | M6 | 14 | `normcore.profile`, `normapi` | `tests/integration/test_profile_versioning.py` |
-| 96 | A/B normalization | M6 | 15 | `normanalysis.ab_compare` | `tests/unit/test_ab_compare.py` |
-| 97 | Impact on downstream entity resolution | M6 | 15 | `normanalysis.downstream_diagnostics` | `tests/unit/test_downstream_diagnostics.py` |
-| 98 | API design | M1 (scaffold), M7 (complete) | 2, 16 | `normapi.routes` | `tests/contract/test_api_routes.py` |
+| 95 | Profile versioning | M1 (create/version), M6 (rollback) | 2, 14 | `normapi.store.InMemoryStore` | `tests/unit/test_normapi.py`, `tests/golden/test_m6_corpus.py` |
+| 96 | A/B normalization | M6 | 15 | `normanalysis.ab_comparison` | `tests/unit/test_analysis_m6.py`, `tests/golden/test_m6_corpus.py` |
+| 97 | Impact on downstream entity resolution | M6 (unique-ratio/candidate-key diagnostics folded into `ab_comparison`/`impact`, no separate module) | 15 | `normanalysis.ab_comparison`, `normanalysis.impact` | `tests/unit/test_analysis_m6.py` |
+| 98 | API design | M1 (scaffold), M6 (all routes real, no remaining 501 stubs) | 2, 14 | `normapi.routes` | `tests/unit/test_normapi.py`, `tests/golden/test_m6_corpus.py` |
 | 99 | Internal normalizer interface | M1 | 2 | `normcore.interfaces` | `tests/unit/test_normalizer_interface.py` |
 | 100 | No universal clean function | M1 | 2 | `normcore.dispatch` | `tests/unit/test_no_universal_clean.py` |
 | 101 | Context object | M1 | 2 | `normcore.context` | `tests/unit/test_context.py` |

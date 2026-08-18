@@ -10,6 +10,8 @@ entity themselves) get their own thin models here.
 
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 from normcore import (
@@ -55,6 +57,45 @@ class FieldTestRequest(BaseModel):
     error_policy: ErrorPolicy = ErrorPolicy.RETURN_ORIGINAL
 
 
+class RunExecutionRequest(BaseModel):
+    """Optional body for POST /normalization/runs — when supplied, the
+    run actually normalizes `values` through the live Dispatcher (M6);
+    when omitted, the run is created PENDING with no field execution,
+    exactly matching M1's original scaffold behavior."""
+
+    field_name: str
+    semantic_type: FieldSemanticType
+    values: list[str | None]
+    error_policy: ErrorPolicy = ErrorPolicy.RETURN_ORIGINAL
+
+
+class ProfileRollbackRequest(BaseModel):
+    target_version: str
+
+
+class DictionaryCreateRequest(BaseModel):
+    id: str
+    entries: dict[str, Any] = Field(default_factory=dict)
+    locale: str | None = None
+    source: str
+    license: str
+    created_by: str
+
+
+class DictionaryVersionRequest(BaseModel):
+    entries: dict[str, Any] = Field(default_factory=dict)
+    locale: str | None = None
+    source: str | None = None
+    license: str | None = None
+    created_by: str
+    merge: bool = False
+
+
+class DictionaryRollbackRequest(BaseModel):
+    target_version: str
+    by: str
+
+
 class FieldSummary(BaseModel):
     """One row of GET /normalization/fields — derived from every known
     profile's field_configs, not a separately-maintained list."""
@@ -71,13 +112,14 @@ class DictionarySummary(BaseModel):
     source: str
     license: str
     entry_count: int
+    is_custom: bool = False
+    active_version: str | None = None
 
 
 class NotImplementedResponse(BaseModel):
     """Honest, schema-valid placeholder for §98 endpoints whose real
-    implementation is out of M1's scope (dictionary write CRUD lands in
-    M6; impact analysis is normanalysis's job, also M6) — returned with
-    HTTP 501 rather than silently faking success.
+    implementation is still out of scope at the current milestone —
+    returned with HTTP 501 rather than silently faking success.
     """
 
     detail: str
@@ -85,11 +127,16 @@ class NotImplementedResponse(BaseModel):
 
 
 __all__ = [
+    "DictionaryCreateRequest",
+    "DictionaryRollbackRequest",
     "DictionarySummary",
+    "DictionaryVersionRequest",
     "FieldSummary",
     "FieldTestRequest",
     "NotImplementedResponse",
     "PreviewRequest",
     "ProfileCreateRequest",
+    "ProfileRollbackRequest",
     "ProfileVersionRequest",
+    "RunExecutionRequest",
 ]

@@ -9,36 +9,56 @@
     GET  /normalization/runs/{id}/errors
     GET  /normalization/runs/{id}/collisions
     POST /normalization/profiles/{id}/versions
+    POST /normalization/profiles/{id}/rollback   (M6, §59/§94)
     POST /normalization/dictionaries
     GET  /normalization/dictionaries
+    POST /normalization/dictionaries/{id}/versions   (M6, §59)
+    POST /normalization/dictionaries/{id}/rollback   (M6, §59)
+    DELETE /normalization/dictionaries/{id}          (M6, §59)
     POST /normalization/field-test
     GET  /normalization/impact
+    GET  /normalization/runs/compare                 (M6, §96/§97)
+    GET  /normalization/runs/{id}/profile             (M6, §77)
 
 Every route is registered and returns a schema-valid response (M1's Gate
-G1 requirement). Profile/run CRUD and field-test/preview are wired to real
-logic (InMemoryStore, the real Dispatcher). Dictionary writes and impact
-analysis are out of M1's scope (M6) and return an honest 501 with a
-schema-valid NotImplementedResponse body, rather than faking success.
+G1 requirement). As of M6: profile/run CRUD+rollback, field-test/preview,
+dictionary write/versioning/rollback, and impact/collision/A-B analysis
+are all wired to real logic — no remaining 501 stubs on the §98 surface.
 """
 
 from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Body, Depends, HTTPException
+from normcore.pii import safe_preview
 
-from normapi.dependencies import get_dictionary_loader, get_dispatcher, get_store
+from normanalysis import compare_runs, compute_impact, find_collisions, profile_field
+from normapi.dependencies import (
+    get_custom_dictionary_store,
+    get_dictionary_loader,
+    get_dispatcher,
+    get_store,
+)
 from normapi.scaffold_profile import SCAFFOLD_PROFILE
 from normapi.schemas import (
+    DictionaryCreateRequest,
+    DictionaryRollbackRequest,
     DictionarySummary,
+    DictionaryVersionRequest,
     FieldSummary,
     FieldTestRequest,
-    NotImplementedResponse,
     PreviewRequest,
     ProfileCreateRequest,
+    ProfileRollbackRequest,
     ProfileVersionRequest,
+    RunExecutionRequest,
 )
-from normapi.store import InMemoryStore, ProfileNotFoundError, RunNotFoundError
+from normapi.store import (
+    InMemoryStore,
+    ProfileNotFoundError,
+    RunNotFoundError,
+)
 from normcore import (
     Dispatcher,
     NormalizationContext,
@@ -47,7 +67,14 @@ from normcore import (
     NormalizationRun,
     NormalizedValue,
 )
-from normdict import DictionaryLoader
+from normdict import (
+    BuiltinIdCollisionError,
+    CustomDictionaryDeletedError,
+    CustomDictionaryError,
+    CustomDictionaryNotFoundError,
+    CustomDictionaryStore,
+    DictionaryLoader,
+)
 
 router = APIRouter(prefix="/normalization")
 
@@ -95,6 +122,22 @@ def create_profile_version(
         )
     except ProfileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=f"No such profile: {profile_id}") from exc
+
+
+@router.post("/profiles/{profile_id}/rollback", response_model=NormalizationProfile)
+def rollback_profile(
+    profile_id: str,
+    body: ProfileRollbackRequest,
+    store: Annotated[InMemoryStore, Depends(get_store)],
+) -> NormalizationProfile:
+    """§59/§94's "Rollback Profile" — reactivates a prior version without
+    deleting the version being rolled back from."""
+    try:
+        return store.rollback_profile(profile_id, body.target_version)
+    except ProfileNotFoundError as exc:
+        raise HTTPException(
+            status_code=404, detail=f"No such profile/version: {profile_id}@{body.target_version}"
+        ) from exc
 
 
 # --- fields ---------------------------------------------------------------
@@ -160,13 +203,68 @@ def create_run(
     source_snapshot: str,
     store: Annotated[InMemoryStore, Depends(get_store)],
     dispatcher: Annotated[Dispatcher, Depends(get_dispatcher)],
+    execution: Annotated[RunExecutionRequest | None, Body()] = None,
 ) -> NormalizationRun:
+    """`execution` is optional (M6): when supplied, the run actually
+    normalizes `execution.values` through the live Dispatcher and the
+    run reaches COMPLETED with real metrics/errors/collisions/impact
+    data attached; when omitted, behavior is unchanged from M1 — a
+    PENDING run with no field execution."""
     try:
-        return store.create_run(
+        run = store.create_run(
             profile_id=profile_id, env_id=dispatcher.env_id, source_snapshot=source_snapshot
         )
     except ProfileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=f"No such profile: {profile_id}") from exc
+
+    if execution is not None:
+        run = store.execute_run(
+            run.id,
+            dispatcher=dispatcher,
+            field_name=execution.field_name,
+            semantic_type=execution.semantic_type,
+            values=execution.values,
+            error_policy=execution.error_policy,
+        )
+    return run
+
+
+@router.get("/runs/compare")
+def compare_run_pair(
+    run_id_a: str,
+    run_id_b: str,
+    store: Annotated[InMemoryStore, Depends(get_store)],
+) -> dict[str, object]:
+    """§96 A/B normalization — compares two runs executed over the same
+    aligned input values (typically the same field under two different
+    profile versions). Registered before `/runs/{run_id}` — Starlette
+    matches path routes in registration order, so "compare" would
+    otherwise be captured as a `run_id` path parameter by the more
+    generic route below (a real bug caught by hitting the live server,
+    not by reasoning about route declarations)."""
+    try:
+        run_a = store.get_run(run_id_a)
+        run_b = store.get_run(run_id_b)
+        execution_a = store.get_execution(run_id_a)
+        execution_b = store.get_execution(run_id_b)
+    except RunNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=f"No such run: {exc}") from exc
+
+    if execution_a is None or execution_b is None:
+        raise HTTPException(
+            status_code=409, detail="Both runs must have been executed with field values"
+        )
+    if execution_a.field_name != execution_b.field_name:
+        raise HTTPException(status_code=409, detail="Runs must be for the same field to compare")
+
+    report = compare_runs(
+        execution_a.field_name,
+        profile_version_a=run_a.profile_version,
+        results_a=execution_a.results,
+        profile_version_b=run_b.profile_version,
+        results_b=execution_b.results,
+    )
+    return report.model_dump(mode="json")
 
 
 @router.get("/runs/{run_id}", response_model=NormalizationRun)
@@ -182,14 +280,32 @@ def get_run_errors(
     run_id: str, store: Annotated[InMemoryStore, Depends(get_store)]
 ) -> list[NormalizationError]:
     try:
-        store.get_run(run_id)  # 404s if the run itself doesn't exist
+        execution = store.get_execution(run_id)
     except RunNotFoundError as exc:
         raise HTTPException(status_code=404, detail=f"No such run: {run_id}") from exc
-    # Real per-run error tracking is wired once normexec's batch execution
-    # actually populates NormalizationError records against a run (M2+);
-    # the scaffold run store has no field executions yet, so this is
-    # correctly empty, not faked.
-    return []
+    if execution is None:
+        return []
+
+    errors: list[NormalizationError] = []
+    pairs = zip(execution.originals, execution.results, strict=True)
+    for index, (original, result) in enumerate(pairs):
+        if not result.errors:
+            continue
+        preview = safe_preview(original) if original is not None else "null"
+        for message in result.errors:
+            errors.append(
+                NormalizationError(
+                    field=execution.field_name,
+                    record_ref=str(index),
+                    operation="normalize",
+                    error=message,
+                    severity="error",
+                    safe_preview=preview,
+                    rule_id=None,
+                    library_version=None,
+                )
+            )
+    return errors
 
 
 @router.get("/runs/{run_id}/collisions")
@@ -197,12 +313,32 @@ def get_run_collisions(
     run_id: str, store: Annotated[InMemoryStore, Depends(get_store)]
 ) -> list[dict[str, object]]:
     try:
-        store.get_run(run_id)
+        execution = store.get_execution(run_id)
     except RunNotFoundError as exc:
         raise HTTPException(status_code=404, detail=f"No such run: {run_id}") from exc
-    # Collision analysis is normanalysis's job (M6, §79/§92) — empty here
-    # is correct for a run with no executed normalization, not a stub lie.
-    return []
+    if execution is None:
+        return []
+    groups = find_collisions(execution.originals, execution.results)
+    return [group.model_dump(mode="json") for group in groups]
+
+
+@router.get("/runs/{run_id}/profile")
+def get_run_profile(
+    run_id: str, store: Annotated[InMemoryStore, Depends(get_store)]
+) -> dict[str, object]:
+    """§77 normalization profiling — rows/changed/unchanged/warnings/
+    errors/potentially-lossy counts plus top transformation patterns,
+    computed from the run's actual executed field batch."""
+    try:
+        execution = store.get_execution(run_id)
+    except RunNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=f"No such run: {run_id}") from exc
+    if execution is None:
+        raise HTTPException(
+            status_code=409, detail=f"Run {run_id} has not been executed with field values"
+        )
+    profile = profile_field(execution.field_name, execution.results)
+    return profile.model_dump(mode="json")
 
 
 # --- dictionaries -------------------------------------------------------
@@ -211,6 +347,7 @@ def get_run_collisions(
 @router.get("/dictionaries", response_model=list[DictionarySummary])
 def list_dictionaries(
     loader: Annotated[DictionaryLoader, Depends(get_dictionary_loader)],
+    custom_store: Annotated[CustomDictionaryStore, Depends(get_custom_dictionary_store)],
 ) -> list[DictionarySummary]:
     summaries = []
     for dict_id in loader.list_dictionary_ids():
@@ -224,25 +361,148 @@ def list_dictionaries(
                     source=dictionary.source,
                     license=dictionary.license,
                     entry_count=len(dictionary.entries),
+                    is_custom=False,
+                    active_version=None,
+                )
+            )
+    for dict_id in custom_store.list_custom_ids():
+        if custom_store.is_deleted(dict_id):
+            continue
+        active_version = custom_store.get_active_version(dict_id)
+        for version in custom_store.list_versions(dict_id):
+            dictionary = custom_store.load(dict_id, version)
+            summaries.append(
+                DictionarySummary(
+                    id=dictionary.id,
+                    version=dictionary.version,
+                    locale=dictionary.locale,
+                    source=dictionary.source,
+                    license=dictionary.license,
+                    entry_count=len(dictionary.entries),
+                    is_custom=True,
+                    active_version=active_version,
                 )
             )
     return summaries
 
 
-@router.post("/dictionaries", response_model=NotImplementedResponse, status_code=501)
-def create_dictionary() -> NotImplementedResponse:
-    return NotImplementedResponse(
-        detail="Dictionary write/versioning is out of scope for M1 (read-only path only).",
-        planned_milestone="M6",
+@router.post("/dictionaries", response_model=DictionarySummary, status_code=201)
+def create_dictionary(
+    body: DictionaryCreateRequest,
+    custom_store: Annotated[CustomDictionaryStore, Depends(get_custom_dictionary_store)],
+) -> DictionarySummary:
+    try:
+        dictionary = custom_store.create(
+            body.id,
+            entries=body.entries,
+            locale=body.locale,
+            source=body.source,
+            license_=body.license,
+            created_by=body.created_by,
+        )
+    except BuiltinIdCollisionError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except CustomDictionaryError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return DictionarySummary(
+        id=dictionary.id,
+        version=dictionary.version,
+        locale=dictionary.locale,
+        source=dictionary.source,
+        license=dictionary.license,
+        entry_count=len(dictionary.entries),
+        is_custom=True,
+        active_version=dictionary.version,
     )
+
+
+@router.post(
+    "/dictionaries/{dictionary_id}/versions", response_model=DictionarySummary, status_code=201
+)
+def create_dictionary_version(
+    dictionary_id: str,
+    body: DictionaryVersionRequest,
+    custom_store: Annotated[CustomDictionaryStore, Depends(get_custom_dictionary_store)],
+) -> DictionarySummary:
+    try:
+        dictionary = custom_store.add_version(
+            dictionary_id,
+            entries=body.entries,
+            locale=body.locale,
+            source=body.source,
+            license_=body.license,
+            created_by=body.created_by,
+            merge=body.merge,
+        )
+    except CustomDictionaryNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except (BuiltinIdCollisionError, CustomDictionaryDeletedError, CustomDictionaryError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return DictionarySummary(
+        id=dictionary.id,
+        version=dictionary.version,
+        locale=dictionary.locale,
+        source=dictionary.source,
+        license=dictionary.license,
+        entry_count=len(dictionary.entries),
+        is_custom=True,
+        active_version=dictionary.version,
+    )
+
+
+@router.post("/dictionaries/{dictionary_id}/rollback", response_model=DictionarySummary)
+def rollback_dictionary(
+    dictionary_id: str,
+    body: DictionaryRollbackRequest,
+    custom_store: Annotated[CustomDictionaryStore, Depends(get_custom_dictionary_store)],
+) -> DictionarySummary:
+    try:
+        dictionary = custom_store.rollback(dictionary_id, body.target_version, by=body.by)
+    except CustomDictionaryNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except CustomDictionaryDeletedError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    active_version = custom_store.get_active_version(dictionary_id)
+    return DictionarySummary(
+        id=dictionary.id,
+        version=dictionary.version,
+        locale=dictionary.locale,
+        source=dictionary.source,
+        license=dictionary.license,
+        entry_count=len(dictionary.entries),
+        is_custom=True,
+        active_version=active_version,
+    )
+
+
+@router.delete("/dictionaries/{dictionary_id}", status_code=204)
+def delete_dictionary(
+    dictionary_id: str,
+    by: str,
+    custom_store: Annotated[CustomDictionaryStore, Depends(get_custom_dictionary_store)],
+) -> None:
+    try:
+        custom_store.delete(dictionary_id, by=by)
+    except CustomDictionaryNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 # --- impact ---------------------------------------------------------------
 
 
-@router.get("/impact", response_model=NotImplementedResponse, status_code=501)
-def get_impact() -> NotImplementedResponse:
-    return NotImplementedResponse(
-        detail="Impact analysis is normanalysis's responsibility, out of scope for M1.",
-        planned_milestone="M6",
-    )
+@router.get("/impact")
+def get_impact(
+    run_id: str,
+    store: Annotated[InMemoryStore, Depends(get_store)],
+) -> dict[str, object]:
+    """§78/§97 impact analysis for a run's executed field batch."""
+    try:
+        execution = store.get_execution(run_id)
+    except RunNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=f"No such run: {run_id}") from exc
+    if execution is None:
+        raise HTTPException(
+            status_code=409, detail=f"Run {run_id} has not been executed with field values"
+        )
+    report = compute_impact(execution.field_name, execution.originals, execution.results)
+    return report.model_dump(mode="json")

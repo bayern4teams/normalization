@@ -7,21 +7,37 @@ server, per M1's Gate G1 requirement. Real persistence, concurrent-access
 safety, and the full profile-versioning audit trail land with the
 PostgreSQL-backed store in a later milestone. State does not survive a
 process restart — this is explicitly a scaffold, not a database.
+
+M6 adds real run *execution*: `execute_run()` actually normalizes the
+supplied values through a live Dispatcher (not a stub), storing the
+original/result pairs so `/runs/{id}/errors`, `/runs/{id}/collisions`,
+and `/impact` can report real data derived from an actual normalization
+pass instead of hardcoded empty lists.
 """
 
 from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
+from normanalysis import InvariantSampleReport, RunRecorder, sample_and_check
 from normcore import (
     FieldNormalizationConfig,
+    NormalizationContext,
     NormalizationProfile,
     NormalizationRun,
     NormalizationRunMetrics,
+    NormalizationStatus,
+    NormalizedValue,
     ProfileStatus,
     RunStatus,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from normcore import Dispatcher, ErrorPolicy, FieldSemanticType
 
 
 class ProfileNotFoundError(LookupError):
@@ -32,6 +48,31 @@ class RunNotFoundError(LookupError):
     pass
 
 
+class RunNotExecutableError(RuntimeError):
+    """Raised when execute_run() is called on a run that already reached
+    a terminal status — a run's field execution happens at most once,
+    consistent with NormalizationRun being immutable once terminal."""
+
+
+class _RunExecution:
+    __slots__ = ("field_name", "invariant_report", "originals", "results", "semantic_type")
+
+    def __init__(
+        self,
+        *,
+        field_name: str,
+        semantic_type: FieldSemanticType,
+        originals: list[str | None],
+        results: list[NormalizedValue],
+        invariant_report: InvariantSampleReport,
+    ) -> None:
+        self.field_name = field_name
+        self.semantic_type = semantic_type
+        self.originals = originals
+        self.results = results
+        self.invariant_report = invariant_report
+
+
 class InMemoryStore:
     def __init__(self) -> None:
         # profile_id -> {version: NormalizationProfile}
@@ -40,6 +81,7 @@ class InMemoryStore:
         # version is ACTIVE at a time; earlier versions become DEPRECATED)
         self._active_version: dict[str, str] = {}
         self._runs: dict[str, NormalizationRun] = {}
+        self._executions: dict[str, _RunExecution] = {}
 
     def create_profile(
         self,
@@ -114,6 +156,28 @@ class InMemoryStore:
         self._active_version[profile_id] = next_version
         return new_profile
 
+    def rollback_profile(self, profile_id: str, target_version: str) -> NormalizationProfile:
+        """Reactivates a prior version (§59/§94's "Rollback Profile") —
+        does NOT delete the version being rolled back from, so rolling
+        forward again afterward is always possible."""
+        if profile_id not in self._profiles:
+            raise ProfileNotFoundError(profile_id)
+        if target_version not in self._profiles[profile_id]:
+            raise ProfileNotFoundError(f"{profile_id}@{target_version}")
+
+        current_version = self._active_version[profile_id]
+        if current_version != target_version:
+            current = self._profiles[profile_id][current_version]
+            self._profiles[profile_id][current_version] = current.model_copy(
+                update={"status": ProfileStatus.DEPRECATED}
+            )
+
+        target = self._profiles[profile_id][target_version]
+        reactivated = target.model_copy(update={"status": ProfileStatus.ACTIVE})
+        self._profiles[profile_id][target_version] = reactivated
+        self._active_version[profile_id] = target_version
+        return reactivated
+
     def get_profile(self, profile_id: str, version: str | None = None) -> NormalizationProfile:
         if profile_id not in self._profiles:
             raise ProfileNotFoundError(profile_id)
@@ -121,6 +185,11 @@ class InMemoryStore:
         if resolved_version not in self._profiles[profile_id]:
             raise ProfileNotFoundError(f"{profile_id}@{resolved_version}")
         return self._profiles[profile_id][resolved_version]
+
+    def list_profile_versions(self, profile_id: str) -> list[NormalizationProfile]:
+        if profile_id not in self._profiles:
+            raise ProfileNotFoundError(profile_id)
+        return list(self._profiles[profile_id].values())
 
     def list_profiles(self) -> list[NormalizationProfile]:
         return [self._profiles[pid][v] for pid, v in self._active_version.items()]
@@ -142,10 +211,69 @@ class InMemoryStore:
         self._runs[run_id] = run
         return run
 
+    def execute_run(
+        self,
+        run_id: str,
+        *,
+        dispatcher: Dispatcher,
+        field_name: str,
+        semantic_type: FieldSemanticType,
+        values: Sequence[str | None],
+        error_policy: ErrorPolicy,
+    ) -> NormalizationRun:
+        """Actually normalizes `values` through the live Dispatcher and
+        stores the original/result pairs against the run — real
+        execution, not a scaffold no-op."""
+        run = self.get_run(run_id)
+        if run.is_terminal():
+            msg = f"Run {run_id!r} already reached terminal status {run.status!r}"
+            raise RunNotExecutableError(msg)
+
+        profile = self.get_profile(run.profile_id, run.profile_version)
+        ctx = NormalizationContext(
+            field_name=field_name, semantic_type=semantic_type, error_policy=error_policy
+        )
+
+        recorder = RunRecorder(run)
+        recorder.start()
+        recorder.record_field()
+
+        originals = list(values)
+        results = [dispatcher.normalize(v, semantic_type, ctx, profile) for v in originals]
+        for result in results:
+            changed = result.normalization_status is not NormalizationStatus.UNCHANGED
+            recorder.record_value(changed=changed)
+            for _ in result.warnings:
+                recorder.record_warning()
+            if result.errors:
+                recorder.record_error()
+
+        invariant_report = sample_and_check(
+            dispatcher, semantic_type, ctx, profile, originals=originals, results=results
+        )
+
+        finished = recorder.finish(RunStatus.COMPLETED)
+        self._runs[run_id] = finished
+        self._executions[run_id] = _RunExecution(
+            field_name=field_name,
+            semantic_type=semantic_type,
+            originals=originals,
+            results=results,
+            invariant_report=invariant_report,
+        )
+        return finished
+
     def get_run(self, run_id: str) -> NormalizationRun:
         if run_id not in self._runs:
             raise RunNotFoundError(run_id)
         return self._runs[run_id]
+
+    def get_execution(self, run_id: str) -> _RunExecution | None:
+        """None if the run was never executed (a real, valid state — a
+        PENDING run created but not yet fed values), not an error."""
+        if run_id not in self._runs:
+            raise RunNotFoundError(run_id)
+        return self._executions.get(run_id)
 
     def list_runs(self) -> list[NormalizationRun]:
         return list(self._runs.values())

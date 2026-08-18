@@ -22,6 +22,10 @@ build/
 ui/.vite/
 
 data/dictionaries/**/*.local.json
+
+# Runtime-generated custom-dictionary state (normdict.CustomDictionaryStore,
+# M6, §59) — never seed data, never committed.
+data/custom-dictionaries/
 out/
 *.parquet
 !tests/**/*.parquet

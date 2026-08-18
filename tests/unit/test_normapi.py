@@ -17,7 +17,8 @@ from normapi.app import create_app
 def client(tmp_path: Path) -> TestClient:
     dict_dir = tmp_path / "dictionaries"
     dict_dir.mkdir()
-    app = create_app(dictionaries_dir=dict_dir)
+    custom_dict_dir = tmp_path / "custom-dictionaries"
+    app = create_app(dictionaries_dir=dict_dir, custom_dictionaries_dir=custom_dict_dir)
     return TestClient(app)
 
 
@@ -217,11 +218,17 @@ def test_dictionaries_list_reflects_real_seeded_dictionary() -> None:
 
 
 @pytest.mark.unit
-def test_dictionary_write_and_impact_are_honest_501s(client: TestClient) -> None:
-    dict_resp = client.post("/normalization/dictionaries")
-    assert dict_resp.status_code == 501
-    assert dict_resp.json()["planned_milestone"] == "M6"
+def test_dictionary_create_and_impact_are_real_as_of_m6(client: TestClient) -> None:
+    """M1's honest-501 scaffold for these two routes is gone as of M6 —
+    both are now wired to real logic (normdict.CustomDictionaryStore,
+    normanalysis.compute_impact). A malformed/incomplete request now 404s
+    or 422s on real validation instead of always 501ing."""
+    dict_resp = client.post(
+        "/normalization/dictionaries",
+        json={"id": "m6-scaffold-test", "source": "test", "license": "CC0", "created_by": "tester"},
+    )
+    assert dict_resp.status_code == 201
+    assert dict_resp.json()["is_custom"] is True
 
-    impact_resp = client.get("/normalization/impact")
-    assert impact_resp.status_code == 501
-    assert impact_resp.json()["planned_milestone"] == "M6"
+    impact_resp = client.get("/normalization/impact", params={"run_id": "nonexistent"})
+    assert impact_resp.status_code == 404
