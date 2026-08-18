@@ -30,7 +30,8 @@ rather than inventing UI-only mock data anywhere.
 | 7 new real normapi routes: `GET /runs`, `GET /runs/{id}/values`, `GET /profiles/{id}`, `GET /profiles/{id}/versions`, `GET /dictionaries/{id}`, `GET /overview`, `GET /quality` | ✅ Done |
 | CORS middleware (a real, previously-nonexistent gap — see §4.1) | ✅ Done |
 | `normanalysis.overview` / `normanalysis.quality` — real aggregation over live profile/run state | ✅ Done |
-| E2E suite: `@playwright/test`, 9 specs, driving a real Chromium browser against a real `vite preview` build + real `uvicorn` server | ✅ Done |
+| E2E suite: `@playwright/test`, 9 specs, driving a real Chromium browser against a real `vite preview` build + real `uvicorn` server (and, separately, the real Docker-built `api` container) | ✅ Done |
+| `packages/normapi/Dockerfile` base-image pin + missing `normanalysis` dependency declaration — two real Docker-only bugs found and fixed (§4.1) | ✅ Done |
 | Gate G7 verification | ✅ Done |
 
 ## 2. Layer 1 — Automated verification results
@@ -42,7 +43,7 @@ uv run ruff check .          -> All checks passed!
 uv run ruff format --check . -> 160 files already formatted
 uv run mypy packages         -> Success: no issues found in 71 source files
 uv run pytest -m "unit or golden or property" -q
-  -> 664 passed, 12 skipped, 31 deselected in ~100s
+  -> 666 passed, 10 skipped, 31 deselected in ~70s
 ```
 
 New this milestone: `tests/unit/test_overview_quality.py` (6 tests) for
@@ -51,14 +52,26 @@ unchanged and still fully passing — no regressions from the new routes
 or the CORS middleware.
 
 The Docker-based integration suite (`pytest -m integration`, needs
-`docker compose up -d`) was **not re-run this milestone** — no
-normalizer internals changed in M7 (only new API routes, new
-`normanalysis` aggregation modules, and the entirely new `ui/` package),
-so the already-passing M2-M6 integration coverage is not expected to be
-affected. Flagging this honestly rather than silently omitting it,
-consistent with this project's disclosure practice; a full re-run is a
-reasonable pre-merge check for you to do independently if you want
-belt-and-suspenders confidence.
+`docker compose up -d --build`) **was run for real this milestone** and
+is what caught the two Docker-specific bugs in §4.1 (`docker compose
+build api` failed outright the first time, and even after that was
+fixed the container crashed on startup) — neither would have been
+visible from local `uv run` testing alone, since the local dev
+environment installs the whole workspace together regardless of what
+any one package's `pyproject.toml` declares.
+
+```
+uv run pytest -m integration -v
+  -> 10 passed, 1 failed: test_clickhouse_read_succeeds_and_write_is_rejected
+```
+
+That one failure is a host resource constraint (the ClickHouse
+container OOM'd — `get_mempolicy: Operation not permitted` /
+`Cannot allocate memory` — on a dev machine already running several
+unrelated Docker stacks for other projects), not a code defect; every
+other container (postgres, libpostal, demo-postgres, demo-mysql,
+demo-mongo, and the `api` container itself, now building and running
+correctly — see §4.1) came up healthy and its tests passed.
 
 ### 2.2 Frontend
 
@@ -75,7 +88,10 @@ npm --prefix ui run lint    -> oxlint: 1 harmless warning (react-refresh
 
 ```
 npm --prefix ui run test:e2e
-  -> 9 passed (repeated twice in a row for flake-check, both clean)
+  -> 9 passed (repeated three times across the session for flake-check,
+     all clean — twice against a locally-run uvicorn, once against the
+     real Docker-built api container from `docker compose up -d --build`,
+     reproducing CI's exact e2e-job path end to end)
 ```
 
 Specs: `e2e/smoke.spec.ts` (overview loads real data, every nav link
@@ -105,6 +121,7 @@ separately.
 | CORS-enabled cross-origin fetch from the UI's own origin to the API's origin | ✅ Verified (see §4.1 — found broken, fixed, re-verified) |
 | Overview/Quality dashboards reflect real executed-run data, not fabricated numbers | ✅ Verified — before any run existed, every metric read exactly 0; after one PERSON_NAME run, numbers changed to match the run's real metrics |
 | Performance baseline | Not applicable this milestone — M7 is a UI/API-surface milestone, no new normalizer hot path; M8 owns performance work per the original plan |
+| Real Docker-built `api` container (`docker compose up -d --build`) reaches `healthy`, serves real traffic | ✅ Verified — required two real fixes first (§4.1); after fixing, full stack (`api`, `postgres`, `libpostal`, `demo-postgres`, `demo-mysql`, `demo-mongo`) came up healthy, `pytest -m integration` and the full Playwright e2e suite both passed against it |
 
 ## 4. Layer 3 — for human review
 
@@ -151,6 +168,35 @@ separately.
    the same substring) and needed `exact: true`. None of these were
    application bugs — each one was caught, isolated via the tool's own
    error output, and fixed in the test file.
+5. **`packages/normapi/Dockerfile` failed to build outright**:
+   `python:3.12-slim` is a floating tag that tracks whatever Debian
+   release is currently "stable" — it has silently rolled from bookworm
+   to trixie since this Dockerfile was written in M0, and the runtime
+   stage's `apt-get install libicu72` (a bookworm-only SONAME package
+   name) no longer exists in trixie's repos, so `docker compose build
+   api` failed with "Unable to locate package libicu72." This was only
+   discovered because M7's own verification effort actually ran
+   `docker compose up -d --build` to validate the CI `e2e` job's real
+   path, rather than trusting that a Dockerfile nobody had touched must
+   still work. Fixed by pinning both build stages to
+   `python:3.12-slim-bookworm` explicitly, so the base image can no
+   longer drift out from under the version-pinned runtime package.
+6. **Even after the image built, the `api` container crashed on startup**
+   with `ModuleNotFoundError: No module named 'normanalysis'`.
+   `packages/normapi/routes.py` has imported `normanalysis` since M6, but
+   `normapi`'s own `pyproject.toml` never declared it as a dependency —
+   invisible in every local `uv run`/`uv sync --all-extras` invocation
+   (which installs the whole workspace together regardless of any one
+   package's declared deps), only surfacing in the Dockerfile's
+   `uv sync --frozen --no-dev --package normapi`, which installs *only*
+   normapi's real declared dependency closure. This is exactly the
+   "looks right locally, breaks in the real deployment path" class of
+   bug this project's discipline exists to catch. Fixed by adding
+   `normanalysis` to `normapi`'s `dependencies`/`[tool.uv.sources]` and
+   re-running `uv lock`. Re-verified: image rebuilt, full stack brought
+   up via `docker compose up -d`, `api` container reached `healthy`,
+   `pytest -m integration` (10/11 real container tests passing — see
+   §2.1), and the full Playwright e2e suite (9/9) all passed against it.
 
 ### 4.2 Design decisions worth your attention
 
@@ -205,8 +251,12 @@ separately.
 6. Phone region precedence (M3) still only implements 2 of 4 levels.
 7. `IdentifierNormalizer`'s direct per-country stdnum registry still
    covers only 4 countries (M5; IBAN covers broader validation).
-8. The Docker-based integration suite was not re-run this milestone
-   (§2.1) — no code it exercises changed, but it wasn't proven fresh.
+8. The ClickHouse-backed integration test
+   (`test_clickhouse_read_succeeds_and_write_is_rejected`) failed on a
+   host memory constraint in this dev environment (§2.1) — not a code
+   defect, but also not proven passing in *this* run; it has passed in
+   every prior milestone's verification and nothing touched
+   `normio`'s ClickHouse connector this milestone.
 
 ### 4.4 10-minute scripted demo (for you to run yourself)
 

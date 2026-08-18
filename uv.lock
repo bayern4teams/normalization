@@ -1278,6 +1278,7 @@ source = { editable = "packages/normapi" }
 dependencies = [
     { name = "fastapi" },
     { name = "normalizers" },
+    { name = "normanalysis" },
     { name = "normcore" },
     { name = "normdict" },
     { name = "uvicorn", extra = ["standard"] },
@@ -1287,6 +1288,7 @@ dependencies = [
 requires-dist = [
     { name = "fastapi", specifier = ">=0.115,<1" },
     { name = "normalizers", editable = "packages/normalizers" },
+    { name = "normanalysis", editable = "packages/normanalysis" },
     { name = "normcore", editable = "packages/normcore" },
     { name = "normdict", editable = "packages/normdict" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.31,<1" },
