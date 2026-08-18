@@ -37,6 +37,10 @@ out/
 services/libpostal/_data_cache/*.tar.gz
 services/libpostal/_data_cache/*.log
 
+ui/test-results/
+ui/playwright-report/
+ui/blob-report/
+
 .env
 .env.*
 !.env.example

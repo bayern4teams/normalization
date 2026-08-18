@@ -12,6 +12,7 @@ from pathlib import Path
 
 import blake3
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from normalizers.address import AddressNormalizer, LibpostalClient
 from normalizers.boolean import BooleanNormalizer
 from normalizers.company import CompanyNormalizer
@@ -66,6 +67,26 @@ _DEFAULT_CUSTOM_DICTIONARIES_DIR = Path(
     os.environ.get("NORM_CUSTOM_DICTIONARIES_DIR", "data/custom-dictionaries")
 )
 
+# The M7 UI (ui/) is a separate origin from the API — without CORS
+# headers the browser blocks every fetch outright (caught by actually
+# loading the UI in a real browser against a real running server, not by
+# reasoning about the two processes in isolation). Comma-separated so a
+# deployment can widen this without a code change; both Vite's dev-server
+# origin (5173) and its `vite preview`/production-build origin (4173,
+# what the Playwright e2e suite builds and serves) are included by
+# default since both are this milestone's own consumers.
+_DEFAULT_CORS_ORIGINS = [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://localhost:4173",
+    "http://127.0.0.1:4173",
+]
+_EXTRA_CORS_ORIGINS = [
+    origin.strip()
+    for origin in os.environ.get("NORM_CORS_ORIGINS", "").split(",")
+    if origin.strip()
+]
+
 
 def create_app(
     *, dictionaries_dir: Path | None = None, custom_dictionaries_dir: Path | None = None
@@ -74,6 +95,13 @@ def create_app(
         title="Normalization Engine API",
         description="Source.txt §98 API surface.",
         version="0.1.0",
+    )
+
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=[*_DEFAULT_CORS_ORIGINS, *_EXTRA_CORS_ORIGINS],
+        allow_methods=["*"],
+        allow_headers=["*"],
     )
 
     loader = DictionaryLoader(dictionaries_dir or _DEFAULT_DICTIONARIES_DIR)

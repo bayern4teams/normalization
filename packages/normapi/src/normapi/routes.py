@@ -5,13 +5,18 @@
     GET  /normalization/fields
     POST /normalization/preview
     POST /normalization/runs
+    GET  /normalization/runs                          (M7, §94)
     GET  /normalization/runs/{id}
+    GET  /normalization/profiles/{id}                  (M7, §95)
+    GET  /normalization/profiles/{id}/versions          (M7, §95)
     GET  /normalization/runs/{id}/errors
     GET  /normalization/runs/{id}/collisions
+    GET  /normalization/runs/{id}/values               (M7, §121)
     POST /normalization/profiles/{id}/versions
     POST /normalization/profiles/{id}/rollback   (M6, §59/§94)
     POST /normalization/dictionaries
     GET  /normalization/dictionaries
+    GET  /normalization/dictionaries/{id}             (M7, §115)
     POST /normalization/dictionaries/{id}/versions   (M6, §59)
     POST /normalization/dictionaries/{id}/rollback   (M6, §59)
     DELETE /normalization/dictionaries/{id}          (M6, §59)
@@ -19,6 +24,8 @@
     GET  /normalization/impact
     GET  /normalization/runs/compare                 (M6, §96/§97)
     GET  /normalization/runs/{id}/profile             (M6, §77)
+    GET  /normalization/overview                      (M7, §90)
+    GET  /normalization/quality                        (M7, §93)
 
 Every route is registered and returns a schema-valid response (M1's Gate
 G1 requirement). As of M6: profile/run CRUD+rollback, field-test/preview,
@@ -33,7 +40,14 @@ from typing import Annotated
 from fastapi import APIRouter, Body, Depends, HTTPException
 from normcore.pii import safe_preview
 
-from normanalysis import compare_runs, compute_impact, find_collisions, profile_field
+from normanalysis import (
+    compare_runs,
+    compute_impact,
+    compute_overview,
+    compute_quality_report,
+    find_collisions,
+    profile_field,
+)
 from normapi.dependencies import (
     get_custom_dictionary_store,
     get_dictionary_loader,
@@ -74,6 +88,7 @@ from normdict import (
     CustomDictionaryNotFoundError,
     CustomDictionaryStore,
     DictionaryLoader,
+    DictionaryNotFoundError,
 )
 
 router = APIRouter(prefix="/normalization")
@@ -101,6 +116,28 @@ def list_profiles(
     store: Annotated[InMemoryStore, Depends(get_store)],
 ) -> list[NormalizationProfile]:
     return store.list_profiles()
+
+
+@router.get("/profiles/{profile_id}", response_model=NormalizationProfile)
+def get_profile(
+    profile_id: str, store: Annotated[InMemoryStore, Depends(get_store)]
+) -> NormalizationProfile:
+    try:
+        return store.get_profile(profile_id)
+    except ProfileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=f"No such profile: {profile_id}") from exc
+
+
+@router.get("/profiles/{profile_id}/versions", response_model=list[NormalizationProfile])
+def list_profile_versions(
+    profile_id: str, store: Annotated[InMemoryStore, Depends(get_store)]
+) -> list[NormalizationProfile]:
+    """§95 profile versioning — every version ever created for this
+    profile, active and deprecated alike (never deleted)."""
+    try:
+        return store.list_profile_versions(profile_id)
+    except ProfileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=f"No such profile: {profile_id}") from exc
 
 
 @router.post(
@@ -197,6 +234,11 @@ def field_test(
 # --- runs -------------------------------------------------------------------
 
 
+@router.get("/runs", response_model=list[NormalizationRun])
+def list_runs(store: Annotated[InMemoryStore, Depends(get_store)]) -> list[NormalizationRun]:
+    return store.list_runs()
+
+
 @router.post("/runs", response_model=NormalizationRun, status_code=201)
 def create_run(
     profile_id: str,
@@ -256,6 +298,14 @@ def compare_run_pair(
         )
     if execution_a.field_name != execution_b.field_name:
         raise HTTPException(status_code=409, detail="Runs must be for the same field to compare")
+    if len(execution_a.results) != len(execution_b.results):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Runs must have the same number of executed values to compare "
+                f"(A has {len(execution_a.results)}, B has {len(execution_b.results)})"
+            ),
+        )
 
     report = compare_runs(
         execution_a.field_name,
@@ -306,6 +356,26 @@ def get_run_errors(
                 )
             )
     return errors
+
+
+@router.get("/runs/{run_id}/values")
+def get_run_values(
+    run_id: str, store: Annotated[InMemoryStore, Depends(get_store)]
+) -> list[dict[str, object]]:
+    """The run's real aligned (original, normalized result) pairs — backs
+    §121's per-value Normalization Comparison Workspace table (Value/v1/
+    v2/Difference/Reason), which needs row-level data the aggregate
+    /runs/compare endpoint deliberately doesn't return."""
+    try:
+        execution = store.get_execution(run_id)
+    except RunNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=f"No such run: {run_id}") from exc
+    if execution is None:
+        return []
+    return [
+        {"original": original, "result": result.model_dump(mode="json")}
+        for original, result in zip(execution.originals, execution.results, strict=True)
+    ]
 
 
 @router.get("/runs/{run_id}/collisions")
@@ -416,6 +486,30 @@ def create_dictionary(
     )
 
 
+@router.get("/dictionaries/{dictionary_id}")
+def get_dictionary(
+    dictionary_id: str,
+    loader: Annotated[DictionaryLoader, Depends(get_dictionary_loader)],
+    custom_store: Annotated[CustomDictionaryStore, Depends(get_custom_dictionary_store)],
+    version: str | None = None,
+) -> dict[str, object]:
+    """Full dictionary content (including entries) — the list endpoint
+    only carries entry_count; §115's import/export and entry editing
+    need the real entries payload."""
+    if dictionary_id in loader.list_dictionary_ids():
+        try:
+            dictionary = loader.load(dictionary_id, version)
+        except DictionaryNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return {**dictionary.model_dump(mode="json"), "is_custom": False}
+
+    try:
+        dictionary = custom_store.load(dictionary_id, version)
+    except CustomDictionaryNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {**dictionary.model_dump(mode="json"), "is_custom": True}
+
+
 @router.post(
     "/dictionaries/{dictionary_id}/versions", response_model=DictionarySummary, status_code=201
 )
@@ -505,4 +599,36 @@ def get_impact(
             status_code=409, detail=f"Run {run_id} has not been executed with field values"
         )
     report = compute_impact(execution.field_name, execution.originals, execution.results)
+    return report.model_dump(mode="json")
+
+
+# --- overview / quality (M7, §90, §93) --------------------------------------
+
+
+@router.get("/overview")
+def get_overview(store: Annotated[InMemoryStore, Depends(get_store)]) -> dict[str, object]:
+    """§90 normalization overview dashboard — aggregated from every known
+    profile's field_configs and every executed run's real metrics."""
+    profile_field_refs = [
+        config.field_ref for profile in store.list_profiles() for config in profile.field_configs
+    ]
+    executed_runs = []
+    for run in store.list_runs():
+        execution = store.get_execution(run.id)
+        if execution is not None:
+            executed_runs.append((run, execution.field_name, execution.results))
+    report = compute_overview(profile_field_refs, executed_runs)
+    return report.model_dump(mode="json")
+
+
+@router.get("/quality")
+def get_quality(store: Annotated[InMemoryStore, Depends(get_store)]) -> dict[str, object]:
+    """§93 quality dashboard — per-semantic-type validation issue tallies
+    across every executed run currently known to the store."""
+    run_batches = []
+    for run in store.list_runs():
+        execution = store.get_execution(run.id)
+        if execution is not None:
+            run_batches.append((execution.semantic_type, execution.results))
+    report = compute_quality_report(run_batches)
     return report.model_dump(mode="json")

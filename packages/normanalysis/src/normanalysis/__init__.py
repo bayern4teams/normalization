@@ -1,6 +1,6 @@
 """normanalysis — run recording (Source.txt §70), OpenTelemetry
-observability wiring (§122), and impact/collision/A-B/invariant analysis
-(§71, §77-§80, §96-§97, landed in M6).
+observability wiring (§122), and impact/collision/A-B/invariant/overview/
+quality analysis (§71, §77-§80, §90, §93, §96-§97, landed in M6-M7).
 """
 
 from normanalysis.ab_comparison import AbComparisonReport, SideMetrics, compare_runs
@@ -12,7 +12,9 @@ from normanalysis.invariant_sampler import (
     InvariantViolation,
     sample_and_check,
 )
+from normanalysis.overview import OverviewReport, compute_overview
 from normanalysis.profiling import FieldProfile, TransformationPatternCount, profile_field
+from normanalysis.quality import QualityMetric, QualityReport, compute_quality_report
 from normanalysis.run_recorder import InvalidRunTransitionError, RunRecorder
 from normanalysis.telemetry import NormalizationMetrics, TelemetryHandles, setup_telemetry
 
@@ -25,12 +27,17 @@ __all__ = [
     "InvariantSampleReport",
     "InvariantViolation",
     "NormalizationMetrics",
+    "OverviewReport",
+    "QualityMetric",
+    "QualityReport",
     "RunRecorder",
     "SideMetrics",
     "TelemetryHandles",
     "TransformationPatternCount",
     "compare_runs",
     "compute_impact",
+    "compute_overview",
+    "compute_quality_report",
     "find_collisions",
     "instrumented_normalize",
     "profile_field",
