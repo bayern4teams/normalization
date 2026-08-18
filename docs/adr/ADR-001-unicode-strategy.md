@@ -97,3 +97,73 @@ support and its bundled-ICU wheel model would simplify our build matrix.
   released — re-run the nightly drift job's findings through a manual review
   before bumping the pin.
 - PyICU wheel maintenance for a required platform lapses.
+
+## Addendum (M2): PyICU vs PyArrow DLL load order on Windows
+
+While building `GenericTextNormalizer` (M2), importing `pyarrow` before
+`icu` in the same process reproducibly segfaulted on Windows — confirmed
+with a minimal repro:
+
+```python
+import pyarrow as pa  # loads fine
+import icu  # segfault, immediately, on this line
+```
+
+versus the reverse order, which works with both libraries fully
+functional:
+
+```python
+import icu  # loads fine
+import pyarrow as pa  # loads fine
+```
+
+Root cause: both wheels bundle their own native dependencies (PyICU's
+ICU DLLs; PyArrow's bundled Arrow/ICU-adjacent DLLs), and whichever
+loads first claims shared symbol names in the process — the loser's
+native initializer then crashes the interpreter rather than raising a
+catchable Python exception. This is a process-wide, first-import-wins
+hazard, not specific to any one module in this codebase.
+
+**Mitigation (defense in depth, since no single choke point covers every
+entrypoint):**
+
+1. `packages/normalizers/src/normalizers/__init__.py` imports `icu` as
+   its literal first statement — protects any caller that imports the
+   `normalizers` package (or a submodule of it) before `pyarrow`.
+2. `packages/normalizers/src/normalizers/generic_text.py` explicitly
+   orders its own imports so the normcore/normalizers imports (which
+   pull in `icu`) precede `import pyarrow as pa`, rather than relying
+   solely on (1).
+3. Root `conftest.py` imports `icu` first, so `pytest` is safe regardless
+   of which test file it happens to collect first across `tests/unit`
+   and `tests/integration` (some of which import `pyarrow` directly with
+   no normalizers/icu involvement at all, e.g. the sidecar store and
+   connector tests).
+4. `packages/normapi/src/normapi/main.py` (the actual `uvicorn` server
+   entrypoint) imports `icu` first as well, since it is a distinct
+   process entrypoint from the test suite.
+
+Any new standalone script or entrypoint that imports both `pyarrow` and
+(transitively) `normalizers` must apply the same ordering — `import icu`
+before anything else is the simplest correct rule. This bit
+`tests/integration/fixtures/run_passthrough_demo.py` in practice: it was
+initially assumed safe because it only exercises `PassthroughNormalizer`
+and never imports `icu` directly — but (1) above means importing so much
+as `normalizers.passthrough` now *always* imports `icu` transitively (via
+`normalizers/__init__.py`), regardless of which normalizer the script
+actually uses. The script's original import order (`import pyarrow as pa`
+before `from normalizers.passthrough import PassthroughNormalizer`)
+therefore segfaulted the same way, caught by
+`tests/integration/test_byte_identical_replay.py` failing with a
+Windows access-violation exit code (`3221225477` / `0xC0000005`) instead
+of a clean subprocess return. Fixed by reordering the script's imports
+the same way as (2) above. The general lesson: being isolated in its own
+`subprocess.run()` process protects a script from the *parent* process's
+import history, but not from its own — every entrypoint that imports
+`normalizers` at all needs the ordering guard, not just ones that visibly
+touch `icu`.
+
+Not yet confirmed whether this is Windows-specific (most likely, given
+it is a native-DLL-symbol collision) or also reproducible on Linux/macOS
+wheels — the mitigation above is applied unconditionally on every
+platform since it is a correct no-op where no conflict exists.

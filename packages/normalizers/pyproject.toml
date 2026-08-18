@@ -3,10 +3,20 @@ name = "normalizers"
 version = "0.1.0"
 description = "normalization-engine :: normalizers"
 requires-python = ">=3.12,<3.14"
-dependencies = ["normcore", "pyarrow>=17.0,<18"]
+dependencies = [
+    "normcore",
+    "normdict",
+    "pyarrow>=17.0,<18",
+    "PyICU>=2.14,<3",
+    "ftfy>=6.3,<7",
+    "charset-normalizer>=3.4,<4",
+    "anyascii>=0.3.2,<1",
+    "regex>=2024.9.11",
+]
 
 [tool.uv.sources]
 normcore = { workspace = true }
+normdict = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

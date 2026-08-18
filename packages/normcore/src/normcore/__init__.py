@@ -46,8 +46,15 @@ from normcore.rules import (
 )
 from normcore.run import NormalizationRun, NormalizationRunMetrics, NormalizationVersion
 from normcore.trace import TraceStep
+from normcore.unicode_policy import (
+    DEFAULT_FORM,
+    UnicodeForm,
+    default_form_for,
+    is_compatibility_form_allowed,
+)
 
 __all__ = [
+    "DEFAULT_FORM",
     "NORMALIZED_VALUE_ARROW_SCHEMA",
     "ComponentVersionInfo",
     "Dispatcher",
@@ -79,9 +86,12 @@ __all__ = [
     "RunStatus",
     "SemanticSource",
     "TraceStep",
+    "UnicodeForm",
     "ValidationOutcome",
     "apply_error_policy",
     "arrow_row_to_normalized_value",
+    "default_form_for",
+    "is_compatibility_form_allowed",
     "normalized_value_json_schema",
     "normalized_value_to_arrow_row",
 ]

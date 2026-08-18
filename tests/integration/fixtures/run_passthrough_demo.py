@@ -15,6 +15,18 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+# Explicit, non-negotiable-by-isort import: MUST execute before `pyarrow`
+# is imported anywhere in this process, or PyICU's and PyArrow's bundled
+# native DLLs conflict on Windows (segfault) — see
+# docs/adr/ADR-001-unicode-strategy.md's DLL-load-order addendum. Placed
+# here (not relying on `normalizers/__init__.py` alone) because ruff's
+# import sorter freely reorders `import` statements within one contiguous
+# block regardless of comments, so a manually-ordered "normcore/normalizers
+# before pyarrow" arrangement does not survive `ruff check --fix` — this
+# module-level `import icu` sorts first alphabetically among the
+# third-party imports below on its own, so it is stable under
+# reformatting.
+import icu  # noqa: F401
 import polars as pl
 import pyarrow as pa
 from normalizers.passthrough import PassthroughNormalizer

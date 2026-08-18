@@ -12,6 +12,7 @@ from pathlib import Path
 
 import blake3
 from fastapi import FastAPI
+from normalizers.generic_text import GenericTextNormalizer
 from normalizers.passthrough import PassthroughNormalizer
 
 from normapi.routes import router
@@ -45,12 +46,21 @@ def create_app(*, dictionaries_dir: Path | None = None) -> FastAPI:
         version="0.1.0",
     )
 
+    loader = DictionaryLoader(dictionaries_dir or _DEFAULT_DICTIONARIES_DIR)
+
+    # PassthroughNormalizer registers first (covers every type as a
+    # placeholder), then real adapters register after it and win for the
+    # specific types they support — NormalizerRegistry.register() simply
+    # overwrites the dict entry per semantic type, so registration order
+    # is the mechanism, not a special-cased "prefer real over
+    # placeholder" rule.
     registry = NormalizerRegistry()
     registry.register(PassthroughNormalizer())
+    registry.register(GenericTextNormalizer(loader))
 
     app.state.store = InMemoryStore()
     app.state.dispatcher = Dispatcher(registry, env_id=_SCAFFOLD_ENV_ID)
-    app.state.dictionary_loader = DictionaryLoader(dictionaries_dir or _DEFAULT_DICTIONARIES_DIR)
+    app.state.dictionary_loader = loader
 
     app.include_router(router)
 

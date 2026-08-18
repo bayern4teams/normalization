@@ -1196,14 +1196,30 @@ name = "normalizers"
 version = "0.1.0"
 source = { editable = "packages/normalizers" }
 dependencies = [
+    { name = "anyascii" },
+    { name = "charset-normalizer" },
+    { name = "ftfy" },
     { name = "normcore" },
+    { name = "normdict" },
     { name = "pyarrow" },
+    { name = "pyicu", version = "2.16.2", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform != 'win32'" },
+    { name = "pyicu", version = "2.16.2", source = { url = "https://github.com/cgohlke/pyicu-build/releases/download/v2.16.2/pyicu-2.16.2-cp312-cp312-win_amd64.whl" }, marker = "python_full_version < '3.13' and sys_platform == 'win32'" },
+    { name = "pyicu", version = "2.16.2", source = { url = "https://github.com/cgohlke/pyicu-build/releases/download/v2.16.2/pyicu-2.16.2-cp313-cp313-win_amd64.whl" }, marker = "python_full_version >= '3.13' and sys_platform == 'win32'" },
+    { name = "regex" },
 ]
 
 [package.metadata]
 requires-dist = [
+    { name = "anyascii", specifier = ">=0.3.2,<1" },
+    { name = "charset-normalizer", specifier = ">=3.4,<4" },
+    { name = "ftfy", specifier = ">=6.3,<7" },
     { name = "normcore", editable = "packages/normcore" },
+    { name = "normdict", editable = "packages/normdict" },
     { name = "pyarrow", specifier = ">=17.0,<18" },
+    { name = "pyicu", marker = "python_full_version < '3.12' or python_full_version >= '3.14' or sys_platform != 'win32'", specifier = ">=2.14,<3" },
+    { name = "pyicu", marker = "python_full_version == '3.12.*' and sys_platform == 'win32'", url = "https://github.com/cgohlke/pyicu-build/releases/download/v2.16.2/pyicu-2.16.2-cp312-cp312-win_amd64.whl" },
+    { name = "pyicu", marker = "python_full_version == '3.13.*' and sys_platform == 'win32'", url = "https://github.com/cgohlke/pyicu-build/releases/download/v2.16.2/pyicu-2.16.2-cp313-cp313-win_amd64.whl" },
+    { name = "regex", specifier = ">=2024.9.11" },
 ]
 
 [[package]]
