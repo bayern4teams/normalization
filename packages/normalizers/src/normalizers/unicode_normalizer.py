@@ -19,12 +19,17 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import blake3
+from normcore.enums import Reversibility
+from normcore.pii import character_class_mask, content_hash
 from normcore.rules import ComponentVersionInfo
+from normcore.trace import TraceStep
 from normcore.unicode_policy import UnicodeForm
 
 from normalizers import text_ops
 
 _VERSION = "0.1.0"
+_EMPTY_PARAMS_HASH = blake3.blake3(b"{}").hexdigest()
 
 # The fixed, ordered default pipeline every call runs before any
 # domain-specific per-field steps. Order matters: repair must happen
@@ -38,6 +43,12 @@ _DEFAULT_STEP_ORDER: tuple[str, ...] = (
     "collapse_whitespace",
     "trim",
 )
+
+# Bounded outer loop re-running the whole step sequence to a fixed point
+# — see the docstring in `UnicodeNormalizer.process()` for why a single
+# pass is not always idempotent. Bounded so pathological/oscillating
+# input can never hang the pipeline.
+_MAX_PIPELINE_PASSES = 3
 
 
 @dataclass(frozen=True)
@@ -83,6 +94,38 @@ class UnicodeProcessingOptions:
     casefold_locale: str | None = None
 
 
+def _run_step_sequence(
+    value: str, opts: UnicodeProcessingOptions
+) -> tuple[list[AppliedStep], str, list[str]]:
+    """One pass of repair -> normalize -> control/whitespace cleanup ->
+    punctuation. Returns (applied_steps, final_value, repair_explanations)
+    for this pass only — `UnicodeNormalizer.process()` calls this in a
+    bounded loop to reach a whole-pipeline fixed point."""
+    steps: list[AppliedStep] = []
+    current = value
+
+    repaired, repair_changed, explanations = text_ops.repair_mojibake(current)
+    steps.append(_build_step("text_repair", repaired, repair_changed))
+    current = repaired
+
+    form_op = f"unicode_normalize_{opts.form.value.lower()}"
+    normalized, norm_changed = text_ops.unicode_normalize(current, opts.form)
+    steps.append(_build_step(form_op, normalized, norm_changed))
+    current = normalized
+
+    for op_name in _DEFAULT_STEP_ORDER:
+        output, changed = text_ops.apply_named_operation(op_name, current)
+        steps.append(_build_step(op_name, output, changed))
+        current = output
+
+    if opts.apply_punctuation_normalization:
+        output, changed = text_ops.normalize_punctuation(current)
+        steps.append(_build_step("normalize_punctuation", output, changed))
+        current = output
+
+    return steps, current, explanations
+
+
 class UnicodeNormalizer:
     """Stateless engine (holds only ICU/ftfy/anyascii handles, which
     `text_ops` already caches at module scope) — safe to construct once
@@ -99,25 +142,28 @@ class UnicodeNormalizer:
         opts = options or UnicodeProcessingOptions()
         steps: list[AppliedStep] = []
         current = value
+        explanations: list[str] = []
 
-        repaired, repair_changed, explanations = text_ops.repair_mojibake(current)
-        steps.append(_build_step("text_repair", repaired, repair_changed))
-        current = repaired
-
-        form_op = f"unicode_normalize_{opts.form.value.lower()}"
-        normalized, norm_changed = text_ops.unicode_normalize(current, opts.form)
-        steps.append(_build_step(form_op, normalized, norm_changed))
-        current = normalized
-
-        for op_name in _DEFAULT_STEP_ORDER:
-            output, changed = text_ops.apply_named_operation(op_name, current)
-            steps.append(_build_step(op_name, output, changed))
-            current = output
-
-        if opts.apply_punctuation_normalization:
-            output, changed = text_ops.normalize_punctuation(current)
-            steps.append(_build_step("normalize_punctuation", output, changed))
-            current = output
+        # The mutating step sequence (repair -> normalize -> control/
+        # whitespace cleanup -> punctuation) is re-run to a bounded fixed
+        # point, not applied once: `repair_mojibake` is internally
+        # convergent (see its own docstring), but the sequence AS A WHOLE
+        # is not — Hypothesis found a case where a leading NBSP changes
+        # whether ftfy's heuristics flag a trailing 2-character sequence
+        # as mojibake, so pass 1 (repair sees the NBSP-prefixed string)
+        # and a naive pass 2 (repair sees only what pass 1's later
+        # whitespace/trim steps left behind) disagreed. Looping the whole
+        # sequence here — not just the repair step — makes
+        # `UnicodeNormalizer.process()` idempotent by construction:
+        # feeding its own `final_value` back in as a new call's `value`
+        # is guaranteed to reach the same fixed point in one call.
+        for _ in range(_MAX_PIPELINE_PASSES):
+            pass_steps, pass_result, pass_explanations = _run_step_sequence(current, opts)
+            steps.extend(pass_steps)
+            explanations.extend(pass_explanations)
+            if pass_result == current:
+                break
+            current = pass_result
 
         accent_stripped = None
         if opts.include_accent_stripped:
@@ -159,3 +205,33 @@ def _build_step(operation: str, output: str, changed: bool) -> AppliedStep:
         library=spec.library,
         library_version=spec.library_version,
     )
+
+
+def build_unicode_trace(result: UnicodeProcessingResult) -> list[TraceStep]:
+    """Converts a `UnicodeProcessingResult`'s applied steps into
+    `TraceStep`s (PII-safe hashes/masks, per normcore.pii) — shared by
+    every adapter that runs `UnicodeNormalizer.process()` as its first
+    stage (`GenericTextNormalizer`, `NameNormalizer`, and later adapters),
+    so trace assembly for the Unicode layer is implemented once."""
+    trace: list[TraceStep] = []
+    current_input = result.original
+    for order, step in enumerate(result.steps, start=1):
+        trace.append(
+            TraceStep(
+                step_order=order,
+                rule_id=step.operation,
+                operation=step.operation,
+                params_hash=_EMPTY_PARAMS_HASH,
+                input_hash=content_hash(current_input),
+                output_hash=content_hash(step.output),
+                input_mask=character_class_mask(current_input),
+                output_mask=character_class_mask(step.output),
+                changed=step.changed,
+                lossy=step.lossy,
+                reversibility=Reversibility(step.claimed_reversibility),
+                library=step.library,
+                library_version=step.library_version,
+            )
+        )
+        current_input = step.output
+    return trace

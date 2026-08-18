@@ -12,6 +12,11 @@ dependencies = [
     "charset-normalizer>=3.4,<4",
     "anyascii>=0.3.2,<1",
     "regex>=2024.9.11",
+    "nameparser>=2.1.0,<3",
+    "jellyfish>=1.1,<2",
+    "cleanco>=2.3,<3",
+    "phonenumbers>=8.13,<9",
+    "email-validator>=2.2,<3",
 ]
 
 [tool.uv.sources]

@@ -1,0 +1,27 @@
+{
+  "id": "name-suffixes.common",
+  "version": "2026.08",
+  "locale": "en",
+  "source": "curated (M3 seed — Source.txt §23's named canonicalization list)",
+  "license": "CC0-1.0",
+  "created_at": "2026-08-18T00:00:00Z",
+  "entries": {
+    "jr": "JR",
+    "jr.": "JR",
+    "junior": "JR",
+    "sr": "SR",
+    "sr.": "SR",
+    "senior": "SR",
+    "ii": "II",
+    "iii": "III",
+    "iv": "IV",
+    "v": "V",
+    "esq": "ESQ",
+    "esq.": "ESQ",
+    "esquire": "ESQ",
+    "phd": "PHD",
+    "ph.d.": "PHD",
+    "md": "MD",
+    "m.d.": "MD"
+  }
+}

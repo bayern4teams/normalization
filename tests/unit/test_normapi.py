@@ -141,7 +141,11 @@ def test_preview_runs_real_dispatcher(client: TestClient) -> None:
     results = resp.json()
     assert len(results) == 2
     assert results[0]["original"] == "  John  "
-    assert results[0]["display"] == "  John  "  # PassthroughNormalizer — real adapters land M2+
+    # NameNormalizer (M3) is the real adapter for PERSON_NAME now — it
+    # trims whitespace via the shared UnicodeNormalizer pre-processing
+    # stage, unlike M1's PassthroughNormalizer placeholder this test
+    # originally exercised.
+    assert results[0]["display"] == "John"
     assert results[1]["original"] is None
 
 

@@ -34,7 +34,6 @@ from typing import TYPE_CHECKING
 # runs. See docs/adr/ADR-001-unicode-strategy.md's DLL-load-order
 # addendum for why this ordering matters at all (PyICU/PyArrow native
 # DLL conflict on Windows).
-import blake3
 import pyarrow as pa
 from normcore.context import NormalizationContext
 from normcore.enums import (
@@ -46,9 +45,7 @@ from normcore.enums import (
 )
 from normcore.errors import NormalizerFailure
 from normcore.models import NormalizedValue
-from normcore.pii import character_class_mask, content_hash
 from normcore.rules import ComponentVersionInfo, ExplanationText, ValidationOutcome
-from normcore.trace import TraceStep
 from normcore.unicode_policy import UnicodeForm
 from normdict.loader import DictionaryLoader, DictionaryNotFoundError
 
@@ -57,6 +54,7 @@ from normalizers.unicode_normalizer import (
     UnicodeNormalizer,
     UnicodeProcessingOptions,
     UnicodeProcessingResult,
+    build_unicode_trace,
 )
 
 if TYPE_CHECKING:
@@ -65,7 +63,6 @@ if TYPE_CHECKING:
     from normcore.interfaces import ComponentVersion, Explanation, StepSpec, ValidationResult
 
 _VERSION = "0.1.0"
-_EMPTY_PARAMS_HASH = blake3.blake3(b"{}").hexdigest()
 
 
 class _StaticStepSpec:
@@ -159,7 +156,18 @@ class GenericTextNormalizer:
         if sentinel_kind is not None:
             return self._missing(value, MissingKind(sentinel_kind), ctx)
 
-        trace = _build_trace(result)
+        if display == "":
+            # A value that is entirely invisible/control characters (e.g.
+            # a lone soft hyphen) normalizes down to the empty string —
+            # for the same idempotency reason as the sentinel check
+            # above, this must be treated identically to a literal ""
+            # input (MissingKind.EMPTY_STRING with display=None), or
+            # feeding this value's own `display` back in as a new
+            # `original` would disagree with the first pass. Found via
+            # Hypothesis property testing in M3.
+            return self._missing(value, MissingKind.EMPTY_STRING, ctx)
+
+        trace = build_unicode_trace(result)
         comparison, _ = text_ops.casefold(display, ctx.locale)
         search_base = result.accent_stripped if result.accent_stripped is not None else display
         search, _ = text_ops.casefold(search_base, ctx.locale)
@@ -314,28 +322,3 @@ def _overall_lossiness(result: UnicodeProcessingResult) -> Reversibility:
     if result.any_lossy_step_applied:
         return Reversibility.LOSSY
     return Reversibility.REVERSIBLE
-
-
-def _build_trace(result: UnicodeProcessingResult) -> list[TraceStep]:
-    trace: list[TraceStep] = []
-    current_input = result.original
-    for order, step in enumerate(result.steps, start=1):
-        trace.append(
-            TraceStep(
-                step_order=order,
-                rule_id=step.operation,
-                operation=step.operation,
-                params_hash=_EMPTY_PARAMS_HASH,
-                input_hash=content_hash(current_input),
-                output_hash=content_hash(step.output),
-                input_mask=character_class_mask(current_input),
-                output_mask=character_class_mask(step.output),
-                changed=step.changed,
-                lossy=step.lossy,
-                reversibility=Reversibility(step.claimed_reversibility),
-                library=step.library,
-                library_version=step.library_version,
-            )
-        )
-        current_input = step.output
-    return trace
