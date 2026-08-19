@@ -108,6 +108,24 @@ class LibpostalClient:
         resp.raise_for_status()
         return dict(resp.json())
 
+    def version(self) -> str | None:
+        """The libpostal model data's SHA-256, from the sidecar's real
+        `GET /version` (services/libpostal/server.py) — one of §73/
+        ADR-014's env_id inputs. Returns `None` (never raises) on any
+        failure: env_id computation happens at API startup and must not
+        crash the whole process just because the sidecar isn't reachable
+        yet, matching how `scripts/env_fingerprint.py`'s CLI has always
+        treated a missing `--libpostal-model-sha256` as a legitimate,
+        gracefully-degraded input rather than a hard error.
+        """
+        try:
+            resp = self._client.get("/version")
+            resp.raise_for_status()
+        except httpx.HTTPError:
+            return None
+        model_sha256 = resp.json().get("model_sha256")
+        return model_sha256 if isinstance(model_sha256, str) else None
+
     def close(self) -> None:
         self._client.close()
 

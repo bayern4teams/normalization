@@ -44,6 +44,17 @@ def test_sidecar_health_reports_model_checksum(libpostal_client: LibpostalClient
 
 
 @pytest.mark.integration
+def test_version_reports_the_real_model_sha256(libpostal_client: LibpostalClient) -> None:
+    """§73/ADR-014's env_id needs this — real proof `GET /version`
+    (services/libpostal/server.py) returns the same model checksum
+    `/health` does, against the live sidecar, not a mock."""
+    version = libpostal_client.version()
+    health = libpostal_client.health()
+    assert version == health["model_sha256"]
+    assert version is not None
+
+
+@pytest.mark.integration
 def test_uk_address_from_source_txt_109(
     normalizer: AddressNormalizer, ctx: NormalizationContext
 ) -> None:
@@ -88,4 +99,14 @@ def test_libpostal_client_raises_typed_error_on_unreachable_host() -> None:
     dead_client = LibpostalClient("http://localhost:1", timeout=1.0)
     with pytest.raises(LibpostalUnavailableError):
         dead_client.parse("123 Main St")
+    dead_client.close()
+
+
+@pytest.mark.integration
+def test_version_gracefully_returns_none_against_unreachable_host() -> None:
+    """Unlike `parse()`, `version()` must never raise — env_id
+    computation happens at API startup and must not crash the whole
+    process just because the sidecar isn't reachable yet."""
+    dead_client = LibpostalClient("http://localhost:1", timeout=1.0)
+    assert dead_client.version() is None
     dead_client.close()

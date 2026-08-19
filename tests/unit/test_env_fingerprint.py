@@ -1,4 +1,4 @@
-"""Proves scripts/env_fingerprint.py's core promise (docs/adr/ADR-014):
+"""Proves normexec.env_fingerprint's core promise (docs/adr/ADR-014):
 same inputs -> same env_id (stability), any one input changed -> different
 env_id (sensitivity). This is what makes env_id trustworthy as the basis
 for reproducibility comparisons across runs.
@@ -6,14 +6,8 @@ for reproducibility comparisons across runs.
 
 from __future__ import annotations
 
-import sys
-from pathlib import Path
-
 import pytest
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
-
-from env_fingerprint import EnvFingerprintInputs, compute_env_id
+from normexec.env_fingerprint import EnvFingerprintInputs, compute_env_id
 
 
 def _baseline() -> EnvFingerprintInputs:

@@ -1,7 +1,7 @@
 """Proves normdict's read-only loader against both the real seeded
 dictionary (data/dictionaries/honorifics.common/) and synthetic fixtures,
 and — critically — that its content_hash/key format actually agrees with
-scripts/env_fingerprint.py's independently-implemented
+normexec.env_fingerprint's independently-implemented
 `collect_dictionary_hashes`, since both must produce the same
 `{id}@{version}` key for env_id to correctly reflect dictionary versions.
 """
@@ -9,17 +9,14 @@ scripts/env_fingerprint.py's independently-implemented
 from __future__ import annotations
 
 import json
-import sys
 from pathlib import Path
 
 import pytest
+from normexec.env_fingerprint import collect_dictionary_hashes
 
 from normdict import Dictionary, DictionaryLoader, DictionaryNotFoundError
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(REPO_ROOT / "scripts"))
-
-from env_fingerprint import collect_dictionary_hashes  # noqa: E402
 
 
 @pytest.mark.unit

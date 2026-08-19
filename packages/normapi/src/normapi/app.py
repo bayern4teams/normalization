@@ -10,7 +10,6 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-import blake3
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from normalizers.address import AddressNormalizer, LibpostalClient
@@ -32,20 +31,28 @@ from normalizers.script import ScriptNormalizer
 from normalizers.unit import UnitNormalizer
 from normalizers.url import URLNormalizer
 from normexec.cache import NormalizationCache
+from normexec.env_fingerprint import compute_env_id, gather
 
 from normapi.routes import router
 from normapi.store import InMemoryStore
 from normcore import Dispatcher, NormalizerRegistry
 from normdict import CustomDictionaryStore, DictionaryLoader
 
-# Real env_id computation (scripts/env_fingerprint.py) hashes actual
-# resolved package/ICU/dictionary versions and is intentionally a
-# standalone script, not something a running service imports (that would
-# make CI/ops tooling a runtime dependency of the API). Promoting that
-# logic into a shared normcore/normexec module so the live API can stamp
-# a REAL env_id (not this scaffold placeholder) is a known follow-up —
-# tracked for the milestone that wires real normalizers into normapi.
-_SCAFFOLD_ENV_ID = blake3.blake3(b"normapi-m1-scaffold-env-id").hexdigest()
+# `profile_version` is one of env_id's real, tested inputs (ADR-014,
+# scripts/env_fingerprint.py's own `EnvFingerprintInputs` — mutating it
+# is asserted to change env_id in tests/unit/test_env_fingerprint.py).
+# But `Dispatcher` is a single process-wide singleton shared across every
+# profile this service serves (see Dispatcher's own docstring: "env_id
+# computed once per run/process... never recomputed per value") — there
+# is no single "the active profile" for it to bind to, since many
+# profiles can exist simultaneously, each independently versioned. This
+# constant is the deliberate, disclosed resolution: env_id at this
+# process-wide granularity represents the library/ICU/dictionary
+# environment snapshot only, using env_fingerprint's own "no specific
+# profile" default (matching what its CLI already defaults
+# `--profile-version` to when not given a real one) rather than
+# arbitrarily picking one profile's version to represent all of them.
+_ENV_ID_PROFILE_VERSION_PLACEHOLDER = "unversioned"
 
 # NORM_DICTIONARIES_DIR (set in compose.yaml to /app/data/dictionaries,
 # matching the Dockerfile's COPY destination) overrides this for container
@@ -129,6 +136,8 @@ def create_app(
     # overwrites the dict entry per semantic type, so registration order
     # is the mechanism, not a special-cased "prefer real over
     # placeholder" rule.
+    libpostal_client = LibpostalClient(_DEFAULT_LIBPOSTAL_URL)
+
     registry = NormalizerRegistry()
     registry.register(PassthroughNormalizer())
     registry.register(GenericTextNormalizer(loader))
@@ -136,7 +145,7 @@ def create_app(
     registry.register(CompanyNormalizer(loader))
     registry.register(PhoneNormalizer())
     registry.register(EmailNormalizer())
-    registry.register(AddressNormalizer(LibpostalClient(_DEFAULT_LIBPOSTAL_URL)))
+    registry.register(AddressNormalizer(libpostal_client))
     registry.register(PostcodeNormalizer())
     registry.register(DateNormalizer())
     registry.register(CountryNormalizer())
@@ -152,8 +161,22 @@ def create_app(
 
     cache = NormalizationCache(cache_path or _DEFAULT_CACHE_PATH)
 
+    # Real env_id (§73/ADR-014) — reuses the same LibpostalClient instance
+    # AddressNormalizer already holds, rather than opening a second HTTP
+    # client just to ask its /version once. `version()` never raises (see
+    # its own docstring) so a libpostal sidecar that isn't up yet cannot
+    # crash API startup — env_id is simply computed with
+    # libpostal_model_sha256=None in that case, same as the CLI tool's own
+    # graceful-degradation behavior when it isn't given one.
+    env_fingerprint_inputs = gather(
+        libpostal_model_sha256=libpostal_client.version(),
+        profile_version=_ENV_ID_PROFILE_VERSION_PLACEHOLDER,
+        dictionaries_dir=dictionaries_dir or _DEFAULT_DICTIONARIES_DIR,
+    )
+    env_id = compute_env_id(env_fingerprint_inputs)
+
     app.state.store = InMemoryStore(cache)
-    app.state.dispatcher = Dispatcher(registry, env_id=_SCAFFOLD_ENV_ID)
+    app.state.dispatcher = Dispatcher(registry, env_id=env_id)
     app.state.dictionary_loader = loader
     app.state.custom_dictionary_store = custom_store
     app.state.cache = cache
