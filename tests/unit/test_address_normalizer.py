@@ -105,6 +105,7 @@ class TestSuccessfulParse:
         parser = FakeLibpostalParser({_BAKER_ST: _BAKER_ST_PARSE})
         normalizer = AddressNormalizer(parser)
         result = normalizer.normalize(_BAKER_ST, _ctx())
+        assert result.comparison is not None
         assert "house_number" not in result.comparison  # a label, not a value
         assert "10-12" in result.comparison
         assert "baker st." in result.comparison

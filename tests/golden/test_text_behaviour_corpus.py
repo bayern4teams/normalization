@@ -163,6 +163,7 @@ def test_golden_case_is_idempotent(
 def test_golden_case_script_detection(
     normalizer: GenericTextNormalizer, ctx: NormalizationContext, case: GoldenCase
 ) -> None:
+    assert case.expect_scripts is not None  # parametrize already filtered on this
     result = normalizer.normalize(case.value, ctx)
     detected = set(result.structured.get("scripts_present", []))
     assert detected == set(case.expect_scripts), (
@@ -201,6 +202,7 @@ def test_emoji_zwj_sequence_survives_intact(
 ) -> None:
     value = "👨‍👩‍👧‍👦 family"
     result = normalizer.normalize(value, ctx)
+    assert result.display is not None
     assert "👨‍👩‍👧‍👦" in result.display
 
 
@@ -218,5 +220,6 @@ def test_tabs_collapse_but_newlines_are_preserved(
     normalizer: GenericTextNormalizer, ctx: NormalizationContext
 ) -> None:
     result = normalizer.normalize("line one\tindented\nline two", ctx)
+    assert result.display is not None
     assert "\n" in result.display
     assert "\t" not in result.display

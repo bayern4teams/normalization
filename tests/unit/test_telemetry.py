@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import pytest
 from normalizers.passthrough import PassthroughNormalizer
+from opentelemetry.sdk.metrics.export import NumberDataPoint
 
 from normanalysis import NormalizationMetrics, instrumented_normalize, setup_telemetry
 from normcore import (
@@ -100,5 +101,10 @@ def test_instrumented_normalize_records_metrics() -> None:
             for metric in scope_metrics.metrics:
                 if metric.name == "normalization.values_processed":
                     for point in metric.data.data_points:
+                        # Always a real NumberDataPoint here — this metric
+                        # is a Counter (meter.create_counter), which
+                        # OTel's SDK only ever backs with NumberDataPoint,
+                        # never Histogram/ExponentialHistogram.
+                        assert isinstance(point, NumberDataPoint)
                         found_processed_count = point.value
     assert found_processed_count == 3

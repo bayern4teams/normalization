@@ -151,7 +151,7 @@ def test_ab_comparison_over_live_api(client: TestClient) -> None:
     """§96 A/B normalization — two runs over the same aligned values,
     compared through the live `/runs/compare` route."""
     profile_id = _create_profile(client)
-    values = ["Jose Garcia", "José García", "Anna"]
+    values: list[str | None] = ["Jose Garcia", "José García", "Anna"]
     run_a = _execute_run(client, profile_id, values)
     run_b = _execute_run(client, profile_id, values)
 

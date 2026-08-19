@@ -6,10 +6,24 @@ LRU tier actually evicts under pressure.
 
 from __future__ import annotations
 
+from typing import TypedDict
+
 import pytest
 from normexec.cache import NormalizationCache, make_cache_key
 
 from normcore import FieldSemanticType, NormalizationStatus, NormalizedValue
+
+
+class _CacheKeyInputs(TypedDict):
+    """`**kwargs`-unpacking a plain `dict[str, X]` into `make_cache_key`
+    only type-checks per-key against a TypedDict — a plain dict forces
+    every value to the same type, which doesn't fit `profile_version:
+    str` next to `semantic_type: FieldSemanticType`."""
+
+    profile_version: str
+    semantic_type: FieldSemanticType
+    context_hash: str
+    env_id: str
 
 
 @pytest.mark.unit
@@ -28,7 +42,7 @@ def test_cache_key_never_contains_the_raw_value() -> None:
 
 @pytest.mark.unit
 def test_cache_key_stable_and_sensitive_to_each_input() -> None:
-    base = {
+    base: _CacheKeyInputs = {
         "profile_version": "v1",
         "semantic_type": FieldSemanticType.EMAIL,
         "context_hash": "c" * 64,
@@ -38,9 +52,12 @@ def test_cache_key_stable_and_sensitive_to_each_input() -> None:
     key_b = make_cache_key("value", **base)
     assert key_a == key_b  # stable
 
-    assert make_cache_key("value", **{**base, "profile_version": "v2"}) != key_a
-    assert make_cache_key("value", **{**base, "context_hash": "d" * 64}) != key_a
-    assert make_cache_key("value", **{**base, "env_id": "f" * 64}) != key_a
+    with_new_profile_version: _CacheKeyInputs = {**base, "profile_version": "v2"}
+    with_new_context_hash: _CacheKeyInputs = {**base, "context_hash": "d" * 64}
+    with_new_env_id: _CacheKeyInputs = {**base, "env_id": "f" * 64}
+    assert make_cache_key("value", **with_new_profile_version) != key_a
+    assert make_cache_key("value", **with_new_context_hash) != key_a
+    assert make_cache_key("value", **with_new_env_id) != key_a
     assert make_cache_key("other-value", **base) != key_a
 
 

@@ -160,6 +160,7 @@ class TestStatusAndViews:
         self, normalizer: CompanyNormalizer, ctx: NormalizationContext
     ) -> None:
         result = normalizer.normalize("Acme Corp Inc.", ctx)
+        assert result.comparison is not None
         assert "inc" not in result.comparison.casefold()
         assert "acme corp" in result.comparison.casefold()
 

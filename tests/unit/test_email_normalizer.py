@@ -87,6 +87,7 @@ class TestProviderSpecificRulesOffByDefault:
     ) -> None:
         result = normalizer.normalize("john+newsletter@example.com", ctx)
         assert result.structured["local_part"] == "john+newsletter"
+        assert result.display is not None
         assert "+newsletter" in result.display
 
 

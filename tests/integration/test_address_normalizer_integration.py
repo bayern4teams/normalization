@@ -7,6 +7,8 @@ Requires `docker compose up -d libpostal` first.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+
 import pytest
 from normalizers.address import AddressNormalizer, LibpostalClient, LibpostalUnavailableError
 from normcore.context import NormalizationContext
@@ -16,7 +18,7 @@ _LIBPOSTAL_URL = "http://localhost:8081"
 
 
 @pytest.fixture(scope="module")
-def libpostal_client() -> LibpostalClient:
+def libpostal_client() -> Iterator[LibpostalClient]:
     client = LibpostalClient(_LIBPOSTAL_URL)
     try:
         client.health()

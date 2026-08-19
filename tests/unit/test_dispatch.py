@@ -41,7 +41,7 @@ def _context(**overrides: object) -> NormalizationContext:
         "semantic_type": FieldSemanticType.PERSON_NAME,
     }
     defaults.update(overrides)
-    return NormalizationContext(**defaults)  # type: ignore[arg-type]
+    return NormalizationContext(**defaults)
 
 
 @pytest.mark.unit

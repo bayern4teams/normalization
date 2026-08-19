@@ -42,8 +42,15 @@ jobs:
       - name: Ruff lint
         run: uv run ruff check .
 
-      - name: mypy --strict
+      - name: mypy --strict (packages)
         run: uv run mypy packages
+
+      - name: mypy --strict (tests)
+        # Was never actually checked in any gate until M9's self-audit
+        # found 46 real (mostly narrowing/generics) errors across 18
+        # files spanning M1-M8 — fixed then, enforced here now so it
+        # cannot silently regrow.
+        run: uv run mypy tests
 
       - name: Unit + golden + property + contract tests with coverage
         run: >

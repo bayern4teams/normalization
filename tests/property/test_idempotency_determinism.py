@@ -11,6 +11,7 @@ dependence in the *value* fields).
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Literal
 
 import pytest
 from hypothesis import HealthCheck, given, settings
@@ -28,9 +29,10 @@ _ctx = NormalizationContext(field_name="notes", semantic_type=FieldSemanticType.
 # whitespace, symbols) — deliberately not restricted to ASCII, since the
 # whole point of this milestone is Unicode-correctness under fuzzing, not
 # just on the hand-picked golden corpus.
+_BLACKLIST_CATEGORIES: tuple[Literal["Cs"]] = ("Cs",)  # lone surrogates (invalid Unicode)
 _TEXT_STRATEGY = st.text(
     alphabet=st.characters(
-        blacklist_categories=("Cs",),  # exclude lone surrogates (invalid Unicode)
+        blacklist_categories=_BLACKLIST_CATEGORIES,
         min_codepoint=0x20,
     ),
     min_size=0,

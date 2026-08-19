@@ -7,6 +7,7 @@ NormalizationError surfacing path (Source.txt §68, §69, §98
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 from fastapi.testclient import TestClient
@@ -24,6 +25,14 @@ from normcore import (
     RunStatus,
 )
 
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    import pyarrow as pa
+    from normcore.context import NormalizationContext
+    from normcore.interfaces import ComponentVersion, Explanation, StepSpec, ValidationResult
+    from normcore.models import NormalizedValue
+
 _DICT_ROOT = Path(__file__).parents[2] / "data" / "dictionaries"
 
 
@@ -37,25 +46,25 @@ class _AlwaysFailsNormalizer:
     name = "AlwaysFails"
     supported_types = frozenset({FieldSemanticType.PERSON_NAME})
 
-    def can_handle(self, field_type: object, ctx: object) -> bool:
+    def can_handle(self, field_type: FieldSemanticType, ctx: NormalizationContext) -> bool:
         return True
 
-    def normalize(self, value: str | None, ctx: object) -> object:
+    def normalize(self, value: str | None, ctx: NormalizationContext) -> NormalizedValue:
         raise NormalizerFailure("boom", operation="test_failure")
 
-    def normalize_batch(self, values: object, ctx: object) -> object:
+    def normalize_batch(self, values: pa.Array, ctx: NormalizationContext) -> pa.StructArray:
         raise NotImplementedError
 
-    def validate(self, value: object, ctx: object) -> object:
+    def validate(self, value: str | None, ctx: NormalizationContext) -> ValidationResult:
         raise NotImplementedError
 
-    def explain(self, result: object) -> object:
+    def explain(self, result: NormalizedValue) -> Explanation:
         raise NotImplementedError
 
-    def version(self) -> object:
+    def version(self) -> ComponentVersion:
         raise NotImplementedError
 
-    def steps(self) -> object:
+    def steps(self) -> Sequence[StepSpec]:
         return []
 
     def inverse(self, step_id: str, value: str) -> None:

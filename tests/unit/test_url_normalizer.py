@@ -41,6 +41,7 @@ class TestMissingValues:
 class TestSchemeAndHost:
     def test_scheme_lowercased(self, normalizer: URLNormalizer) -> None:
         result = normalizer.normalize("HTTP://example.com/", _ctx())
+        assert result.display is not None
         assert result.display.startswith("http://")
 
     def test_host_lowercased(self, normalizer: URLNormalizer) -> None:
@@ -56,14 +57,17 @@ class TestSchemeAndHost:
 class TestDefaultPortRemoval:
     def test_http_default_port_removed(self, normalizer: URLNormalizer) -> None:
         result = normalizer.normalize("http://example.com:80/", _ctx())
+        assert result.display is not None
         assert ":80" not in result.display
 
     def test_https_default_port_removed(self, normalizer: URLNormalizer) -> None:
         result = normalizer.normalize("https://example.com:443/", _ctx())
+        assert result.display is not None
         assert ":443" not in result.display
 
     def test_non_default_port_kept(self, normalizer: URLNormalizer) -> None:
         result = normalizer.normalize("http://example.com:8080/", _ctx())
+        assert result.display is not None
         assert ":8080" in result.display
 
 
@@ -73,6 +77,7 @@ class TestPercentEncodingNormalization:
         """Source.txt §42: percent-encoding normalized "where safe" — '~'
         (0x7E) is RFC 3986 unreserved, always safe to decode."""
         result = normalizer.normalize("https://example.com/a%7Eb", _ctx())
+        assert result.display is not None
         assert "%7E" not in result.display
         assert "~" in result.display
 
@@ -80,10 +85,12 @@ class TestPercentEncodingNormalization:
         """'/' (0x2F) is reserved — decoding it inside a path segment would
         change the URL's structure, so it must stay encoded."""
         result = normalizer.normalize("https://example.com/a%2Fb", _ctx())
+        assert result.display is not None
         assert "%2F" in result.display
 
     def test_hex_digits_uppercased(self, normalizer: URLNormalizer) -> None:
         result = normalizer.normalize("https://example.com/a%2fb", _ctx())
+        assert result.display is not None
         assert "%2F" in result.display
         assert "%2f" not in result.display
 
@@ -111,6 +118,7 @@ class TestTrailingSlashPolicy:
         self, normalizer: URLNormalizer
     ) -> None:
         result = normalizer.normalize("https://example.com/path/", _ctx())
+        assert result.display is not None
         assert result.display.endswith("/path/")
 
 
@@ -119,6 +127,7 @@ class TestTrackingParams:
     def test_tracking_param_detected_but_not_removed(self, normalizer: URLNormalizer) -> None:
         result = normalizer.normalize("https://example.com/?utm_source=x&y=1", _ctx())
         assert result.structured["tracking_params_detected"] == ["utm_source"]
+        assert result.display is not None
         assert "utm_source=x" in result.display  # never silently stripped
         assert QualityFlag.POTENTIAL_COLLISION in result.flags
 
@@ -132,6 +141,7 @@ class TestTrackingParams:
 class TestFragmentPreserved:
     def test_fragment_kept(self, normalizer: URLNormalizer) -> None:
         result = normalizer.normalize("https://example.com/#section", _ctx())
+        assert result.display is not None
         assert result.display.endswith("#section")
 
 

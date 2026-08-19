@@ -124,6 +124,7 @@ def test_ab001_collision_report(identifier_normalizer: IdentifierNormalizer) -> 
 
     groups: dict[str, list[str]] = defaultdict(list)
     for label, result in (("AB-001", with_sep), ("AB001", without_sep)):
+        assert result.comparison is not None
         groups[result.comparison].append(label)
 
     assert len(groups) == 2, "AB-001 and AB001 must remain distinct comparison groups"
@@ -190,7 +191,8 @@ def test_unit_conversion_is_dimensionally_sound(unit_normalizer: UnitNormalizer)
 def test_dimension_mismatch_is_rejected_by_pint_itself() -> None:
     """Gate G5: dimension-mismatch rejected — proven directly against
     the real Pint library UnitNormalizer relies on, not just asserted."""
-    ureg = pint.UnitRegistry()
-    length = ureg("5 km")
+    # pint's own type stubs expose UnitRegistry/Quantity as generic with
+    # no usable default — not worth fighting for one local variable here.
+    length = pint.UnitRegistry()("5 km")  # type: ignore[var-annotated]
     with pytest.raises(pint.DimensionalityError):
         length.to("kilogram")

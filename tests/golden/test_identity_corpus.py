@@ -215,7 +215,11 @@ def test_full_corpus_collision_grouping_report(
     comparison-key groups — a regression guard against a normalizer
     change accidentally merging or splitting identities."""
     ctx = NormalizationContext(field_name="full_name", semantic_type=FieldSemanticType.PERSON_NAME)
-    groups: dict[str, list[str]] = defaultdict(list)
+    # str | None (not str): comparison is None for an AMBIGUOUS result —
+    # allowed as a dict key like any other, and the corpus's own
+    # uniqueness assertion below still catches it if two names collapse
+    # into the same (possibly-None) group.
+    groups: dict[str | None, list[str]] = defaultdict(list)
     for value in NAME_CASES:
         result = name_normalizer.normalize(value, ctx)
         groups[result.comparison].append(value)

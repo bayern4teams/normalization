@@ -9,6 +9,8 @@ run standalone.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+
 import i18naddress
 import pytest
 from normalizers.address import AddressNormalizer, LibpostalClient
@@ -23,7 +25,7 @@ _LIBPOSTAL_URL = "http://localhost:8081"
 
 
 @pytest.fixture(scope="module")
-def address_normalizer() -> AddressNormalizer:
+def address_normalizer() -> Iterator[AddressNormalizer]:
     client = LibpostalClient(_LIBPOSTAL_URL)
     try:
         client.health()
@@ -138,6 +140,8 @@ def test_gb_uk_ambiguity_surfaced_not_resolved(country_normalizer: CountryNormal
     # "UK" resolved via an alias, flagged as such; "United Kingdom" is an
     # exact name match, not flagged — the ambiguity is surfaced via the
     # flag/confidence difference, never silently erased.
+    assert uk_result.confidence is not None
+    assert gb_result.confidence is not None
     assert uk_result.confidence < gb_result.confidence
 
 

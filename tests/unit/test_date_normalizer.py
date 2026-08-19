@@ -106,6 +106,8 @@ class TestContextResolvesAmbiguity:
     ) -> None:
         context_resolved = normalizer.normalize("03/04/2024", _ctx(country="US"))
         unambiguous = normalizer.normalize("25/12/2024", _ctx())
+        assert context_resolved.confidence is not None
+        assert unambiguous.confidence is not None
         assert context_resolved.confidence < unambiguous.confidence
 
 
