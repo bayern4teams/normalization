@@ -72,6 +72,14 @@ class Dispatcher:
         track env_id separately from the Dispatcher that stamps it."""
         return self._env_id
 
+    @property
+    def registry(self) -> NormalizerRegistry:
+        """Public read-only access to the bound registry — callers that
+        need to introspect which normalizer handles a semantic type
+        (§61 field-type detection, §62/§84 profile suggestion) without
+        reaching into a private attribute across a package boundary."""
+        return self._registry
+
     def normalize(
         self,
         value: str | None,

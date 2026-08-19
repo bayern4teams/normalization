@@ -269,6 +269,19 @@ export interface FieldSummary {
   profile_ids: string[];
 }
 
+export interface TypeSuggestion {
+  semantic_type: FieldSemanticType;
+  confidence: number;
+  reason: string;
+}
+
+export interface ProfileSuggestion {
+  semantic_type: FieldSemanticType;
+  recommended_summary: string;
+  risk: string;
+  real_steps: string[];
+}
+
 export const FIELD_SEMANTIC_TYPES: FieldSemanticType[] = [
   "FREE_TEXT",
   "PERSON_NAME",

@@ -145,6 +145,7 @@ jobs:
         run: |
           uv run mutmut run --paths-to-mutate packages/normcore/src,packages/normalizers/src || true
           uv run mutmut results
+          uv run mutmut export-cicd-stats
           uv run python -m normcli mutation-score-gate --min-score 0.75
 
   e2e:

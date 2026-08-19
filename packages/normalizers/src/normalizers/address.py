@@ -27,7 +27,6 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 import blake3
 import httpx
-import i18naddress
 import pyarrow as pa
 from normcore.context import NormalizationContext
 from normcore.enums import (
@@ -45,6 +44,7 @@ from normcore.unicode_policy import UnicodeForm
 
 from normalizers import text_ops
 from normalizers.country_codes import resolve_country_alpha2
+from normalizers.postcode_validation import validate_postcode_format
 from normalizers.unicode_normalizer import (
     UnicodeNormalizer,
     UnicodeProcessingOptions,
@@ -323,20 +323,7 @@ def _validate_postcode(structured: dict[str, object], ctx: NormalizationContext)
     country_code = resolve_country_alpha2(raw_country)
     if country_code is None:
         return None
-    try:
-        rules = i18naddress.get_validation_rules({"country_code": country_code})
-    except ValueError:
-        return None
-    if not rules.postal_code_matchers:
-        return None
-    # libpostal lowercases every component; the postal-code regex
-    # patterns `google-i18n-address` ships are uppercase (matching
-    # ValidationRules.upper_fields including "postal_code") — without
-    # this, every real postcode failed validation regardless of actual
-    # correctness (found empirically in M4 against the real libpostal
-    # sidecar: UK/Canadian postcodes both spuriously "invalid").
-    normalized_postcode = postcode.upper()
-    return any(matcher.match(normalized_postcode) for matcher in rules.postal_code_matchers)
+    return validate_postcode_format(postcode, country_code)
 
 
 def _fallback(

@@ -27,6 +27,7 @@ from normalizers.name import NameNormalizer
 from normalizers.numeric import NumericNormalizer
 from normalizers.passthrough import PassthroughNormalizer
 from normalizers.phone import PhoneNormalizer
+from normalizers.postcode import PostcodeNormalizer
 from normalizers.script import ScriptNormalizer
 from normalizers.unit import UnitNormalizer
 from normalizers.url import URLNormalizer
@@ -123,6 +124,7 @@ def create_app(
     registry.register(PhoneNormalizer())
     registry.register(EmailNormalizer())
     registry.register(AddressNormalizer(LibpostalClient(_DEFAULT_LIBPOSTAL_URL)))
+    registry.register(PostcodeNormalizer())
     registry.register(DateNormalizer())
     registry.register(CountryNormalizer())
     registry.register(LanguageNormalizer())

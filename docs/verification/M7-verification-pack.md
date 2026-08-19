@@ -297,6 +297,104 @@ npm --prefix ui run test:e2e
 | Profiles are versioned, never overwritten; rollback never deletes (§95, §120) | ✅ Unchanged from M6, now has a real UI on top of it |
 | (Remaining criteria are M8/later scope) | — |
 
+## 6. Addendum — unbiased M1–M7 self-audit (same session, before M8)
+
+At the user's explicit request, before starting M8: a from-scratch,
+unbiased audit of the entire M1–M7 body of work, looking for anything
+silently missed rather than trusting prior milestones' own sign-off
+claims. Method: cross-checked `docs/traceability-matrix.md` (a document
+that had itself gone stale — see below) against real repository state
+section by section, grepped for stub/TODO markers, and verified every
+`FieldSemanticType` has a real registered normalizer. This found six
+real, previously-undisclosed gaps — not staleness, actual missing
+requirements — all fixed, tested, and verified live in this same
+session:
+
+1. **`FieldSemanticType.POSTCODE` had no registered normalizer** (§32)
+   — existed in the enum since M1, silently fell through to
+   `PassthroughNormalizer` for any dataset with a standalone postcode
+   column (common — a "zip_code" field separate from a full address).
+   Fixed: `normalizers.postcode.PostcodeNormalizer`, reusing the exact
+   same `google-i18n-address` validation `AddressNormalizer` already
+   used (extracted into a shared `normalizers.postcode_validation`
+   module so there's one real implementation, not two). 10 new unit
+   tests; re-verified `AddressNormalizer` itself against the real
+   libpostal sidecar after the extraction (6/6 integration tests still
+   passing).
+2. **§61 (automatic field-type detection) was never built** — spec'd
+   for M7, absent from the M7 pack's own scope table, and never
+   disclosed as a gap. Fixed: `normanalysis.type_detection` (real
+   field-name pattern matching + optional real-parser sample-value
+   confirmation, reproducing §61's own worked examples almost exactly:
+   mobile→PHONE 90%, dob→DATE 97%, customer_name→PERSON_NAME 80%,
+   user_id→IDENTIFIER 91%), `POST /normalization/detect-type`, a real
+   UI widget on the Fields page. 19 unit tests + 1 new E2E spec.
+3. **§62/§84 (profile/normalization auto-suggestion) was never built**
+   — same story as §61. Fixed: `normanalysis.profile_suggestion`
+   (curated recommendation + risk text per semantic type, grounded in
+   `real_steps` read live from the registry — e.g. phone's suggestion
+   genuinely says "libphonenumber... E.164" and lists the real
+   `phone.parse` trace step, not invented copy), `GET /normalization/
+   suggest-profile`, sharing the Fields page widget with §61. 12 unit
+   tests.
+4. **No automated check for §129 ("no LLM in core normalization") or
+   §135 ("must stop before Splink")** — both are supposed to be
+   enforced "at every gate" per the spec, but nothing actually verified
+   it; it was true only because no line of code ever happened to
+   violate it, not because anything would catch a future violation.
+   Fixed: `tests/unit/test_no_llm_in_core.py` and `test_no_splink.py`,
+   real static import-grep checks across every core package.
+5. **No dedicated PII-masking safety test** (§123) — `normcore.pii`'s
+   masking guarantee (the thing that makes traces/logs safe by default)
+   had never been directly, adversarially tested; only exercised
+   incidentally as a side effect of unrelated tests. Fixed:
+   `tests/unit/test_pii_masking.py`, 23 tests including a check that a
+   real `EmailNormalizer` trace never leaks the raw address.
+6. **`normcli` was a completely empty package** — no `__main__.py`, no
+   commands at all. `.github/workflows/gate.yml`'s `mutation-testing`
+   job calls `python -m normcli mutation-score-gate --min-score 0.75`,
+   which would have crashed with `ModuleNotFoundError` the first time
+   that job actually ran. Separately, `docs/traceability-matrix.md` had
+   claimed since M0 that `normcli gate --check-traceability` was "built
+   in M1" and ran at every gate — also false. Fixed: a real, minimal
+   `normcli` with two working commands — `check-traceability` (parses
+   real `§N` headers out of `Source.txt`, cross-checks every row in the
+   matrix, currently passes: all 138 sections present) and
+   `mutation-score-gate` (reads mutmut 3.x's real `export-cicd-stats`
+   JSON output format, verified against the actual installed package
+   source since mutmut doesn't run natively on this Windows dev
+   machine — WSL/Linux only, which is why CI's mutation job runs on
+   `ubuntu-latest`). `gate.yml` updated to call `mutmut
+   export-cicd-stats` before the gate command, which it was never
+   doing. 14 unit tests. Wiring `check-traceability` itself into a CI
+   job (so a future silently-dropped row is caught automatically, not
+   just by another manual audit) is a reasonable M8 follow-up — noted
+   in the matrix rather than assumed done.
+
+Also reviewed and judged **not** gaps, to avoid over-correcting: §57
+(abbreviation normalization) is satisfied by `AddressNormalizer`
+delegating to libpostal — §57 itself explicitly prohibits building "a
+universal expansion dictionary," and no other field type has an
+abbreviation concept, so there was nothing to add. `FieldSemanticType.
+UNKNOWN` correctly has no dedicated normalizer (falling through to
+`PassthroughNormalizer` is the intended "refuse to guess" behavior, not
+a gap).
+
+**Full fresh verification after all six fixes**: `ruff check`/`ruff
+format --check` clean, `mypy packages` clean (79 source files), `pytest
+-m "unit or golden or property"` → 744 passed / 12 skipped (up from 664
+before the audit — 80 new tests), `pytest tests/integration/
+test_address_normalizer_integration.py` → 6/6 passed against a freshly
+started real libpostal container (re-verifying the postcode-validation
+extraction didn't regress `AddressNormalizer`), `npm run build`/`lint`
+clean, and the full Playwright e2e suite → 10/10 passed (9 original +
+1 new for §61/§62/§84) against a freshly rebuilt UI and freshly started
+API. `docs/traceability-matrix.md` refreshed: corrected the false
+"built in M1" claim, updated the six affected rows, and added an
+explicit note that Test-location columns reflect topic/intent rather
+than a guaranteed exact filename (consolidated per-milestone test
+organization was a deliberate, disclosed M2 choice, not drift).
+
 ## Human Sign-off
 
 milestone: M7

@@ -13,10 +13,12 @@ from normanalysis.invariant_sampler import (
     sample_and_check,
 )
 from normanalysis.overview import OverviewReport, compute_overview
+from normanalysis.profile_suggestion import ProfileSuggestion, suggest_profile
 from normanalysis.profiling import FieldProfile, TransformationPatternCount, profile_field
 from normanalysis.quality import QualityMetric, QualityReport, compute_quality_report
 from normanalysis.run_recorder import InvalidRunTransitionError, RunRecorder
 from normanalysis.telemetry import NormalizationMetrics, TelemetryHandles, setup_telemetry
+from normanalysis.type_detection import TypeSuggestion, suggest_semantic_type
 
 __all__ = [
     "AbComparisonReport",
@@ -28,12 +30,14 @@ __all__ = [
     "InvariantViolation",
     "NormalizationMetrics",
     "OverviewReport",
+    "ProfileSuggestion",
     "QualityMetric",
     "QualityReport",
     "RunRecorder",
     "SideMetrics",
     "TelemetryHandles",
     "TransformationPatternCount",
+    "TypeSuggestion",
     "compare_runs",
     "compute_impact",
     "compute_overview",
@@ -43,4 +47,6 @@ __all__ = [
     "profile_field",
     "sample_and_check",
     "setup_telemetry",
+    "suggest_profile",
+    "suggest_semantic_type",
 ]

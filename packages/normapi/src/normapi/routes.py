@@ -26,6 +26,8 @@
     GET  /normalization/runs/{id}/profile             (M6, §77)
     GET  /normalization/overview                      (M7, §90)
     GET  /normalization/quality                        (M7, §93)
+    POST /normalization/detect-type                    (M7-audit, §61)
+    GET  /normalization/suggest-profile                (M7-audit, §62/§84)
 
 Every route is registered and returns a schema-valid response (M1's Gate
 G1 requirement). As of M6: profile/run CRUD+rollback, field-test/preview,
@@ -47,6 +49,8 @@ from normanalysis import (
     compute_quality_report,
     find_collisions,
     profile_field,
+    suggest_profile,
+    suggest_semantic_type,
 )
 from normapi.dependencies import (
     get_custom_dictionary_store,
@@ -56,6 +60,7 @@ from normapi.dependencies import (
 )
 from normapi.scaffold_profile import SCAFFOLD_PROFILE
 from normapi.schemas import (
+    DetectTypeRequest,
     DictionaryCreateRequest,
     DictionaryRollbackRequest,
     DictionarySummary,
@@ -65,8 +70,10 @@ from normapi.schemas import (
     PreviewRequest,
     ProfileCreateRequest,
     ProfileRollbackRequest,
+    ProfileSuggestionResponse,
     ProfileVersionRequest,
     RunExecutionRequest,
+    TypeSuggestionResponse,
 )
 from normapi.store import (
     InMemoryStore,
@@ -75,6 +82,7 @@ from normapi.store import (
 )
 from normcore import (
     Dispatcher,
+    FieldSemanticType,
     NormalizationContext,
     NormalizationError,
     NormalizationProfile,
@@ -197,6 +205,48 @@ def list_fields(store: Annotated[InMemoryStore, Depends(get_store)]) -> list[Fie
             elif profile.id not in by_field[config.field_ref].profile_ids:
                 by_field[config.field_ref].profile_ids.append(profile.id)
     return list(by_field.values())
+
+
+@router.post("/detect-type", response_model=list[TypeSuggestionResponse])
+def detect_type(
+    body: DetectTypeRequest,
+    dispatcher: Annotated[Dispatcher, Depends(get_dispatcher)],
+) -> list[TypeSuggestionResponse]:
+    """§61 automatic field type detection — a ranked list of
+    suggestions, never applied automatically (§85: the user must accept/
+    modify/reject)."""
+    suggestions = suggest_semantic_type(
+        body.field_name,
+        sample_values=body.sample_values or None,
+        registry=dispatcher.registry,
+    )
+    return [
+        TypeSuggestionResponse(
+            semantic_type=s.semantic_type, confidence=s.confidence, reason=s.reason
+        )
+        for s in suggestions
+    ]
+
+
+@router.get("/suggest-profile", response_model=ProfileSuggestionResponse)
+def suggest_profile_route(
+    semantic_type: FieldSemanticType,
+    dispatcher: Annotated[Dispatcher, Depends(get_dispatcher)],
+    sample_value: str | None = None,
+) -> ProfileSuggestionResponse:
+    """§62/§84 normalization profile auto-generation — a suggestion only;
+    `real_steps` is read from the live registry, never fabricated."""
+    suggestion = suggest_profile(
+        semantic_type,
+        registry=dispatcher.registry,
+        sample_value=sample_value,
+    )
+    return ProfileSuggestionResponse(
+        semantic_type=suggestion.semantic_type,
+        recommended_summary=suggestion.recommended_summary,
+        risk=suggestion.risk,
+        real_steps=list(suggestion.real_steps),
+    )
 
 
 # --- preview / field-test ---------------------------------------------------

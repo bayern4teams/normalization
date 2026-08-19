@@ -73,6 +73,14 @@ class ProfileRollbackRequest(BaseModel):
     target_version: str
 
 
+class DetectTypeRequest(BaseModel):
+    """§61 automatic field type detection — a suggestion only, never
+    auto-applied (§85 "no silent changes")."""
+
+    field_name: str
+    sample_values: list[str | None] = Field(default_factory=list)
+
+
 class DictionaryCreateRequest(BaseModel):
     id: str
     entries: dict[str, Any] = Field(default_factory=dict)
@@ -94,6 +102,19 @@ class DictionaryVersionRequest(BaseModel):
 class DictionaryRollbackRequest(BaseModel):
     target_version: str
     by: str
+
+
+class TypeSuggestionResponse(BaseModel):
+    semantic_type: FieldSemanticType
+    confidence: float
+    reason: str
+
+
+class ProfileSuggestionResponse(BaseModel):
+    semantic_type: FieldSemanticType
+    recommended_summary: str
+    risk: str
+    real_steps: list[str]
 
 
 class FieldSummary(BaseModel):
@@ -127,6 +148,7 @@ class NotImplementedResponse(BaseModel):
 
 
 __all__ = [
+    "DetectTypeRequest",
     "DictionaryCreateRequest",
     "DictionaryRollbackRequest",
     "DictionarySummary",
@@ -137,6 +159,8 @@ __all__ = [
     "PreviewRequest",
     "ProfileCreateRequest",
     "ProfileRollbackRequest",
+    "ProfileSuggestionResponse",
     "ProfileVersionRequest",
     "RunExecutionRequest",
+    "TypeSuggestionResponse",
 ]

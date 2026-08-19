@@ -2,10 +2,32 @@
 
 Status: living document — every row must remain accurate as implementation
 proceeds; update in the same PR that touches the corresponding module or
-test. Last updated: M6 (2026-08-18) — only the rows M6 actually touched
-were refreshed. This file was not updated during M2–M5 despite its own
-stated policy (a pre-existing gap, not introduced by M6, flagged in the
-M6 verification pack rather than silently remediated for every row).
+test. Last updated: M7 follow-up self-audit (2026-08-19) — the user asked
+for an unbiased, from-scratch audit of M1–M7 before M8 began. That audit
+cross-checked this file against the real repository state for the first
+time since M0 and found several real, previously-undisclosed gaps (not
+just staleness): §32 (POSTCODE had no registered normalizer), §61/§62/§84
+(field-type detection and profile auto-suggestion were never built), and
+missing regression coverage for §123/§129/§135. All were fixed, tested,
+and verified live in the same session — see `docs/verification/
+M7-verification-pack.md`'s addendum for the full list.
+
+**Test location columns below are the topic/intent captured at the time
+each row was written, not a guaranteed exact current filename** — actual
+test organization consolidated multiple sections' golden-corpus tests
+into fewer per-milestone files (e.g. `tests/golden/test_m5_corpus.py`
+covers §46–§55) rather than one file per section, a deliberate,
+disclosed choice, not drift. To verify current *section coverage*
+(every §N present somewhere), run the real mechanical check:
+
+```bash
+uv run python -m normcli check-traceability
+```
+
+(This command itself was, ironically, one of the audit's own findings —
+this file had claimed since M0 that it was "built in M1" and ran at
+every gate; neither was true until this same audit session built
+`normcli` for real. See §127/§136 rows below.)
 
 Maps every numbered section of the original specification (`Source.txt`,
 138 sections numbered §0–§137) to the milestone and phase that implements
@@ -51,7 +73,7 @@ Legend — **Mile.**: milestone; **Ph.**: implementation phase per §127.
 | 29 | Address normalization | M4 | 8 | `normalizers.address`, `services/libpostal` | `tests/golden/test_address.py` |
 | 30 | Address display vs comparison | M4 | 8 | `normalizers.address` | `tests/contract/test_address_views.py` |
 | 31 | Address expansion | M4 | 8 | `normalizers.address` | `tests/golden/test_address_expansion.py` |
-| 32 | Postal code normalization | M4 | 8 | `normalizers.address` (google-i18n-address) | `tests/golden/test_postal_codes.py` |
+| 32 | Postal code normalization | M4 (embedded-in-address), M7-audit (standalone `POSTCODE` field) | 8 | `normalizers.address` (google-i18n-address), `normalizers.postcode` (standalone field, real gap found/closed by the M7 follow-up audit — `FieldSemanticType.POSTCODE` existed since M1 but had no registered normalizer) | `tests/unit/test_address_normalizer.py`, `tests/unit/test_postcode_normalizer.py` |
 | 33 | Country normalization | M4 | 10 | `normalizers.country` | `tests/golden/test_country.py` |
 | 34 | Language normalization | M4 | 10 | `normalizers.language` | `tests/golden/test_language.py` |
 | 35 | Script normalization | M4 | 10 | `normalizers.script` | `tests/golden/test_script.py` |
@@ -76,12 +98,12 @@ Legend — **Mile.**: milestone; **Ph.**: implementation phase per §127.
 | 54 | NULL vs empty vs unknown | M2 | 3 | `normcore.enums.MissingKind` | `tests/contract/test_missing_kind.py` |
 | 55 | Numeric / text confusion | M5 | 11 | `normalizers.identifier` | `tests/golden/test_numeric_text_confusion.py` |
 | 56 | Token normalization | M2 | 3 | `normalizers.generic_text` | `tests/golden/test_tokenization.py` |
-| 57 | Abbreviation normalization | M2, M6 | 3, 13 | `normdict` | `tests/golden/test_abbreviations.py` |
+| 57 | Abbreviation normalization | M4 (address abbreviations only, verified M7-audit) | 8 | Delegated entirely to libpostal inside `normalizers.address` — §57 explicitly prohibits "a universal expansion dictionary," and no other field type in this system has an abbreviation concept, so no separate `normdict` abbreviation dictionary was built (a deliberate non-gap, confirmed during the M7-audit, not an oversight) | `tests/unit/test_address_normalizer.py` |
 | 58 | Dictionary framework | M1 (read), M6 (full) | 2, 13 | `normdict.loader`, `normdict.custom_store` | `tests/unit/test_normdict.py`, `tests/unit/test_custom_dictionary_store.py` |
 | 59 | User custom dictionaries | M6 | 13 | `normdict.custom_store.CustomDictionaryStore` | `tests/unit/test_custom_dictionary_store.py`, `tests/golden/test_m6_corpus.py` |
 | 60 | Semantic normalization | M1 (dispatch), M7 (UI) | 2, 16 | `normcore.dispatch`, `normapi` | `tests/unit/test_semantic_dispatch.py` |
-| 61 | Automatic field type detection | M7 | 16 | `normanalysis.type_detection` | `tests/unit/test_type_detection.py` |
-| 62 | Normalization profile auto-generation | M7 | 16 | `normanalysis.profile_suggestion` | `tests/unit/test_profile_autogen.py` |
+| 61 | Automatic field type detection | M7-audit (planned M7, not actually built until the follow-up self-audit) | 16 | `normanalysis.type_detection`, `POST /normalization/detect-type`, Fields page UI | `tests/unit/test_type_detection.py` |
+| 62 | Normalization profile auto-generation | M7-audit (planned M7, not actually built until the follow-up self-audit) | 16 | `normanalysis.profile_suggestion`, `GET /normalization/suggest-profile`, Fields page UI | `tests/unit/test_profile_suggestion.py` |
 | 63 | Safe defaults | M2 | 3 | `normcore.default_profile` | `tests/unit/test_safe_defaults.py` |
 | 64 | Lossy transformations | M1 (model), M6 (policy) | 2, 14 | `normcore` (`Reversibility`) | `tests/property/test_reversibility.py` |
 | 65 | Normalization trace | M1 (model), M6 (full) | 2, 14 | `normcore.trace` | `tests/contract/test_trace.py` |
@@ -103,7 +125,7 @@ Legend — **Mile.**: milestone; **Ph.**: implementation phase per §127.
 | 81 | Normalization rule builder | M7 | 16 | `ui/src/features/rule-builder` | `tests/e2e/test_rule_builder.spec.ts` |
 | 82 | Before / after UI | M7 | 16 | `ui/src/features/preview` | `tests/e2e/test_before_after.spec.ts` |
 | 83 | Sample-based preview | M7 | 16 | `normapi` preview endpoint, UI | `tests/e2e/test_sample_preview.spec.ts` |
-| 84 | Profile auto-suggestions | M7 | 16 | `normanalysis.profile_suggestion`, UI | `tests/e2e/test_autosuggest.spec.ts` |
+| 84 | Profile auto-suggestions | M7-audit (planned M7, not actually built until the follow-up self-audit) | 16 | `normanalysis.profile_suggestion`, Fields page UI (§61's detection UI and §84's suggestion UI share one compact widget rather than separate pages) | `tests/unit/test_profile_suggestion.py`; verified live in-browser (no dedicated e2e spec yet) |
 | 85 | User control | M7 | 16 | UI (accept/modify/reject) | `tests/e2e/test_user_control.spec.ts` |
 | 86 | Expert mode | M7 | 16 | `ui/src/modes/expert` | `tests/e2e/test_expert_mode.spec.ts` |
 | 87 | Normal mode | M7 | 16 | `ui/src/modes/normal` | `tests/e2e/test_normal_mode.spec.ts` |
@@ -158,7 +180,7 @@ Legend — **Mile.**: milestone; **Ph.**: implementation phase per §127.
 | 136 | Final acceptance criteria | G8 | 18 | — | `docs/verification/M8-verification-pack.md` |
 | 137 | First task before coding | M0 | 1 | — | this milestone itself |
 
-## Coverage check (M0)
+## Coverage check (M0, mechanically verified M7-audit)
 
 - 138 sections total (§0–§137).
 - All 138 mapped to at least one milestone/phase/module/test location above.
@@ -166,6 +188,14 @@ Legend — **Mile.**: milestone; **Ph.**: implementation phase per §127.
   §135) intentionally appear at multiple milestones because they are
   enforced continuously, not delivered once — this is by design, not
   duplication.
-- This table itself is verified for completeness at every gate by
-  `normcli gate --check-traceability`, which asserts every `§N` from
-  `Source.txt`'s section headers appears in this file (built in M1).
+- This table's section-number coverage (not the module/test-location
+  prose, which isn't mechanically checkable) is verified by
+  `uv run python -m normcli check-traceability`, which parses every real
+  `§N` header out of `Source.txt` and asserts each one has at least one
+  row here. **This command did not exist before the M7 follow-up
+  self-audit** despite this file claiming since M0 that it was "built in
+  M1" and ran at every gate — neither was true. `.github/workflows/
+  gate.yml` does not yet invoke it in any job; wiring it into the gate
+  script proper (so a future PR that silently drops a row is caught by
+  CI, not just by a human re-reading this file) is a reasonable M8
+  follow-up, tracked here rather than silently assumed done.

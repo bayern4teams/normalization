@@ -18,7 +18,9 @@ import type {
   NormalizationRun,
   NormalizedValue,
   OverviewReport,
+  ProfileSuggestion,
   QualityReport,
+  TypeSuggestion,
 } from "./types";
 
 const API_BASE = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? "http://localhost:8080";
@@ -116,6 +118,27 @@ export function rollbackProfile(
 
 export function listFields(): Promise<FieldSummary[]> {
   return request("/fields");
+}
+
+// --- type detection / profile suggestion (§61, §62, §84) -------------------
+
+export function detectType(
+  fieldName: string,
+  sampleValues: (string | null)[] = [],
+): Promise<TypeSuggestion[]> {
+  return request("/detect-type", {
+    method: "POST",
+    body: JSON.stringify({ field_name: fieldName, sample_values: sampleValues }),
+  });
+}
+
+export function suggestProfile(
+  semanticType: FieldSemanticType,
+  sampleValue?: string,
+): Promise<ProfileSuggestion> {
+  const params = new URLSearchParams({ semantic_type: semanticType });
+  if (sampleValue) params.set("sample_value", sampleValue);
+  return request(`/suggest-profile?${params.toString()}`);
 }
 
 // --- preview / field-test ------------------------------------------------
