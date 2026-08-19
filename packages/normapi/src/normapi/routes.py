@@ -43,6 +43,8 @@ from fastapi import APIRouter, Body, Depends, HTTPException
 from normcore.pii import safe_preview
 
 from normanalysis import (
+    HandoffArtifact,
+    build_handoff_artifact,
     compare_runs,
     compute_impact,
     compute_overview,
@@ -459,6 +461,35 @@ def get_run_profile(
         )
     profile = profile_field(execution.field_name, execution.results)
     return profile.model_dump(mode="json")
+
+
+@router.get("/runs/{run_id}/handoff", response_model=HandoffArtifact)
+def get_run_handoff(
+    run_id: str, store: Annotated[InMemoryStore, Depends(get_store)]
+) -> HandoffArtifact:
+    """§134 — the artifact this project hands off to the downstream Data
+    Discovery & Entity Context Engine: normalized schema metadata,
+    semantic type, normalized comparison values, parsed components,
+    country/language metadata, validation flags, collision diagnostics,
+    and the stable versioned normalization profile that produced them."""
+    try:
+        run = store.get_run(run_id)
+        execution = store.get_execution(run_id)
+    except RunNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=f"No such run: {run_id}") from exc
+    if execution is None:
+        raise HTTPException(
+            status_code=409, detail=f"Run {run_id} has not been executed with field values"
+        )
+    profile = store.get_profile(run.profile_id, run.profile_version)
+    return build_handoff_artifact(
+        field_name=execution.field_name,
+        semantic_type=execution.semantic_type,
+        profile=profile,
+        env_id=run.env_id,
+        originals=execution.originals,
+        results=execution.results,
+    )
 
 
 # --- dictionaries -------------------------------------------------------

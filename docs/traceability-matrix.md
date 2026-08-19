@@ -117,7 +117,7 @@ Legend — **Mile.**: milestone; **Ph.**: implementation phase per §127.
 | 73 | Version locking | M1, M6 | 2, 14 | `scripts/env_fingerprint.py` | `tests/unit/test_env_fingerprint.py` |
 | 74 | Normalization regression testing | M2+, finalized M8 | 3–18 | `tests/golden/` | `tests/golden/*` |
 | 75 | Cross-language testing | M2, finalized M8 | 3, 18 | `tests/golden/cross_language/` | `tests/golden/cross_language/*` |
-| 76 | Cultural safety | M3, M4, M8 | 4, 8–10, 18 | — | `tests/unit/test_cultural_safety.py` |
+| 76 | Cultural safety | M3, M4 (real per-normalizer AMBIGUOUS/hint behaviors), M8 (consolidated cross-cutting proof) | 4, 8–10, 18 | `NameNormalizer`, `AddressNormalizer`, `PostcodeNormalizer`, `CompanyNormalizer`, `EmailNormalizer` | `tests/unit/test_cultural_safety.py` (all 6 named assumptions, one file) |
 | 77 | Normalization profiling | M6 | 15 | `normanalysis.profiling` | `tests/unit/test_analysis_m6.py`, `tests/golden/test_m6_corpus.py` |
 | 78 | Impact analysis | M6 | 15 | `normanalysis.impact` | `tests/unit/test_analysis_m6.py`, `tests/golden/test_m6_corpus.py` |
 | 79 | Collision analysis | M6 | 15 | `normanalysis.collisions` | `tests/unit/test_analysis_m6.py`, `tests/golden/test_m6_corpus.py` |
@@ -163,7 +163,7 @@ Legend — **Mile.**: milestone; **Ph.**: implementation phase per §127.
 | 119 | Change impact UI | M7 | 16 | `ui/src/features/impact` | `tests/e2e/test_change_impact.spec.ts` |
 | 120 | Safe rollback | M6 (engine), M7 (UI) | 14, 16 | `normcore.profile`, UI | `tests/integration/test_rollback.py` |
 | 121 | Normalization comparison workspace | M7 | 16 | `ui/src/features/comparison` | `tests/e2e/test_comparison_workspace.spec.ts` |
-| 122 | Observability | M1 (wired), M8 (complete) | 2, 17 | `normcore.telemetry` | `tests/integration/test_observability.py` |
+| 122 | Observability | M1 (OTel spans/metrics infra), M8 (full §122 counter set wired into live `execute_run`) | 2, 17 | `normanalysis.telemetry`, `normanalysis.run_recorder.RunRecorder`, `normcore.run.NormalizationRunMetrics`, `normexec.planner.DistinctValuePlanner.distinct_value_results`'s `on_computed` hook | `tests/unit/test_telemetry.py`, `tests/unit/test_run_recorder.py`, `tests/unit/test_planner.py`, `tests/unit/test_observability_metrics.py` (live end-to-end proof through `InMemoryStore.execute_run`) |
 | 123 | Security | M1 (wired), M8 (complete) | 2, 17 | `normcore.pii` | `tests/unit/test_pii_masking.py` |
 | 124 | Open-source license tracking | M0, every gate | 1 | `docs/dependency-inventory.md`, `scripts/check_licenses.py` | CI (`ci-full`, `gate`) |
 | 125 | Architecture decision records | M0 | 1 | `docs/adr/*` | — |
@@ -175,7 +175,7 @@ Legend — **Mile.**: milestone; **Ph.**: implementation phase per §127.
 | 131 | Best-of-breed selection | M0 | 1 | — | `docs/normalization-tool-evaluation.md` |
 | 132 | Final tool evaluation report | M0 | 1 | — | `docs/normalization-tool-evaluation.md` §3 |
 | 133 | Normalization output contract | M1 | 2 | `normcore.contract` | `tests/contract/test_output_contract.py` |
-| 134 | Handoff to Data Discovery | M8 | 18 | `normanalysis.handoff` | `tests/integration/test_handoff_artifact.py` |
+| 134 | Handoff to Data Discovery | M8 | 18 | `normanalysis.handoff.build_handoff_artifact`, `GET /normalization/runs/{run_id}/handoff` | `tests/unit/test_handoff.py` (7 tests against real normalizer output); live-verified via a real running `uvicorn` server (profile create -> run execute -> `GET .../handoff`, confirmed all 8 §134 fields: schema, semantic type, comparison values, parsed components, country metadata, VALID/INVALID validation status, real 3-way collision group) |
 | 135 | Handoff to Splink (must stop before) | enforced every gate | 1–18 | CI check (no splink import) | `tests/unit/test_no_splink.py` |
 | 136 | Final acceptance criteria | G8 | 18 | — | `docs/verification/M8-verification-pack.md` |
 | 137 | First task before coding | M0 | 1 | — | this milestone itself |

@@ -141,9 +141,29 @@ jobs:
           enable-cache: true
       - run: uv python install 3.12
       - run: uv sync --all-extras
-      - name: mutmut on normcore + normalizers
+      - name: bridge normcore + normalizers into a flat src/ mutmut can key correctly
+        # mutmut derives each mutant's tracking key from its file path and
+        # only special-cases stripping a literal leading "src." segment
+        # (see [tool.mutmut]'s source_paths comment in pyproject.toml for
+        # the full root-cause) — a real uv-workspace package path like
+        # packages/normcore/src produces keys that can never match the
+        # real imported module name, and the whole run silently evaluates
+        # zero mutants. Bridging into a flat src/ (matching mutmut's own
+        # `[tool.mutmut] source_paths = ["src"]`) is the fix, verified by
+        # actually running mutmut against this repo, not from its docs.
         run: |
-          uv run mutmut run --paths-to-mutate packages/normcore/src,packages/normalizers/src || true
+          mkdir -p src
+          cp -r packages/normcore/src/normcore src/normcore
+          cp -r packages/normalizers/src/normalizers src/normalizers
+      - name: mutmut on normcore + normalizers
+        # Source paths come from [tool.mutmut] in pyproject.toml, not a
+        # CLI flag — mutmut 3.x's real `mutmut run` command has no
+        # `--paths-to-mutate` option (that name is only a deprecated
+        # *config* key); passing it as a CLI flag fails immediately with
+        # a FileNotFoundError, found by actually running this exact
+        # command during M8, not by reading mutmut's docs.
+        run: |
+          uv run mutmut run || true
           uv run mutmut results
           uv run mutmut export-cicd-stats
           uv run python -m normcli mutation-score-gate --min-score 0.75

@@ -186,6 +186,66 @@ module = [
 ]
 ignore_missing_imports = true
 
+[tool.mutmut]
+# mutmut 3.x's real CLI (`mutmut run`) has no `--paths-to-mutate` flag —
+# that name is the deprecated *config* key, not a CLI option, and passing
+# it as one fails immediately with a FileNotFoundError (verified against
+# the installed package's own click command definitions, not docs, during
+# M8's real mutation-testing run). `source_paths` here is the real,
+# current config key mutmut's own configuration.py reads from
+# `[tool.mutmut]` in this file.
+#
+# `source_paths` MUST be exactly `["src"]`, not the real package
+# locations (`packages/normcore/src`, ...) — mutmut derives each mutant's
+# tracking key from the mutated file's path *relative to source_paths's
+# parent*, with special-case handling to strip a literal leading `"src."`
+# segment (mutmut/utils/format_utils.py's `get_mutant_name`), and
+# separately verifies a hit's *real* Python `__module__` name against
+# that key (mutmut/mutation/trampoline.py). Those two only agree when
+# `source_paths` is the bare, single-segment `"src"` mutmut's own
+# `setup_source_paths()` sys.path convention understands; a multi-segment
+# path like `packages/normcore/src` produces keys like
+# `packages.normcore.src.normcore.dispatch...` that can never match the
+# real imported module name `normcore.dispatch`, and the whole run aborts
+# with "tests recorded trampoline hits but none match any mutant key" —
+# found by actually running `mutmut run` against this repo and reading
+# its trampoline/key-generation source, not from its docs. The CI
+# Dockerfile-equivalent build step bridges this by copying
+# `packages/normcore/src/normcore` and `packages/normalizers/src/normalizers`
+# to a top-level `src/` before running mutmut — see the mutation-testing
+# CI job for the exact bridge commands.
+source_paths = ["src"]
+# mutmut's `mutants/` sandbox only copies `source_paths` + wherever the
+# tests live by default — it does NOT copy the rest of the repo, so any
+# test that reaches outside those (test_env_fingerprint.py needs
+# scripts/env_fingerprint.py, test_normdict.py needs data/dictionaries,
+# the traceability tests need Source.txt/docs/, test_no_llm_in_core.py
+# scans the 5 real `packages/*/src` dirs directly) fails to import inside
+# the sandbox with a plain `pytest -m unit` run, corrupting the WHOLE
+# mutation run (mutmut aborts with 0 mutants evaluated rather than
+# scoring only the reachable ones) — found by actually running `mutmut
+# run` and inspecting its real `mutants/` sandbox contents, not from docs.
+also_copy = [
+    "scripts",
+    "data",
+    "Source.txt",
+    "docs",
+    "conftest.py",
+    "packages/normcore/src",
+    "packages/normalizers/src",
+    "packages/normexec/src",
+    "packages/normdict/src",
+    "packages/normanalysis/src",
+]
+# Restrict the per-mutant test run to the same fast, hermetic marks every
+# other gate in this project uses as its "Layer 1 automated" check (see
+# every M<n>-verification-pack.md's `pytest -m "unit or golden or
+# property"`) — integration/e2e/bench-marked tests need live Docker
+# services or a running dev server that mutmut's isolated `mutants/`
+# sandbox has no way to provide, so running them per-mutant would just
+# fail the baseline outright, not measure real mutation coverage.
+pytest_add_cli_args = ["-m", "unit or golden or property"]
+
 [tool.pytest.ini_options]
 markers = [
     "unit: fast isolated unit tests",

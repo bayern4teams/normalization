@@ -8,6 +8,7 @@ dependencies = [
     "normdict",
     "normalizers",
     "normanalysis",
+    "normexec",
     "fastapi>=0.115,<1",
     "uvicorn[standard]>=0.31,<1",
 ]
@@ -17,6 +18,7 @@ normcore = { workspace = true }
 normdict = { workspace = true }
 normalizers = { workspace = true }
 normanalysis = { workspace = true }
+normexec = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

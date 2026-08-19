@@ -97,3 +97,116 @@ def test_cache_put_overwrites_existing_key() -> None:
         result = cache.get("k1")
         assert result is not None
         assert result.original == "v2"
+
+
+@pytest.mark.unit
+class TestPutMany:
+    def test_empty_batch_is_a_real_no_op(self) -> None:
+        with NormalizationCache(":memory:") as cache:
+            cache.put_many([])  # must not raise
+            assert cache.stats.hits == 0
+            assert cache.stats.misses == 0
+
+    def test_batch_writes_all_items_and_each_is_individually_retrievable(self) -> None:
+        with NormalizationCache(":memory:") as cache:
+            items = [(f"k{i}", _sample_value(f"v{i}")) for i in range(20)]
+            cache.put_many(items)
+
+            for i in range(20):
+                result = cache.get(f"k{i}")
+                assert result is not None
+                assert result.original == f"v{i}"
+
+    def test_batch_result_matches_equivalent_sequential_puts(self) -> None:
+        items = [(f"k{i}", _sample_value(f"v{i}")) for i in range(10)]
+
+        with NormalizationCache(":memory:") as batched_cache:
+            batched_cache.put_many(items)
+            batched_values = [batched_cache.get(f"k{i}") for i in range(10)]
+
+        with NormalizationCache(":memory:") as sequential_cache:
+            for key, value in items:
+                sequential_cache.put(key, value)
+            sequential_values = [sequential_cache.get(f"k{i}") for i in range(10)]
+
+        assert [v.original if v else None for v in batched_values] == [
+            v.original if v else None for v in sequential_values
+        ]
+
+    def test_batch_also_populates_the_lru_tier_immediately(self) -> None:
+        with NormalizationCache(":memory:") as cache:
+            cache.put_many([("k1", _sample_value("v1"))])
+            # A hit here must come from the LRU tier, not require a DuckDB
+            # round-trip — verified indirectly via stats still counting
+            # it as a hit (the public-observable contract `put()` already
+            # guarantees; put_many must not silently skip this).
+            result = cache.get("k1")
+            assert result is not None
+            assert cache.stats.hits == 1
+
+    def test_batch_overwrites_existing_keys(self) -> None:
+        with NormalizationCache(":memory:") as cache:
+            cache.put("k1", _sample_value("old"))
+            cache.put_many([("k1", _sample_value("new"))])
+            result = cache.get("k1")
+            assert result is not None
+            assert result.original == "new"
+
+
+@pytest.mark.unit
+class TestGetMany:
+    def test_empty_keys_is_a_real_no_op(self) -> None:
+        with NormalizationCache(":memory:") as cache:
+            result = cache.get_many([])
+            assert result == {}
+            assert cache.stats.hits == 0
+            assert cache.stats.misses == 0
+
+    def test_all_misses_returns_empty_dict_and_counts_as_misses(self) -> None:
+        with NormalizationCache(":memory:") as cache:
+            result = cache.get_many(["k1", "k2", "k3"])
+            assert result == {}
+            assert cache.stats.misses == 3
+            assert cache.stats.hits == 0
+
+    def test_lru_hits_are_served_without_touching_duckdb(self) -> None:
+        with NormalizationCache(":memory:") as cache:
+            cache.put("k1", _sample_value("v1"))
+            result = cache.get_many(["k1"])
+            assert result["k1"].original == "v1"
+            assert cache.stats.hits == 1
+
+    def test_duckdb_tier_hits_after_lru_eviction(self) -> None:
+        with NormalizationCache(":memory:", lru_capacity=1) as cache:
+            cache.put("k1", _sample_value("first"))
+            cache.put("k2", _sample_value("second"))  # evicts k1 from LRU
+            result = cache.get_many(["k1", "k2"])
+            assert result["k1"].original == "first"
+            assert result["k2"].original == "second"
+
+    def test_mixed_hits_and_misses_in_one_batch(self) -> None:
+        with NormalizationCache(":memory:") as cache:
+            cache.put("k1", _sample_value("v1"))
+            result = cache.get_many(["k1", "k2", "k3"])
+            assert set(result.keys()) == {"k1"}
+            assert cache.stats.hits == 1
+            assert cache.stats.misses == 2
+
+    def test_batch_result_matches_equivalent_sequential_gets(self) -> None:
+        keys = [f"k{i}" for i in range(10)]
+        items = [(k, _sample_value(f"v{i}")) for i, k in enumerate(keys)]
+
+        with NormalizationCache(":memory:") as batched_cache:
+            batched_cache.put_many(items)
+            batched_result = batched_cache.get_many(keys)
+
+        with NormalizationCache(":memory:") as sequential_cache:
+            for key, value in items:
+                sequential_cache.put(key, value)
+            sequential_result = {
+                key: v for key in keys if (v := sequential_cache.get(key)) is not None
+            }
+
+        assert {k: v.original for k, v in batched_result.items()} == {
+            k: v.original for k, v in sequential_result.items()
+        }

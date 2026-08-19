@@ -31,6 +31,7 @@ from normalizers.postcode import PostcodeNormalizer
 from normalizers.script import ScriptNormalizer
 from normalizers.unit import UnitNormalizer
 from normalizers.url import URLNormalizer
+from normexec.cache import NormalizationCache
 
 from normapi.routes import router
 from normapi.store import InMemoryStore
@@ -88,9 +89,21 @@ _EXTRA_CORS_ORIGINS = [
     if origin.strip()
 ]
 
+# §103's normalization cache — defaults to an in-process-only DuckDB
+# (":memory:") so a fresh `InMemoryStore` and a fresh cache always start
+# together (consistent with the store itself not surviving a restart);
+# set NORM_CACHE_PATH to a real file for cross-restart/cross-run reuse in
+# a real deployment. Raw values never appear in cache keys (normexec.
+# cache.make_cache_key hashes them) — see §103's own "never leak
+# sensitive raw values through cache keys" requirement.
+_DEFAULT_CACHE_PATH = os.environ.get("NORM_CACHE_PATH", ":memory:")
+
 
 def create_app(
-    *, dictionaries_dir: Path | None = None, custom_dictionaries_dir: Path | None = None
+    *,
+    dictionaries_dir: Path | None = None,
+    custom_dictionaries_dir: Path | None = None,
+    cache_path: str | None = None,
 ) -> FastAPI:
     app = FastAPI(
         title="Normalization Engine API",
@@ -137,10 +150,13 @@ def create_app(
     registry.register(BooleanNormalizer())
     registry.register(URLNormalizer())
 
-    app.state.store = InMemoryStore()
+    cache = NormalizationCache(cache_path or _DEFAULT_CACHE_PATH)
+
+    app.state.store = InMemoryStore(cache)
     app.state.dispatcher = Dispatcher(registry, env_id=_SCAFFOLD_ENV_ID)
     app.state.dictionary_loader = loader
     app.state.custom_dictionary_store = custom_store
+    app.state.cache = cache
 
     app.include_router(router)
 

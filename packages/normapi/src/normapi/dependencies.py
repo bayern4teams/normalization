@@ -10,6 +10,8 @@ from typing import TYPE_CHECKING
 from fastapi import Request
 
 if TYPE_CHECKING:
+    from normexec.cache import NormalizationCache
+
     from normapi.store import InMemoryStore
     from normcore import Dispatcher
     from normdict import CustomDictionaryStore, DictionaryLoader
@@ -29,3 +31,7 @@ def get_dictionary_loader(request: Request) -> DictionaryLoader:
 
 def get_custom_dictionary_store(request: Request) -> CustomDictionaryStore:
     return request.app.state.custom_dictionary_store  # type: ignore[no-any-return]
+
+
+def get_cache(request: Request) -> NormalizationCache:
+    return request.app.state.cache  # type: ignore[no-any-return]

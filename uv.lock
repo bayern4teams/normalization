@@ -1281,6 +1281,7 @@ dependencies = [
     { name = "normanalysis" },
     { name = "normcore" },
     { name = "normdict" },
+    { name = "normexec" },
     { name = "uvicorn", extra = ["standard"] },
 ]
 
@@ -1291,6 +1292,7 @@ requires-dist = [
     { name = "normanalysis", editable = "packages/normanalysis" },
     { name = "normcore", editable = "packages/normcore" },
     { name = "normdict", editable = "packages/normdict" },
+    { name = "normexec", editable = "packages/normexec" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.31,<1" },
 ]
 

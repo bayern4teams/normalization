@@ -13,13 +13,28 @@ counting logic.
 
 from __future__ import annotations
 
+import time
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
-from normcore import NormalizationRun, NormalizationRunMetrics, RunStatus
+from normcore import NormalizationRun, NormalizationRunMetrics, NormalizationStatus, RunStatus
+
+if TYPE_CHECKING:
+    from normcore import NormalizedValue
 
 
 class InvalidRunTransitionError(RuntimeError):
     pass
+
+
+def _percentile(sorted_values: list[float], pct: float) -> float:
+    """Nearest-rank percentile — no interpolation, so p95/p99 always
+    equal a real observed sample rather than a synthesized value between
+    two samples, which matters for latency reporting (§122)."""
+    if not sorted_values:
+        return 0.0
+    index = min(len(sorted_values) - 1, int(pct * len(sorted_values)))
+    return sorted_values[index]
 
 
 class RunRecorder:
@@ -36,17 +51,27 @@ class RunRecorder:
         self._errors = 0
         self._cache_hits = 0
         self._cache_misses = 0
+        self._parser_failures = 0
+        self._validation_failures = 0
+        self._library_calls = 0
+        self._latencies_s: list[float] = []
+        self._started_monotonic: float | None = None
 
     def start(self) -> NormalizationRun:
+        self._started_monotonic = time.perf_counter()
         self._run = self._run.model_copy(update={"status": RunStatus.RUNNING})
         return self.snapshot()
 
-    def record_value(self, *, changed: bool) -> None:
+    def record_value(self, *, changed: bool, status: NormalizationStatus | None = None) -> None:
         self._records_processed += 1
         if changed:
             self._changed_values += 1
         else:
             self._unchanged_values += 1
+        if status is NormalizationStatus.FAILED:
+            self._parser_failures += 1
+        elif status is NormalizationStatus.INVALID:
+            self._validation_failures += 1
 
     def record_field(self) -> None:
         self._fields_processed += 1
@@ -57,16 +82,36 @@ class RunRecorder:
         else:
             self._cache_misses += 1
 
+    def record_computation(
+        self, _value: str, result: NormalizedValue, duration_seconds: float
+    ) -> None:
+        """Called once per real (non-cache-hit) normalize() call — see
+        `DistinctValuePlanner.distinct_value_results`'s `on_computed`
+        hook. Feeds §122's latency percentiles and library-call count
+        from genuine per-computation samples, not per-row (a row reusing
+        a deduped/cached result didn't really re-invoke anything)."""
+        self._latencies_s.append(duration_seconds)
+        self._library_calls += sum(1 for step in result.trace if step.library is not None)
+
     def record_warning(self) -> None:
         self._warnings += 1
 
     def record_error(self) -> None:
         self._errors += 1
 
+    def _elapsed_seconds(self) -> float:
+        if self._started_monotonic is None:
+            return 0.0
+        return time.perf_counter() - self._started_monotonic
+
     def snapshot(self) -> NormalizationRun:
         """A NormalizationRun reflecting counters recorded so far, without
         changing the run's status/finished_at — safe to call mid-run for
         progress reporting."""
+        elapsed = self._elapsed_seconds()
+        latencies_ms = sorted(d * 1000 for d in self._latencies_s)
+        avg_latency_ms = sum(latencies_ms) / len(latencies_ms) if latencies_ms else 0.0
+
         return self._run.model_copy(
             update={
                 "metrics": NormalizationRunMetrics(
@@ -78,6 +123,14 @@ class RunRecorder:
                     errors=self._errors,
                     cache_hits=self._cache_hits,
                     cache_misses=self._cache_misses,
+                    parser_failures=self._parser_failures,
+                    validation_failures=self._validation_failures,
+                    library_calls=self._library_calls,
+                    duration_seconds=elapsed,
+                    rows_per_second=(self._records_processed / elapsed if elapsed > 0 else 0.0),
+                    avg_latency_ms=avg_latency_ms,
+                    p95_latency_ms=_percentile(latencies_ms, 0.95),
+                    p99_latency_ms=_percentile(latencies_ms, 0.99),
                 )
             }
         )

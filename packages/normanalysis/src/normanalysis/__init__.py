@@ -5,6 +5,13 @@ quality analysis (§71, §77-§80, §90, §93, §96-§97, landed in M6-M7).
 
 from normanalysis.ab_comparison import AbComparisonReport, SideMetrics, compare_runs
 from normanalysis.collisions import CollisionGroup, find_collisions
+from normanalysis.handoff import (
+    HandoffArtifact,
+    HandoffFieldSchema,
+    HandoffProfileVersion,
+    HandoffRecord,
+    build_handoff_artifact,
+)
 from normanalysis.impact import ImpactReport, compute_impact
 from normanalysis.instrumentation import instrumented_normalize
 from normanalysis.invariant_sampler import (
@@ -24,6 +31,10 @@ __all__ = [
     "AbComparisonReport",
     "CollisionGroup",
     "FieldProfile",
+    "HandoffArtifact",
+    "HandoffFieldSchema",
+    "HandoffProfileVersion",
+    "HandoffRecord",
     "ImpactReport",
     "InvalidRunTransitionError",
     "InvariantSampleReport",
@@ -38,6 +49,7 @@ __all__ = [
     "TelemetryHandles",
     "TransformationPatternCount",
     "TypeSuggestion",
+    "build_handoff_artifact",
     "compare_runs",
     "compute_impact",
     "compute_overview",

@@ -114,6 +114,59 @@ def test_planner_null_values_never_reach_the_dispatcher() -> None:
 
 
 @pytest.mark.unit
+def test_planner_on_computed_fires_once_per_real_call_and_never_for_cache_hits() -> None:
+    """Source.txt §122 needs genuine per-computation latency samples —
+    `on_computed` must fire once per real (non-cache-hit) call, and not
+    at all once a later call finds everything already cached. Callers
+    are expected to pass already-distinct values (as every real caller
+    does — see `normalize_column`'s `.unique()` and `store.py`'s
+    `dict.fromkeys()`), so this uses a genuinely distinct input list."""
+    registry = NormalizerRegistry()
+    registry.register(PassthroughNormalizer())
+    dispatcher = Dispatcher(registry, env_id="e" * 64)
+    ctx = _context()
+    profile = _profile()
+
+    observed: list[tuple[str, float]] = []
+
+    def on_computed(value: str, result: object, duration: float) -> None:
+        del result
+        observed.append((value, duration))
+
+    with NormalizationCache(":memory:") as cache:
+        planner = DistinctValuePlanner(dispatcher, cache=cache)
+        planner.distinct_value_results(
+            ["a", "b"], FieldSemanticType.ADDRESS, ctx, profile, on_computed=on_computed
+        )
+        assert [v for v, _ in observed] == ["a", "b"]  # once per real computation
+        assert all(d >= 0 for _, d in observed)
+
+        observed.clear()
+        planner.distinct_value_results(
+            ["a", "b"], FieldSemanticType.ADDRESS, ctx, profile, on_computed=on_computed
+        )
+        assert observed == []  # both now cache hits — no real computation happened
+
+
+@pytest.mark.unit
+def test_planner_on_computed_also_fires_without_a_cache() -> None:
+    registry = NormalizerRegistry()
+    registry.register(PassthroughNormalizer())
+    dispatcher = Dispatcher(registry, env_id="e" * 64)
+    planner = DistinctValuePlanner(dispatcher)
+
+    observed: list[str] = []
+    planner.distinct_value_results(
+        ["x", "y"],
+        FieldSemanticType.ADDRESS,
+        _context(),
+        _profile(),
+        on_computed=lambda value, result, duration: observed.append(value),
+    )
+    assert observed == ["x", "y"]
+
+
+@pytest.mark.unit
 def test_planner_to_arrow_produces_valid_struct_array() -> None:
     df = pl.DataFrame({"city": ["alpha", "beta", "alpha"]})
 

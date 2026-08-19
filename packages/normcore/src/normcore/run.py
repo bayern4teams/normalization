@@ -9,7 +9,7 @@ recomputing env_fingerprint.py.
 
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, computed_field
 
 from normcore.enums import RunStatus
 
@@ -50,6 +50,21 @@ class NormalizationRunMetrics(BaseModel):
     errors: int = 0
     cache_hits: int = 0
     cache_misses: int = 0
+    # Source.txt §122 observability counters.
+    parser_failures: int = 0
+    validation_failures: int = 0
+    library_calls: int = 0
+    duration_seconds: float = 0.0
+    rows_per_second: float = 0.0
+    avg_latency_ms: float = 0.0
+    p95_latency_ms: float = 0.0
+    p99_latency_ms: float = 0.0
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def cache_hit_ratio(self) -> float:
+        total = self.cache_hits + self.cache_misses
+        return self.cache_hits / total if total else 0.0
 
 
 class NormalizationRun(BaseModel):

@@ -13,6 +13,14 @@ supplied values through a live Dispatcher (not a stub), storing the
 original/result pairs so `/runs/{id}/errors`, `/runs/{id}/collisions`,
 and `/impact` can report real data derived from an actual normalization
 pass instead of hardcoded empty lists.
+
+M8 wires in the distinct-value-first planner + two-tier cache
+(`normexec`, real and tested since M1 but never actually connected to
+this execution path — found during the M7 follow-up self-audit's
+sibling M8 planning) — a real gap against §102's "repeated values
+should be normalized once per profile/version." `execute_run()` now
+dedups on distinct raw values and reuses cached results across calls
+sharing the same (profile_version, semantic_type, context, env_id).
 """
 
 from __future__ import annotations
@@ -20,6 +28,8 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
+
+from normexec.planner import DistinctValuePlanner
 
 from normanalysis import InvariantSampleReport, RunRecorder, sample_and_check
 from normcore import (
@@ -36,6 +46,8 @@ from normcore import (
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+
+    from normexec.cache import NormalizationCache
 
     from normcore import Dispatcher, ErrorPolicy, FieldSemanticType
 
@@ -74,7 +86,7 @@ class _RunExecution:
 
 
 class InMemoryStore:
-    def __init__(self) -> None:
+    def __init__(self, cache: NormalizationCache | None = None) -> None:
         # profile_id -> {version: NormalizationProfile}
         self._profiles: dict[str, dict[str, NormalizationProfile]] = {}
         # profile_id -> currently active version (per ADR-014, only one
@@ -82,6 +94,11 @@ class InMemoryStore:
         self._active_version: dict[str, str] = {}
         self._runs: dict[str, NormalizationRun] = {}
         self._executions: dict[str, _RunExecution] = {}
+        # Optional (defaults to no caching, matching prior behavior for
+        # any caller/test that constructs a bare InMemoryStore) — real
+        # distinct-value dedup + cross-call caching only activates when a
+        # NormalizationCache is supplied, which normapi.app always does.
+        self._cache = cache
 
     def create_profile(
         self,
@@ -239,10 +256,17 @@ class InMemoryStore:
         recorder.record_field()
 
         originals = list(values)
-        results = [dispatcher.normalize(v, semantic_type, ctx, profile) for v in originals]
+        results = self._normalize_deduped(
+            originals,
+            dispatcher=dispatcher,
+            semantic_type=semantic_type,
+            ctx=ctx,
+            profile=profile,
+            recorder=recorder,
+        )
         for result in results:
             changed = result.normalization_status is not NormalizationStatus.UNCHANGED
-            recorder.record_value(changed=changed)
+            recorder.record_value(changed=changed, status=result.normalization_status)
             for _ in result.warnings:
                 recorder.record_warning()
             if result.errors:
@@ -262,6 +286,54 @@ class InMemoryStore:
             invariant_report=invariant_report,
         )
         return finished
+
+    def _normalize_deduped(
+        self,
+        originals: list[str | None],
+        *,
+        dispatcher: Dispatcher,
+        semantic_type: FieldSemanticType,
+        ctx: NormalizationContext,
+        profile: NormalizationProfile,
+        recorder: RunRecorder,
+    ) -> list[NormalizedValue]:
+        """§102: "Repeated values should be normalized once per profile/
+        version." Distinct non-null values go through the real
+        `DistinctValuePlanner` (cache-aware, M1-built but never wired to
+        this execution path until this M8 fix); `None` is computed once
+        outside the planner since it isn't a valid `list[str]` element
+        but is just as legitimately repeatable within one run."""
+        distinct_non_null = list(dict.fromkeys(v for v in originals if v is not None))
+
+        hits_before = self._cache.stats.hits if self._cache is not None else 0
+        misses_before = self._cache.stats.misses if self._cache is not None else 0
+
+        planner = DistinctValuePlanner(dispatcher, self._cache)
+        by_value = planner.distinct_value_results(
+            distinct_non_null, semantic_type, ctx, profile, on_computed=recorder.record_computation
+        )
+
+        if self._cache is not None:
+            for _ in range(self._cache.stats.hits - hits_before):
+                recorder.record_cache(hit=True)
+            for _ in range(self._cache.stats.misses - misses_before):
+                recorder.record_cache(hit=False)
+
+        none_result = (
+            dispatcher.normalize(None, semantic_type, ctx, profile)
+            if any(v is None for v in originals)
+            else None
+        )
+
+        def resolve(value: str | None) -> NormalizedValue:
+            if value is None:
+                if none_result is None:  # pragma: no cover - unreachable, see none_result above
+                    msg = "internal error: encountered a None value without a precomputed result"
+                    raise AssertionError(msg)
+                return none_result
+            return by_value[value]
+
+        return [resolve(value) for value in originals]
 
     def get_run(self, run_id: str) -> NormalizationRun:
         if run_id not in self._runs:

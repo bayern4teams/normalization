@@ -11,6 +11,7 @@ values -> exactly 500 normalize() calls).
 
 from __future__ import annotations
 
+import time
 from typing import TYPE_CHECKING
 
 import polars as pl
@@ -19,6 +20,8 @@ import pyarrow as pa
 from normexec.cache import make_cache_key
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from normcore.context import NormalizationContext
     from normcore.dispatch import Dispatcher
     from normcore.enums import FieldSemanticType
@@ -47,31 +50,70 @@ class DistinctValuePlanner:
         semantic_type: FieldSemanticType,
         context: NormalizationContext,
         profile: NormalizationProfile,
+        *,
+        on_computed: Callable[[str, NormalizedValue, float], None] | None = None,
     ) -> dict[str, NormalizedValue]:
         """Normalize each distinct value exactly once, cache-aware.
         Returns {raw_value: NormalizedValue}.
+
+        `on_computed`, if given, fires once per REAL (non-cache-hit)
+        dispatcher call with `(value, result, duration_seconds)` — the
+        real per-call wall-clock cost, not attributable to a cache hit.
+        Source.txt §122's latency/library-call metrics need genuine
+        per-computation samples, so callers (normanalysis's RunRecorder)
+        hook in here rather than timing at the row level, where duplicate
+        rows sharing one deduped result would corrupt the percentiles.
         """
-        results: dict[str, NormalizedValue] = {}
+        if self._cache is None:
+            results: dict[str, NormalizedValue] = {}
+            for value in distinct_values:
+                start = time.perf_counter()
+                result = self._dispatcher.normalize(value, semantic_type, context, profile)
+                duration = time.perf_counter() - start
+                if on_computed is not None:
+                    on_computed(value, result, duration)
+                results[value] = result
+            return results
+
+        # Both lookups and writes are batched into a single DuckDB
+        # statement each (`get_many`/`put_many`) rather than one
+        # statement per distinct value — DuckDB (an OLAP engine) has
+        # real, measured per-statement overhead that makes many small
+        # individual reads or writes far slower than one batched
+        # equivalent (found during M8 performance work: ~200ms for 50
+        # individual misses / ~830ms for 50 individual puts, vs. a
+        # single batched call for the same 50 in each case).
+        keys_by_value = {
+            value: make_cache_key(
+                value,
+                profile_version=profile.version,
+                semantic_type=semantic_type,
+                context_hash=context.context_hash,
+                env_id=self._dispatcher.env_id,
+            )
+            for value in distinct_values
+        }
+        cached = self._cache.get_many(list(keys_by_value.values()))
+
+        results = {}
+        pending_writes: list[tuple[str, NormalizedValue]] = []
         for value in distinct_values:
-            cache_key = None
-            if self._cache is not None:
-                cache_key = make_cache_key(
-                    value,
-                    profile_version=profile.version,
-                    semantic_type=semantic_type,
-                    context_hash=context.context_hash,
-                    env_id=self._dispatcher.env_id,
-                )
-                cached = self._cache.get(cache_key)
-                if cached is not None:
-                    results[value] = cached
-                    continue
+            key = keys_by_value[value]
+            hit = cached.get(key)
+            if hit is not None:
+                results[value] = hit
+                continue
 
+            start = time.perf_counter()
             result = self._dispatcher.normalize(value, semantic_type, context, profile)
+            duration = time.perf_counter() - start
+            if on_computed is not None:
+                on_computed(value, result, duration)
             results[value] = result
+            pending_writes.append((key, result))
 
-            if self._cache is not None and cache_key is not None:
-                self._cache.put(cache_key, result)
+        if pending_writes:
+            self._cache.put_many(pending_writes)
 
         return results
 
