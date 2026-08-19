@@ -12,6 +12,9 @@ in isolation (already covered by `test_planner.py`/`test_cache.py`).
 
 from __future__ import annotations
 
+import threading
+import time
+
 import pytest
 from normalizers.passthrough import PassthroughNormalizer
 from normapi.store import InMemoryStore
@@ -19,7 +22,13 @@ from normcore.context import NormalizationContext
 from normcore.models import NormalizedValue
 from normexec.cache import NormalizationCache
 
-from normcore import Dispatcher, ErrorPolicy, FieldSemanticType, NormalizerRegistry
+from normcore import (
+    Dispatcher,
+    ErrorPolicy,
+    FieldSemanticType,
+    NormalizationRun,
+    NormalizerRegistry,
+)
 
 
 class _CountingNormalizer(PassthroughNormalizer):
@@ -203,3 +212,83 @@ class TestCacheReuseAcrossRuns:
         )
         assert finished.metrics.cache_hits == 0
         assert finished.metrics.cache_misses == 0
+
+
+class _SlowNormalizer(PassthroughNormalizer):
+    """Sleeps briefly per real `normalize()` call, widening the window
+    during which two concurrent threads' planner loops genuinely overlap
+    — needed to reliably exercise the race this test guards against, not
+    just get lucky with timing."""
+
+    def normalize(self, value: str | None, ctx: NormalizationContext) -> NormalizedValue:
+        time.sleep(0.02)
+        return super().normalize(value, ctx)
+
+
+@pytest.mark.unit
+class TestConcurrentRunsDoNotCorruptEachOthersCacheStats:
+    def test_two_concurrent_runs_each_report_their_own_correct_cache_counts(self) -> None:
+        """`create_run`'s real route handler is synchronous, so Starlette
+        dispatches concurrent requests to a thread pool sharing the same
+        `InMemoryStore`/`NormalizationCache` instance — found during the
+        M9 audit. Two runs genuinely executing at the same time must not
+        misattribute each other's cache hits/misses via a shared,
+        globally-mutable stats counter."""
+        cache = NormalizationCache(":memory:")
+        store = InMemoryStore(cache)
+        registry = NormalizerRegistry()
+        registry.register(_SlowNormalizer())
+        dispatcher = Dispatcher(registry, env_id="e" * 64)
+        profile = store.create_profile(
+            name="p",
+            description="",
+            locale_policy={},
+            default_operations=(),
+            field_configs=(),
+            created_by="u",
+        )
+
+        run_a = store.create_run(
+            profile_id=profile.id, env_id=dispatcher.env_id, source_snapshot="sa"
+        )
+        run_b = store.create_run(
+            profile_id=profile.id, env_id=dispatcher.env_id, source_snapshot="sb"
+        )
+        outcomes: dict[str, NormalizationRun] = {}
+
+        def run_a_worker() -> None:
+            outcomes["a"] = store.execute_run(
+                run_a.id,
+                dispatcher=dispatcher,
+                field_name="fa",
+                semantic_type=FieldSemanticType.UNKNOWN,
+                values=["a1", "a2"],
+                error_policy=ErrorPolicy.RETURN_ORIGINAL,
+            )
+
+        def run_b_worker() -> None:
+            outcomes["b"] = store.execute_run(
+                run_b.id,
+                dispatcher=dispatcher,
+                field_name="fb",
+                semantic_type=FieldSemanticType.UNKNOWN,
+                values=["b1", "b2"],
+                error_policy=ErrorPolicy.RETURN_ORIGINAL,
+            )
+
+        thread_a = threading.Thread(target=run_a_worker)
+        thread_b = threading.Thread(target=run_b_worker)
+        thread_a.start()
+        thread_b.start()
+        thread_a.join()
+        thread_b.join()
+
+        finished_a = outcomes["a"]
+        finished_b = outcomes["b"]
+        # Each run has 2 distinct, never-before-seen values -> both must
+        # be real cache misses, regardless of what the other thread's
+        # concurrent activity was doing at the same moment.
+        assert finished_a.metrics.cache_misses == 2
+        assert finished_a.metrics.cache_hits == 0
+        assert finished_b.metrics.cache_misses == 2
+        assert finished_b.metrics.cache_hits == 0

@@ -305,19 +305,30 @@ class InMemoryStore:
         but is just as legitimately repeatable within one run."""
         distinct_non_null = list(dict.fromkeys(v for v in originals if v is not None))
 
-        hits_before = self._cache.stats.hits if self._cache is not None else 0
-        misses_before = self._cache.stats.misses if self._cache is not None else 0
+        # Attribute hits/misses from LOCAL, per-request state (which
+        # distinct values `on_computed` actually fired for — a miss —
+        # not the rest, a hit) rather than diffing the shared
+        # `NormalizationCache.stats` counter before/after. `create_run`'s
+        # route handler is synchronous, so Starlette dispatches concurrent
+        # requests to a thread pool sharing this same store/cache
+        # instance; a before/after delta on a globally-shared mutable
+        # counter can be corrupted by another request's cache activity
+        # landing in between the two reads, misattributing hits/misses
+        # across unrelated runs. Tracking locally makes this race-free.
+        computed_values: set[str] = set()
+
+        def on_computed(value: str, result: NormalizedValue, duration: float) -> None:
+            computed_values.add(value)
+            recorder.record_computation(value, result, duration)
 
         planner = DistinctValuePlanner(dispatcher, self._cache)
         by_value = planner.distinct_value_results(
-            distinct_non_null, semantic_type, ctx, profile, on_computed=recorder.record_computation
+            distinct_non_null, semantic_type, ctx, profile, on_computed=on_computed
         )
 
         if self._cache is not None:
-            for _ in range(self._cache.stats.hits - hits_before):
-                recorder.record_cache(hit=True)
-            for _ in range(self._cache.stats.misses - misses_before):
-                recorder.record_cache(hit=False)
+            for value in distinct_non_null:
+                recorder.record_cache(hit=value not in computed_values)
 
         none_result = (
             dispatcher.normalize(None, semantic_type, ctx, profile)

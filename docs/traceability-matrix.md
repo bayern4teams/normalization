@@ -143,8 +143,8 @@ Legend — **Mile.**: milestone; **Ph.**: implementation phase per §127.
 | 99 | Internal normalizer interface | M1 | 2 | `normcore.interfaces` | `tests/unit/test_normalizer_interface.py` |
 | 100 | No universal clean function | M1 | 2 | `normcore.dispatch` | `tests/unit/test_no_universal_clean.py` |
 | 101 | Context object | M1 | 2 | `normcore.context` | `tests/unit/test_context.py` |
-| 102 | Performance | M1 (skeleton), M8 (tuned) | 2, 17 | `normexec.planner` | `tests/bench/test_performance.py` |
-| 103 | Normalization cache | M1 (skeleton), M8 (tuned) | 2, 17 | `normexec.cache` | `tests/unit/test_cache.py` |
+| 102 | Performance | M1 (`DistinctValuePlanner`/`NormalizationCache` built, real, but never connected to the live run path), M8 (wired into `InMemoryStore.execute_run` for real; a real ~10x cold-cache DuckDB-statement-overhead regression found by benchmarking and fixed via batched `get_many`/`put_many`) | 2, 17 | `normexec.planner.DistinctValuePlanner`, `normapi.store.InMemoryStore._normalize_deduped` | `tests/unit/test_planner.py`, `tests/unit/test_execution_caching.py` (live dedup/caching through `execute_run`), `tests/bench/test_execution_caching_benchmark.py` (real cache-cold/cache-warm/no-cache timings) |
+| 103 | Normalization cache | M1 (skeleton), M8 (`get_many`/`put_many` batched reads/writes — DuckDB's real per-statement overhead made individual calls far slower than one batched call for the same N) | 2, 17 | `normexec.cache.NormalizationCache` | `tests/unit/test_cache.py` (`TestPutMany`, `TestGetMany`) |
 | 104 | Batch processing | M1 (skeleton), M8 (tuned) | 2, 17 | `normexec.batch` | `tests/unit/test_batch_apis.py` |
 | 105 | Database integration | M1 | 2 | `normio.connectors.*` | `tests/integration/test_connectors.py` |
 | 106 | Raw / normalized storage strategy | M1 | 2 | `normio.sidecar_store` | `tests/integration/test_sidecar_store.py` |

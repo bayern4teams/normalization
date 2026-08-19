@@ -270,6 +270,87 @@ or is accepted as a disclosed, tracked gap for follow-up work.
 | 32 | Output ready for downstream discovery engine | §134 handoff artifact, built and live-verified this milestone (§3.3) |
 | 33 | No Splink logic implemented here | `tests/unit/test_no_splink.py` (grep-based compliance test, earlier audit) |
 
+## 6. Addendum — M9's unbiased audit of M8's own code
+
+Before starting M9's real feature work (env_id, persistent storage), the
+user asked for the same kind of unbiased, from-scratch audit that found
+6 real gaps before M8 — this time turned on M8's own new code, which
+(unlike M1-M7) had only ever been live-verified feature-by-feature as it
+was built, never re-read adversarially afterward. Method: fresh full test
+run, grep for stub markers, systematic file-existence check on every
+traceability-matrix test-location path, re-read of every M8-authored file
+with fresh eyes, and a §99 registry cross-check. Found and fixed four
+real issues, none of which affect any behavior already live-verified
+above (all pre-existing verification remains accurate) — they are
+latent/edge-case bugs this audit surfaced, not regressions in the
+happy-path this pack already checked:
+
+1. **A real concurrency bug in the new §122 cache-stats wiring.**
+   `InMemoryStore._normalize_deduped()` computed `cache_hits`/
+   `cache_misses` by reading `NormalizationCache.stats.hits/misses`
+   before and after calling the planner, then recording the delta.
+   `create_run`'s route handler is a synchronous `def`, so Starlette
+   dispatches concurrent requests to a thread pool — multiple runs can
+   genuinely execute at the same moment, sharing the same store/cache
+   instance and its plain-int `stats` counters. Another request's cache
+   activity landing between the "before" and "after" read corrupts the
+   delta, misattributing hits/misses across unrelated runs. Fixed by
+   tracking hits/misses from purely local, per-request state (which
+   distinct values the `on_computed` hook actually fired for) instead of
+   diffing a globally-shared mutable counter — race-free by
+   construction. Verified with a real `threading.Thread`-based test (an
+   artificially slow normalizer widens the race window), run 5 times to
+   catch flakiness; all 5 passed.
+2. **`NormalizationCache.get_many()` miscounted hits/misses for
+   duplicate keys within one call** — `stats.hits`/`stats.misses` were
+   incremented once per *unique* key found/missing rather than once per
+   *requested occurrence*, so a caller passing the same key twice would
+   get one of the two occurrences silently misclassified. Not reachable
+   via the current real caller (`DistinctValuePlanner` always pre-dedupes
+   by contract), but a real latent bug in a public method with no
+   documented constraint against it. Fixed and tested.
+3. **`NormalizationCache.put_many()` had a two-tier data inconsistency
+   for duplicate keys within one call** — verified directly against real
+   DuckDB behavior (not assumed): `INSERT OR REPLACE` with a duplicate
+   key in the *same* statement keeps the FIRST occurrence, while the LRU
+   tier (updated via a Python loop) naturally keeps the LAST — opposite,
+   silently divergent results between the two tiers. Also unreachable via
+   the current real caller, same caveat as above. Fixed by deduplicating
+   `items` (keeping the last occurrence, matching `put()`'s natural
+   semantics) before writing to either tier.
+4. **Two stale test-location references in `docs/traceability-matrix.md`**
+   — §102 and §103 both cited `tests/bench/test_performance.py`, which
+   has never existed (found via a systematic check: extracted every
+   backtick-quoted file path across all 138 rows and verified each
+   against the real filesystem — 92 others were also "missing," but that
+   matches the matrix's own already-disclosed policy from the M7 audit
+   that test-location columns are topic/intent for consolidated rows, not
+   guaranteed filenames; these two were simply never updated when the
+   real M8 benchmark/test files were written). Fixed to point at the real
+   files and describe the real M8 work (execute_run wiring, the DuckDB
+   batching fix).
+
+**Disclosed, not fixed — out of scope for this audit's size:** `mypy`
+has never been run against `tests/` in this project's history — every
+milestone's "mypy clean" claim (including this pack's own §2) only ever
+covered `packages/`. A fresh, cache-cleared `uv run mypy tests` found 48
+real type errors across 18 test files, spanning M1 through M8 (not an
+M8-specific issue). Spot-checking several confirmed they are mypy being
+correctly strict about test code that is not actually wrong at runtime
+(e.g. `str | None` narrowing mypy can't see through, a dict-literal type
+join collapsing to `str` when unpacked via `**kwargs`) — not a sign of
+hidden runtime bugs, based on the samples checked. Fixing all 48 is a
+real, separate, correctly-scoped body of work (touching ~18 pre-existing
+files unrelated to M8), not attempted here to keep this audit's fixes
+scoped to genuine M8-introduced issues. Flagged as a candidate follow-up.
+
+**Full fresh verification after all four fixes:** `ruff check`/`ruff
+format --check` clean, `mypy packages` clean (80 source files, unchanged
+— none of the fixes touched anything `mypy packages` didn't already
+cover), `pytest -m "unit or golden or property or contract"` → 787
+passed / 12 skipped (up from 784 — 3 new regression tests), including 5
+repeated runs of the new concurrency test with zero flakiness.
+
 ## Human Sign-off
 
 milestone: M8

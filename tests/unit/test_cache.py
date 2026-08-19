@@ -152,6 +152,24 @@ class TestPutMany:
             assert result is not None
             assert result.original == "new"
 
+    def test_duplicate_key_within_one_batch_keeps_the_last_occurrence(self) -> None:
+        """Real DuckDB behavior: `INSERT OR REPLACE` with a duplicate key
+        in the SAME statement keeps the FIRST occurrence, not the last —
+        verified directly against DuckDB, not assumed. `put_many` must
+        dedupe before writing so this matches `put()`'s natural
+        last-write-wins semantics and stays consistent with the LRU tier
+        (which naturally keeps the last occurrence via iteration order)."""
+        with NormalizationCache(":memory:", lru_capacity=1) as cache:
+            cache.put_many([("k1", _sample_value("first")), ("k1", _sample_value("second"))])
+            cache.put("k2", _sample_value("other"))  # evicts k1 from the LRU tier
+
+            # Now only the DuckDB tier can answer this — proves the
+            # *persisted* value is "second", not just what's still hot in
+            # the in-process LRU.
+            result = cache.get("k1")
+            assert result is not None
+            assert result.original == "second"
+
 
 @pytest.mark.unit
 class TestGetMany:
@@ -210,3 +228,19 @@ class TestGetMany:
         assert {k: v.original for k, v in batched_result.items()} == {
             k: v.original for k, v in sequential_result.items()
         }
+
+    def test_duplicate_key_within_one_call_counts_one_outcome_per_occurrence(self) -> None:
+        """A caller that (unlike every current one) passes duplicate keys
+        in a single `get_many` call must still get correct hit/miss
+        counts — one outcome per requested occurrence, not collapsed to
+        one per unique key. This directly protects §122's cache_hit_ratio
+        observability from silently under/over-counting."""
+        with NormalizationCache(":memory:") as cache:
+            cache.put("k1", _sample_value("v1"))
+
+            # k1 (cached) requested twice, k2 (uncached) requested twice.
+            result = cache.get_many(["k1", "k1", "k2", "k2"])
+
+            assert set(result.keys()) == {"k1"}
+            assert cache.stats.hits == 2  # both k1 occurrences
+            assert cache.stats.misses == 2  # both k2 occurrences

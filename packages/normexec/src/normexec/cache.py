@@ -142,6 +142,12 @@ class NormalizationCache:
         (measured: ~200ms for 50 individual misses vs. a single batched
         query for the same 50). Missing keys from `keys` are simply absent
         from the returned dict, not represented as `None` values.
+
+        `keys` may contain duplicates (the returned dict is naturally
+        deduplicated by key) — `stats.hits`/`stats.misses` still count
+        one outcome per requested key occurrence, not per unique key, so
+        a caller that (unlike every current one) doesn't pre-dedupe still
+        gets correct hit/miss accounting.
         """
         if not keys:
             return {}
@@ -149,10 +155,12 @@ class NormalizationCache:
         results: dict[str, NormalizedValue] = {}
         duckdb_lookup_keys: list[str] = []
         for key in keys:
+            if key in results:
+                continue
             hit = self._lru.get(key)
             if hit is not None:
                 results[key] = hit
-            else:
+            elif key not in duckdb_lookup_keys:
                 duckdb_lookup_keys.append(key)
 
         if duckdb_lookup_keys:
@@ -167,8 +175,9 @@ class NormalizationCache:
                 self._lru.put(cache_key, value)
                 results[cache_key] = value
 
-        self.stats.hits += len(results)
-        self.stats.misses += len(keys) - len(results)
+        hits = sum(1 for key in keys if key in results)
+        self.stats.hits += hits
+        self.stats.misses += len(keys) - hits
         return results
 
     def put_many(self, items: list[tuple[str, NormalizedValue]]) -> None:
@@ -180,15 +189,26 @@ class NormalizationCache:
         same 50 items — found and fixed during M8 performance work, not
         a hypothetical optimization. `DistinctValuePlanner` uses this for
         every batch of newly-computed distinct values instead of calling
-        `put()` in its loop."""
+        `put()` in its loop.
+
+        `items` is deduplicated by key first, keeping the LAST occurrence
+        — matching `put()`'s natural "last write wins" semantics. Without
+        this, DuckDB's `INSERT OR REPLACE` resolves an intra-statement
+        duplicate key by keeping the FIRST occurrence (verified against
+        real DuckDB behavior, not assumed), which would silently disagree
+        with the LRU tier (updated in iteration order, so it naturally
+        keeps the last) — a real two-tier data inconsistency for any
+        caller that doesn't pre-dedupe like the current one does.
+        """
         if not items:
             return
-        for key, value in items:
+        deduped = dict(items)  # last occurrence per key wins, like put()
+        for key, value in deduped.items():
             self._lru.put(key, value)
 
-        placeholders = ", ".join(["(?, ?)"] * len(items))
+        placeholders = ", ".join(["(?, ?)"] * len(deduped))
         flat_params: list[str] = []
-        for key, value in items:
+        for key, value in deduped.items():
             flat_params.extend((key, value.model_dump_json()))
         self._conn.execute(
             f"INSERT OR REPLACE INTO normalization_cache (cache_key, value_json) "
