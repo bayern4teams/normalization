@@ -114,7 +114,7 @@ Legend — **Mile.**: milestone; **Ph.**: implementation phase per §127.
 | 70 | Normalization runs | M1 (model), M6 (full) | 2, 14 | `normcore.run`, `normapi.store.InMemoryStore.execute_run` | `tests/unit/test_run_execution.py` |
 | 71 | Idempotency | M2+ (unit/property), M6 (runtime-sampled) | 3–12, 14 | `normcore` testing helpers, `normanalysis.invariant_sampler` | `tests/property/test_idempotency_determinism.py`, `tests/unit/test_analysis_m6.py` |
 | 72 | Determinism | M2+ | 3–12 | `normcore` testing helpers | `tests/property/test_determinism.py` |
-| 73 | Version locking | M1, M6 | 2, 14 | `scripts/env_fingerprint.py` | `tests/unit/test_env_fingerprint.py` |
+| 73 | Version locking | M1 (real computation built but never importable by a running service), M9 (wired into the live `Dispatcher` for real — `env_id` was an M1-era hardcoded placeholder until now) | 2, 14 | `normexec.env_fingerprint`, `scripts/env_fingerprint.py` (thin CLI wrapper) | `tests/unit/test_env_fingerprint.py`, `tests/unit/test_normdict.py`; live-verified: two independent real server processes against the same environment produced the identical `env_id` |
 | 74 | Normalization regression testing | M2+, finalized M8 | 3–18 | `tests/golden/` | `tests/golden/*` |
 | 75 | Cross-language testing | M2, finalized M8 | 3, 18 | `tests/golden/cross_language/` | `tests/golden/cross_language/*` |
 | 76 | Cultural safety | M3, M4 (real per-normalizer AMBIGUOUS/hint behaviors), M8 (consolidated cross-cutting proof) | 4, 8–10, 18 | `NameNormalizer`, `AddressNormalizer`, `PostcodeNormalizer`, `CompanyNormalizer`, `EmailNormalizer` | `tests/unit/test_cultural_safety.py` (all 6 named assumptions, one file) |

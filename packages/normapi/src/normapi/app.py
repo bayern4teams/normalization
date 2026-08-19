@@ -105,12 +105,21 @@ _EXTRA_CORS_ORIGINS = [
 # sensitive raw values through cache keys" requirement.
 _DEFAULT_CACHE_PATH = os.environ.get("NORM_CACHE_PATH", ":memory:")
 
+# Real persistence (ADR-013, M9) — set in compose.yaml to
+# postgresql://normalization:normalization@postgres:5432/normalization,
+# declared there since M0 but never actually read by any code until now.
+# None (the default for local `uv run uvicorn` outside Docker unless set)
+# means pure in-memory, matching every prior milestone's behavior —
+# nothing survives a restart.
+_DEFAULT_POSTGRES_DSN = os.environ.get("NORM_PG_DSN")
+
 
 def create_app(
     *,
     dictionaries_dir: Path | None = None,
     custom_dictionaries_dir: Path | None = None,
     cache_path: str | None = None,
+    postgres_dsn: str | None = None,
 ) -> FastAPI:
     app = FastAPI(
         title="Normalization Engine API",
@@ -175,7 +184,7 @@ def create_app(
     )
     env_id = compute_env_id(env_fingerprint_inputs)
 
-    app.state.store = InMemoryStore(cache)
+    app.state.store = InMemoryStore(cache, postgres_dsn=postgres_dsn or _DEFAULT_POSTGRES_DSN)
     app.state.dispatcher = Dispatcher(registry, env_id=env_id)
     app.state.dictionary_loader = loader
     app.state.custom_dictionary_store = custom_store

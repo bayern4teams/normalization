@@ -1,12 +1,26 @@
-"""In-memory profile/run store backing the M1 API scaffold.
+"""In-memory profile/run store, optionally backed by Postgres for
+persistence — Source.txt §98, ADR-013.
 
-This is deliberately NOT the eventual PostgreSQL-backed metadata store
-(ADR-013) — it exists to prove the §98 API's shape and the
-create-profile/version/run request flow end-to-end against a real running
-server, per M1's Gate G1 requirement. Real persistence, concurrent-access
-safety, and the full profile-versioning audit trail land with the
-PostgreSQL-backed store in a later milestone. State does not survive a
-process restart — this is explicitly a scaffold, not a database.
+M9 adds real persistence: when constructed with a `postgres_dsn`
+(normally `NORM_PG_DSN`), every profile/run write is mirrored to
+`PostgresMetadataStore` (see postgres_store.py), and the in-memory dicts
+are hydrated from Postgres once at startup — so a process restart no
+longer loses every profile and run. The in-memory dicts remain the hot
+read path (no DB round-trip per request); Postgres is the durable
+write-through target, not a cache-through read path, matching how
+`NormalizationCache` already treats its own two tiers. When no DSN is
+given (every existing test's plain `InMemoryStore()`/`InMemoryStore(cache)`
+construction), behavior is unchanged from M1-M8 — pure in-memory, nothing
+survives a restart.
+
+Deliberately still NOT persisted: a run's bulk per-value execution
+results (`_RunExecution.originals`/`.results`) — ADR-013 assigns bulk
+normalized-value data to a separate Arrow/Parquet sidecar store
+(`normio.SidecarStore`, built in M1, not yet wired into this execution
+path), not Postgres. A restart correctly recovers every past run's
+status/metrics but not its detailed per-value results — see
+postgres_store.py's module docstring and M9's verification pack for the
+full disclosure.
 
 M6 adds real run *execution*: `execute_run()` actually normalizes the
 supplied values through a live Dispatcher (not a stub), storing the
@@ -32,6 +46,7 @@ from typing import TYPE_CHECKING
 from normexec.planner import DistinctValuePlanner
 
 from normanalysis import InvariantSampleReport, RunRecorder, sample_and_check
+from normapi.postgres_store import PostgresMetadataStore
 from normcore import (
     FieldNormalizationConfig,
     NormalizationContext,
@@ -86,7 +101,9 @@ class _RunExecution:
 
 
 class InMemoryStore:
-    def __init__(self, cache: NormalizationCache | None = None) -> None:
+    def __init__(
+        self, cache: NormalizationCache | None = None, *, postgres_dsn: str | None = None
+    ) -> None:
         # profile_id -> {version: NormalizationProfile}
         self._profiles: dict[str, dict[str, NormalizationProfile]] = {}
         # profile_id -> currently active version (per ADR-014, only one
@@ -99,6 +116,25 @@ class InMemoryStore:
         # distinct-value dedup + cross-call caching only activates when a
         # NormalizationCache is supplied, which normapi.app always does.
         self._cache = cache
+        # Optional (defaults to pure in-memory, matching every existing
+        # test's construction) — real persistence only activates when a
+        # Postgres DSN is supplied, which normapi.app does when NORM_PG_DSN
+        # is set. See this module's docstring for the write-through design.
+        self._pg = PostgresMetadataStore(postgres_dsn) if postgres_dsn else None
+        if self._pg is not None:
+            self._hydrate_from_postgres(self._pg)
+
+    def _hydrate_from_postgres(self, pg: PostgresMetadataStore) -> None:
+        """Reconstructs in-memory state from whatever a PREVIOUS process
+        already persisted — the actual "survives a restart" mechanism.
+        Runs before this store serves a single request. Loads every
+        version of every profile (not just active or run-referenced
+        ones), so nothing is silently missing after a restart."""
+        for profile in pg.list_all_profiles():
+            self._profiles.setdefault(profile.id, {})[profile.version] = profile
+        self._active_version.update(pg.list_all_active_versions())
+        for run in pg.list_runs():
+            self._runs[run.id] = run
 
     def create_profile(
         self,
@@ -128,6 +164,9 @@ class InMemoryStore:
         )
         self._profiles[profile_id] = {"v1": profile}
         self._active_version[profile_id] = "v1"
+        if self._pg is not None:
+            self._pg.save_profile(profile)
+            self._pg.set_active_version(profile_id, "v1")
         return profile
 
     def create_version(
@@ -171,6 +210,10 @@ class InMemoryStore:
         self._profiles[profile_id][current_version] = deprecated_current
         self._profiles[profile_id][next_version] = new_profile
         self._active_version[profile_id] = next_version
+        if self._pg is not None:
+            self._pg.save_profile(deprecated_current)
+            self._pg.save_profile(new_profile)
+            self._pg.set_active_version(profile_id, next_version)
         return new_profile
 
     def rollback_profile(self, profile_id: str, target_version: str) -> NormalizationProfile:
@@ -185,14 +228,18 @@ class InMemoryStore:
         current_version = self._active_version[profile_id]
         if current_version != target_version:
             current = self._profiles[profile_id][current_version]
-            self._profiles[profile_id][current_version] = current.model_copy(
-                update={"status": ProfileStatus.DEPRECATED}
-            )
+            deprecated_current = current.model_copy(update={"status": ProfileStatus.DEPRECATED})
+            self._profiles[profile_id][current_version] = deprecated_current
+            if self._pg is not None:
+                self._pg.save_profile(deprecated_current)
 
         target = self._profiles[profile_id][target_version]
         reactivated = target.model_copy(update={"status": ProfileStatus.ACTIVE})
         self._profiles[profile_id][target_version] = reactivated
         self._active_version[profile_id] = target_version
+        if self._pg is not None:
+            self._pg.save_profile(reactivated)
+            self._pg.set_active_version(profile_id, target_version)
         return reactivated
 
     def get_profile(self, profile_id: str, version: str | None = None) -> NormalizationProfile:
@@ -226,6 +273,8 @@ class InMemoryStore:
             metrics=NormalizationRunMetrics(),
         )
         self._runs[run_id] = run
+        if self._pg is not None:
+            self._pg.save_run(run)
         return run
 
     def execute_run(
@@ -278,6 +327,8 @@ class InMemoryStore:
 
         finished = recorder.finish(RunStatus.COMPLETED)
         self._runs[run_id] = finished
+        if self._pg is not None:
+            self._pg.save_run(finished)
         self._executions[run_id] = _RunExecution(
             field_name=field_name,
             semantic_type=semantic_type,
