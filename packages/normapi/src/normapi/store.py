@@ -13,14 +13,20 @@ given (every existing test's plain `InMemoryStore()`/`InMemoryStore(cache)`
 construction), behavior is unchanged from M1-M8 — pure in-memory, nothing
 survives a restart.
 
-Deliberately still NOT persisted: a run's bulk per-value execution
-results (`_RunExecution.originals`/`.results`) — ADR-013 assigns bulk
-normalized-value data to a separate Arrow/Parquet sidecar store
-(`normio.SidecarStore`, built in M1, not yet wired into this execution
-path), not Postgres. A restart correctly recovers every past run's
-status/metrics but not its detailed per-value results — see
-postgres_store.py's module docstring and M9's verification pack for the
-full disclosure.
+A run's bulk per-value execution results (`_RunExecution.originals`/
+`.results`) are handled separately, per ADR-013: they're written through
+to `normio.SidecarStore` (Arrow/Parquet, built in M1, now wired in here)
+rather than Postgres, matching ADR-013's own metadata-vs-bulk-data split.
+When a `sidecar_parquet_root`/`sidecar_duckdb_path` pair is given
+(normally `NORM_SIDECAR_PARQUET_ROOT`/`NORM_SIDECAR_DUCKDB_PATH`, both
+declared in compose.yaml since M0 but never read by any code until now),
+`execute_run()` writes every result to the sidecar, and `get_execution()`
+transparently reconstructs a run's results from it when the in-memory
+`_executions` dict doesn't have them (i.e. after a restart) — the
+`invariant_report` on a sidecar-hydrated execution is `sampled=0`,
+`violations=()`, since runtime invariant sampling is a live-only
+artifact that cannot be reconstructed after the fact, not a fabricated
+"still clean" claim.
 
 M6 adds real run *execution*: `execute_run()` actually normalizes the
 supplied values through a live Dispatcher (not a stub), storing the
@@ -43,12 +49,20 @@ import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
+import pyarrow as pa
+from normcore.contract import (
+    NORMALIZED_VALUE_ARROW_SCHEMA,
+    arrow_row_to_normalized_value,
+    normalized_value_to_arrow_row,
+)
 from normexec.planner import DistinctValuePlanner
+from normio.sidecar_store import SidecarStore
 
 from normanalysis import InvariantSampleReport, RunRecorder, sample_and_check
 from normapi.postgres_store import PostgresMetadataStore
 from normcore import (
     FieldNormalizationConfig,
+    FieldSemanticType,
     NormalizationContext,
     NormalizationProfile,
     NormalizationRun,
@@ -61,10 +75,11 @@ from normcore import (
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+    from pathlib import Path
 
     from normexec.cache import NormalizationCache
 
-    from normcore import Dispatcher, ErrorPolicy, FieldSemanticType
+    from normcore import Dispatcher, ErrorPolicy
 
 
 class ProfileNotFoundError(LookupError):
@@ -79,6 +94,39 @@ class RunNotExecutableError(RuntimeError):
     """Raised when execute_run() is called on a run that already reached
     a terminal status — a run's field execution happens at most once,
     consistent with NormalizationRun being immutable once terminal."""
+
+
+_SIDECAR_SCHEMA = pa.schema(
+    [pa.field("source_row_key", pa.large_string()), *NORMALIZED_VALUE_ARROW_SCHEMA]
+)
+
+
+def _results_to_record_batch(results: list[NormalizedValue]) -> pa.RecordBatch:
+    """One row per result, `source_row_key` = its index — see
+    `_write_execution_to_sidecar`'s docstring for why an index is a
+    legitimate stand-in for a real source_row_key here."""
+    rows = [normalized_value_to_arrow_row(result) for result in results]
+    arrays = [
+        pa.array(
+            [
+                str(i) if field.name == "source_row_key" else rows[i][field.name]
+                for i in range(len(rows))
+            ],
+            type=field.type,
+        )
+        for field in _SIDECAR_SCHEMA
+    ]
+    return pa.RecordBatch.from_arrays(arrays, schema=_SIDECAR_SCHEMA)
+
+
+def _table_to_results(table: pa.Table) -> tuple[list[str | None], list[NormalizedValue]]:
+    """Inverse of `_results_to_record_batch`, reading a whole run back
+    (originals, results) in original row order."""
+    rows = table.to_pylist()
+    rows.sort(key=lambda row: int(row["source_row_key"]))  # numeric, not lexicographic
+    results = [arrow_row_to_normalized_value(row) for row in rows]
+    originals: list[str | None] = [row["original"] for row in rows]
+    return originals, results
 
 
 class _RunExecution:
@@ -102,7 +150,12 @@ class _RunExecution:
 
 class InMemoryStore:
     def __init__(
-        self, cache: NormalizationCache | None = None, *, postgres_dsn: str | None = None
+        self,
+        cache: NormalizationCache | None = None,
+        *,
+        postgres_dsn: str | None = None,
+        sidecar_parquet_root: str | Path | None = None,
+        sidecar_duckdb_path: str | Path | None = None,
     ) -> None:
         # profile_id -> {version: NormalizationProfile}
         self._profiles: dict[str, dict[str, NormalizationProfile]] = {}
@@ -123,6 +176,18 @@ class InMemoryStore:
         self._pg = PostgresMetadataStore(postgres_dsn) if postgres_dsn else None
         if self._pg is not None:
             self._hydrate_from_postgres(self._pg)
+        # Optional (defaults to pure in-memory, same rationale as above)
+        # — real per-value result persistence only activates when BOTH
+        # sidecar paths are given, matching NORM_SIDECAR_PARQUET_ROOT/
+        # NORM_SIDECAR_DUCKDB_PATH both being set. Unlike Postgres,
+        # there's nothing to eagerly hydrate at startup — sidecar data is
+        # looked up lazily, per run_id, only when get_execution() actually
+        # needs it (see _hydrate_execution_from_sidecar).
+        self._sidecar = (
+            SidecarStore(sidecar_parquet_root, sidecar_duckdb_path)
+            if sidecar_parquet_root and sidecar_duckdb_path
+            else None
+        )
 
     def _hydrate_from_postgres(self, pg: PostgresMetadataStore) -> None:
         """Reconstructs in-memory state from whatever a PREVIOUS process
@@ -336,7 +401,32 @@ class InMemoryStore:
             results=results,
             invariant_report=invariant_report,
         )
+        if self._sidecar is not None:
+            self._write_execution_to_sidecar(run_id, field_name, results)
         return finished
+
+    def _write_execution_to_sidecar(
+        self,
+        run_id: str,
+        field_name: str,
+        results: list[NormalizedValue],
+    ) -> None:
+        """Persists a run's real per-value results to Arrow/Parquet
+        (ADR-013's bulk-data tier) — `source_id="api"` since these
+        values arrived directly in the request body, not through a real
+        connected data source (§105's connectors aren't wired into the
+        live API yet); `table=field_name`, since one run always
+        normalizes exactly one field, and it doubles as the lookup key
+        `_hydrate_execution_from_sidecar` needs after a restart. Row
+        order is preserved by construction (`part_index=0`, one batch,
+        rows appended in `results` order), so `source_row_key` is simply
+        each row's index — reconstructible without a real upstream
+        source system."""
+        assert self._sidecar is not None  # narrows for mypy; caller already checked
+        batch = _results_to_record_batch(results)
+        self._sidecar.write_batch(
+            source_id="api", table=field_name, run_id=run_id, batch=batch, part_index=0
+        )
 
     def _normalize_deduped(
         self,
@@ -407,7 +497,43 @@ class InMemoryStore:
         PENDING run created but not yet fed values), not an error."""
         if run_id not in self._runs:
             raise RunNotFoundError(run_id)
-        return self._executions.get(run_id)
+        cached = self._executions.get(run_id)
+        if cached is not None:
+            return cached
+        if self._sidecar is not None:
+            hydrated = self._hydrate_execution_from_sidecar(run_id)
+            if hydrated is not None:
+                self._executions[run_id] = hydrated
+                return hydrated
+        return None
+
+    def _hydrate_execution_from_sidecar(self, run_id: str) -> _RunExecution | None:
+        """Reconstructs a run's real per-value results from Parquet —
+        the counterpart to `_write_execution_to_sidecar`, exercised when
+        `_executions` doesn't have them in-process (i.e. after a
+        restart). `invariant_report` is `sampled=0, violations=()` since
+        runtime invariant sampling only ever happens live, during the
+        original `execute_run()` call — never fabricated as "still
+        clean" for a run this process didn't actually execute."""
+        assert self._sidecar is not None  # narrows for mypy; caller already checked
+        location = self._sidecar.find_run_table(run_id)
+        if location is None:
+            return None
+        source_id, table = location
+        arrow_table = self._sidecar.read_run(source_id=source_id, table=table, run_id=run_id)
+        originals, results = _table_to_results(arrow_table)
+        # Every row carries its own real semantic_type (part of the
+        # persisted schema); a zero-value run has none to read, so
+        # UNKNOWN is an honest "no data to infer from" sentinel, not a
+        # guess — a zero-row run has no other real signal available.
+        semantic_type = results[0].semantic_type if results else FieldSemanticType.UNKNOWN
+        return _RunExecution(
+            field_name=table,
+            semantic_type=semantic_type,
+            originals=originals,
+            results=results,
+            invariant_report=InvariantSampleReport(sampled=0, violations=()),
+        )
 
     def list_runs(self) -> list[NormalizationRun]:
         return list(self._runs.values())

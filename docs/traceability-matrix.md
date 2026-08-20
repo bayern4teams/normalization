@@ -147,7 +147,7 @@ Legend — **Mile.**: milestone; **Ph.**: implementation phase per §127.
 | 103 | Normalization cache | M1 (skeleton), M8 (`get_many`/`put_many` batched reads/writes — DuckDB's real per-statement overhead made individual calls far slower than one batched call for the same N) | 2, 17 | `normexec.cache.NormalizationCache` | `tests/unit/test_cache.py` (`TestPutMany`, `TestGetMany`) |
 | 104 | Batch processing | M1 (skeleton), M8 (tuned) | 2, 17 | `normexec.batch` | `tests/unit/test_batch_apis.py` |
 | 105 | Database integration | M1 | 2 | `normio.connectors.*` | `tests/integration/test_connectors.py` |
-| 106 | Raw / normalized storage strategy | M1 | 2 | `normio.sidecar_store` | `tests/integration/test_sidecar_store.py` |
+| 106 | Raw / normalized storage strategy | M1 (`SidecarStore` built, real, but never connected to the live API — a run's results only ever lived in `InMemoryStore._executions`, lost on restart, disclosed as a gap in M9's verification pack), M9 follow-up (wired into `InMemoryStore.execute_run`/`get_execution`: every run's real results are written through to Parquet and transparently rehydrated after a restart) | 2 | `normio.sidecar_store.SidecarStore`, `normapi.store.InMemoryStore._write_execution_to_sidecar`/`_hydrate_execution_from_sidecar` | `tests/unit/test_file_connector_and_sidecar.py`, `tests/unit/test_sidecar_persistence.py` (real restart simulated via a second independent `InMemoryStore`) |
 | 107 | Data contract | M1 | 2 | `normcore.contract` | `tests/contract/test_data_contract.py` |
 | 108 | Testing | M8 (finalized), incremental | 3–18 | `tests/` | (all) |
 | 109 | Golden test data | M2+ | 3–18 | `tests/golden/fixtures/identity_corpus/` | `tests/golden/*` |

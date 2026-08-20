@@ -180,6 +180,53 @@ matching M8's own precedent of stating real gaps outright rather than
 glossing over them (see M8-verification-pack.md §4.1's mutation-score
 disclosure).
 
+## 7. Addendum — the §6 scope boundary is now closed
+
+Post-M9, per the user's explicit instruction ("do #2 and #3 and then
+continue plan and go for M10"), the scope boundary disclosed in §6 above
+was closed as a dedicated follow-up: `InMemoryStore.execute_run` now
+writes every run's real per-value results through to
+`normio.SidecarStore` (Arrow/Parquet), and `InMemoryStore.get_execution`
+transparently rehydrates them from it when the in-memory `_executions`
+dict doesn't have them — i.e. after a restart. `app.py`'s `create_app()`
+reads the previously-declared-but-unused `NORM_SIDECAR_PARQUET_ROOT`/
+`NORM_SIDECAR_DUCKDB_PATH` env vars, mirroring exactly how `NORM_PG_DSN`
+was wired in for §6's own metadata persistence.
+
+One honest boundary carries forward: a sidecar-hydrated execution's
+`invariant_report` is `sampled=0, violations=()` rather than whatever the
+original live run actually sampled — runtime idempotency/determinism
+sampling (§36) is a live-only artifact of the original `execute_run()`
+call and is not reconstructed from persisted data, to avoid fabricating
+a false "still clean" claim for a run this process didn't itself
+execute.
+
+Verified per this project's standard 3-layer model:
+- **Layer 1**: `ruff check`, `ruff format`, `mypy packages` all clean;
+  full unit/golden/property/contract suite (796 tests, up from 789) green.
+- **Layer 2 (new tests)**: `tests/unit/test_sidecar_persistence.py` —
+  real write-then-read round trip through `InMemoryStore` backed by real
+  Parquet/DuckDB files under `tmp_path`, and restart simulation via a
+  SECOND, independent `InMemoryStore` instance (same technique as §3.3's
+  Postgres restart test) proving a run's results, field name, and
+  original/result pairing all survive exactly. Plus two new
+  `find_run_table` unit tests in `tests/unit/test_file_connector_and_sidecar.py`.
+- **Layer 2 (live)**: a genuine process kill and restart against a real
+  running `uvicorn` server, both `NORM_PG_DSN` (the real local Postgres
+  used throughout M9's own live verification) and the new sidecar env
+  vars set. Created a profile and executed a real run
+  (`POST /normalization/runs`, 4 values including a `null`) against
+  process 1, captured `GET /runs/{id}/values`'s full response as a
+  baseline, `taskkill /F`'d the process outright, started a brand-new
+  independent process against the same Postgres DSN and sidecar paths,
+  and re-fetched `GET /runs/{id}/values` — byte-for-byte identical to
+  the pre-kill baseline (all 4 rows, including full `trace` steps and
+  `structured` fields), served entirely from data the second process
+  never computed itself.
+
+Mypy-tests-gate closure (the other item from the same instruction) is
+recorded separately in commit `17a7450`.
+
 ## Human Sign-off
 
 milestone: M9

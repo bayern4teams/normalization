@@ -107,3 +107,19 @@ def test_sidecar_store_multiple_parts_concatenate(tmp_path: Path) -> None:
         result = store.read_run(source_id="s1", table="t1", run_id="run1")
         assert result.num_rows == 3
         assert sorted(result.column("value").to_pylist()) == [0, 1, 2]
+
+
+@pytest.mark.unit
+def test_sidecar_store_find_run_table_returns_source_and_table(tmp_path: Path) -> None:
+    with SidecarStore(tmp_path / "parquet", tmp_path / "catalog.duckdb") as store:
+        batch = pa.record_batch({"value": [1]})
+        store.write_batch(
+            source_id="demo_pg", table="customers", run_id="run1", batch=batch, part_index=0
+        )
+        assert store.find_run_table("run1") == ("demo_pg", "customers")
+
+
+@pytest.mark.unit
+def test_sidecar_store_find_run_table_returns_none_for_unknown_run(tmp_path: Path) -> None:
+    with SidecarStore(tmp_path / "parquet", tmp_path / "catalog.duckdb") as store:
+        assert store.find_run_table("does-not-exist") is None

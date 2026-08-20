@@ -1282,6 +1282,7 @@ dependencies = [
     { name = "normcore" },
     { name = "normdict" },
     { name = "normexec" },
+    { name = "normio" },
     { name = "psycopg", extra = ["binary"] },
     { name = "uvicorn", extra = ["standard"] },
 ]
@@ -1294,6 +1295,7 @@ requires-dist = [
     { name = "normcore", editable = "packages/normcore" },
     { name = "normdict", editable = "packages/normdict" },
     { name = "normexec", editable = "packages/normexec" },
+    { name = "normio", editable = "packages/normio" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.2,<4" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.31,<1" },
 ]

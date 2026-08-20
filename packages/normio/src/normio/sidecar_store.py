@@ -54,6 +54,18 @@ class SidecarStore:
         )
         return part_path
 
+    def find_run_table(self, run_id: str) -> tuple[str, str] | None:
+        """(source_id, table) for a given run_id, or None if nothing was
+        ever written for it — the lookup a caller needs before calling
+        `read_run()` when it doesn't already know which source/table a
+        run belongs to (e.g. reconstructing state after a restart, where
+        only the run_id is known)."""
+        row = self._conn.execute(
+            "SELECT source_id, table_name FROM sidecar_catalog WHERE run_id = ? LIMIT 1",
+            [run_id],
+        ).fetchone()
+        return (row[0], row[1]) if row else None
+
     def read_run(self, *, source_id: str, table: str, run_id: str) -> pa.Table:
         parts = self._conn.execute(
             "SELECT part_path FROM sidecar_catalog "

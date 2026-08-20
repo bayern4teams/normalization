@@ -113,6 +113,14 @@ _DEFAULT_CACHE_PATH = os.environ.get("NORM_CACHE_PATH", ":memory:")
 # nothing survives a restart.
 _DEFAULT_POSTGRES_DSN = os.environ.get("NORM_PG_DSN")
 
+# Real per-value result persistence (ADR-013, this segment) — set in
+# compose.yaml to a shared volume path, declared there since M0 but never
+# actually read by any code until now. Both must be set (mirrors the
+# Postgres None-means-in-memory default above); either being unset means
+# a run's results live only in-process, same as every prior milestone.
+_DEFAULT_SIDECAR_PARQUET_ROOT = os.environ.get("NORM_SIDECAR_PARQUET_ROOT")
+_DEFAULT_SIDECAR_DUCKDB_PATH = os.environ.get("NORM_SIDECAR_DUCKDB_PATH")
+
 
 def create_app(
     *,
@@ -120,6 +128,8 @@ def create_app(
     custom_dictionaries_dir: Path | None = None,
     cache_path: str | None = None,
     postgres_dsn: str | None = None,
+    sidecar_parquet_root: str | Path | None = None,
+    sidecar_duckdb_path: str | Path | None = None,
 ) -> FastAPI:
     app = FastAPI(
         title="Normalization Engine API",
@@ -184,7 +194,12 @@ def create_app(
     )
     env_id = compute_env_id(env_fingerprint_inputs)
 
-    app.state.store = InMemoryStore(cache, postgres_dsn=postgres_dsn or _DEFAULT_POSTGRES_DSN)
+    app.state.store = InMemoryStore(
+        cache,
+        postgres_dsn=postgres_dsn or _DEFAULT_POSTGRES_DSN,
+        sidecar_parquet_root=sidecar_parquet_root or _DEFAULT_SIDECAR_PARQUET_ROOT,
+        sidecar_duckdb_path=sidecar_duckdb_path or _DEFAULT_SIDECAR_DUCKDB_PATH,
+    )
     app.state.dispatcher = Dispatcher(registry, env_id=env_id)
     app.state.dictionary_loader = loader
     app.state.custom_dictionary_store = custom_store

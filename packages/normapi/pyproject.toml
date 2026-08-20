@@ -9,6 +9,7 @@ dependencies = [
     "normalizers",
     "normanalysis",
     "normexec",
+    "normio",
     "fastapi>=0.115,<1",
     "uvicorn[standard]>=0.31,<1",
     "psycopg[binary]>=3.2,<4",
@@ -20,6 +21,7 @@ normdict = { workspace = true }
 normalizers = { workspace = true }
 normanalysis = { workspace = true }
 normexec = { workspace = true }
+normio = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]
