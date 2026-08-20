@@ -10,9 +10,9 @@ entity themselves) get their own thin models here.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Self
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from normcore import (
     ErrorPolicy,
@@ -57,20 +57,45 @@ class FieldTestRequest(BaseModel):
     error_policy: ErrorPolicy = ErrorPolicy.RETURN_ORIGINAL
 
 
+class RunSourceRequest(BaseModel):
+    """M10: read a run's values from a real, server-registered source
+    connector (Source.txt §105) instead of pasting them. `row_limit`
+    caps how many rows this SYNCHRONOUS request will read — there is no
+    async/chunked execution path yet (that's M11's job); this cap keeps a
+    request against an accidentally-huge table from blocking forever.
+    100_000 mirrors SourceConnector.read_table's own default batch_size,
+    a reasonable per-request ceiling for a synchronous HTTP call."""
+
+    source_id: str
+    table: str
+    column: str
+    row_limit: int = Field(default=10_000, gt=0, le=100_000)
+
+
 class RunExecutionRequest(BaseModel):
     """Optional body for POST /normalization/runs — when supplied, the
-    run actually normalizes `values` through the live Dispatcher (M6);
+    run actually normalizes values through the live Dispatcher (M6);
     when omitted, the run is created PENDING with no field execution,
-    exactly matching M1's original scaffold behavior."""
+    exactly matching M1's original scaffold behavior. Exactly one of
+    `values` (pasted, M6) or `source` (read from a real connector, M10)
+    must be supplied."""
 
     field_name: str
     semantic_type: FieldSemanticType
-    values: list[str | None]
+    values: list[str | None] | None = None
+    source: RunSourceRequest | None = None
     # None (the default — omitted from the request body) means "defer to
     # the run's own profile's per-field error_policy" (§60-62, M10) rather
     # than silently forcing RETURN_ORIGINAL regardless of profile config;
     # an explicit value here still always wins as a one-off override.
     error_policy: ErrorPolicy | None = None
+
+    @model_validator(mode="after")
+    def _exactly_one_of_values_or_source(self) -> Self:
+        if (self.values is None) == (self.source is None):
+            msg = "Exactly one of `values` or `source` must be supplied"
+            raise ValueError(msg)
+        return self
 
 
 class ProfileRollbackRequest(BaseModel):

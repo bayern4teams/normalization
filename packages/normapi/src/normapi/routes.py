@@ -28,6 +28,8 @@
     GET  /normalization/quality                        (M7, §93)
     POST /normalization/detect-type                    (M7-audit, §61)
     GET  /normalization/suggest-profile                (M7-audit, §62/§84)
+    GET  /normalization/sources                         (M10, §105)
+    GET  /normalization/sources/{id}/tables              (M10, §105)
 
 Every route is registered and returns a schema-valid response (M1's Gate
 G1 requirement). As of M6: profile/run CRUD+rollback, field-test/preview,
@@ -58,6 +60,7 @@ from normapi.dependencies import (
     get_custom_dictionary_store,
     get_dictionary_loader,
     get_dispatcher,
+    get_source_registry,
     get_store,
 )
 from normapi.scaffold_profile import SCAFFOLD_PROFILE
@@ -77,6 +80,7 @@ from normapi.schemas import (
     RunExecutionRequest,
     TypeSuggestionResponse,
 )
+from normapi.sources import SourceRegistry, UnknownSourceError
 from normapi.store import (
     InMemoryStore,
     ProfileNotFoundError,
@@ -251,6 +255,31 @@ def suggest_profile_route(
     )
 
 
+# --- sources (§105, M10) -----------------------------------------------------
+
+
+@router.get("/sources", response_model=list[str])
+def list_sources(
+    sources: Annotated[SourceRegistry, Depends(get_source_registry)],
+) -> list[str]:
+    """Real, server-registered source_ids only (`NORM_SOURCES_CONFIG_PATH`)
+    — never a client-suppliable value, so this is simply what's actually
+    connected, not a catalog of hypothetical sources."""
+    return sources.list_source_ids()
+
+
+@router.get("/sources/{source_id}/tables", response_model=list[str])
+def list_source_tables(
+    source_id: str,
+    sources: Annotated[SourceRegistry, Depends(get_source_registry)],
+) -> list[str]:
+    try:
+        connector = sources.get(source_id)
+    except UnknownSourceError as exc:
+        raise HTTPException(status_code=404, detail=f"No such source: {source_id}") from exc
+    return list(connector.list_tables())
+
+
 # --- preview / field-test ---------------------------------------------------
 
 
@@ -295,15 +324,20 @@ def list_runs(store: Annotated[InMemoryStore, Depends(get_store)]) -> list[Norma
 def create_run(
     profile_id: str,
     source_snapshot: str,
+    *,
     store: Annotated[InMemoryStore, Depends(get_store)],
     dispatcher: Annotated[Dispatcher, Depends(get_dispatcher)],
+    sources: Annotated[SourceRegistry, Depends(get_source_registry)],
     execution: Annotated[RunExecutionRequest | None, Body()] = None,
 ) -> NormalizationRun:
     """`execution` is optional (M6): when supplied, the run actually
-    normalizes `execution.values` through the live Dispatcher and the
-    run reaches COMPLETED with real metrics/errors/collisions/impact
-    data attached; when omitted, behavior is unchanged from M1 — a
-    PENDING run with no field execution."""
+    normalizes real values through the live Dispatcher and the run
+    reaches COMPLETED with real metrics/errors/collisions/impact data
+    attached; when omitted, behavior is unchanged from M1 — a PENDING run
+    with no field execution. `execution.values` (pasted, M6) and
+    `execution.source` (read from a real connected source, M10) are the
+    two ways to supply those values — `RunExecutionRequest` itself
+    enforces exactly one is present."""
     try:
         run = store.create_run(
             profile_id=profile_id, env_id=dispatcher.env_id, source_snapshot=source_snapshot
@@ -312,12 +346,31 @@ def create_run(
         raise HTTPException(status_code=404, detail=f"No such profile: {profile_id}") from exc
 
     if execution is not None:
+        if execution.values is not None:
+            values = execution.values
+        else:
+            # RunExecutionRequest's own validator guarantees this is set.
+            assert execution.source is not None
+            try:
+                values = sources.read_column_values(
+                    execution.source.source_id,
+                    execution.source.table,
+                    execution.source.column,
+                    row_limit=execution.source.row_limit,
+                )
+            except UnknownSourceError as exc:
+                raise HTTPException(
+                    status_code=404, detail=f"No such source: {execution.source.source_id}"
+                ) from exc
+            except (ValueError, FileNotFoundError) as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+
         run = store.execute_run(
             run.id,
             dispatcher=dispatcher,
             field_name=execution.field_name,
             semantic_type=execution.semantic_type,
-            values=execution.values,
+            values=values,
             error_policy=execution.error_policy,
         )
     return run

@@ -12,6 +12,7 @@ from fastapi import Request
 if TYPE_CHECKING:
     from normexec.cache import NormalizationCache
 
+    from normapi.sources import SourceRegistry
     from normapi.store import InMemoryStore
     from normcore import Dispatcher
     from normdict import CustomDictionaryStore, DictionaryLoader
@@ -35,3 +36,7 @@ def get_custom_dictionary_store(request: Request) -> CustomDictionaryStore:
 
 def get_cache(request: Request) -> NormalizationCache:
     return request.app.state.cache  # type: ignore[no-any-return]
+
+
+def get_source_registry(request: Request) -> SourceRegistry:
+    return request.app.state.source_registry  # type: ignore[no-any-return]

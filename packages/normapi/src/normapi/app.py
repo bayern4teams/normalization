@@ -34,6 +34,7 @@ from normexec.cache import NormalizationCache
 from normexec.env_fingerprint import compute_env_id, gather
 
 from normapi.routes import router
+from normapi.sources import SourceRegistry
 from normapi.store import InMemoryStore
 from normcore import Dispatcher, NormalizerRegistry
 from normdict import CustomDictionaryStore, DictionaryLoader
@@ -121,6 +122,13 @@ _DEFAULT_POSTGRES_DSN = os.environ.get("NORM_PG_DSN")
 _DEFAULT_SIDECAR_PARQUET_ROOT = os.environ.get("NORM_SIDECAR_PARQUET_ROOT")
 _DEFAULT_SIDECAR_DUCKDB_PATH = os.environ.get("NORM_SIDECAR_DUCKDB_PATH")
 
+# Real DB/file source connectors wired into the live API (§105, M10) — a
+# JSON file of `{source_id: {"type": ..., ...connector-specific params}}`,
+# never a client-supplied DSN in a request body (see normapi.sources'
+# own docstring for why). Unset means no sources are registered, matching
+# every other optional-integration env var's "off by default" behavior.
+_DEFAULT_SOURCES_CONFIG_PATH = os.environ.get("NORM_SOURCES_CONFIG_PATH")
+
 
 def create_app(
     *,
@@ -130,6 +138,7 @@ def create_app(
     postgres_dsn: str | None = None,
     sidecar_parquet_root: str | Path | None = None,
     sidecar_duckdb_path: str | Path | None = None,
+    sources_config_path: str | Path | None = None,
 ) -> FastAPI:
     app = FastAPI(
         title="Normalization Engine API",
@@ -204,6 +213,13 @@ def create_app(
     app.state.dictionary_loader = loader
     app.state.custom_dictionary_store = custom_store
     app.state.cache = cache
+
+    resolved_sources_config_path = sources_config_path or _DEFAULT_SOURCES_CONFIG_PATH
+    app.state.source_registry = (
+        SourceRegistry.from_config_file(resolved_sources_config_path)
+        if resolved_sources_config_path
+        else SourceRegistry({})
+    )
 
     app.include_router(router)
 
