@@ -1,11 +1,21 @@
 // Source.txt §81/§116 Rule Builder UX. Renders the REAL pipeline steps a
 // live field-test call actually executed (NormalizedValue.trace) — not
 // an invented generic pipeline. Drag-to-reorder and enable/disable are
-// visual-only affordances: per-field pipeline configuration isn't
-// threaded into individual normalizers yet (the same disclosed gap
-// carried since M2 — see the M7 verification pack), so these controls
-// do not change what the backend actually runs. "Test" re-runs
-// field-test for real against whatever value you type.
+// still visual-only affordances: per-field STEP ORDERING isn't threaded
+// into individual normalizers (each normalizer's internal step sequence
+// is real hardcoded logic, not data-driven from NormalizationStep lists
+// — the same disclosed gap carried since M2, see the M7 verification
+// pack), so these two controls do not change what the backend runs.
+// What a profile's config DOES actually drive as of M10: locale/country/
+// default_region (phone region resolution, date MDY/DMY, currency
+// symbol disambiguation, ...), dictionary_refs, and per-field
+// error_policy — see NormalizationProfile.build_context. field-test here
+// intentionally stays profile-agnostic (it's a quick "test this value"
+// tool independent of any saved profile, per §83/§118), which is why
+// this page's own "Test" button can't demonstrate that: use a real
+// POST /normalization/runs against a profile with locale_policy set to
+// see it. "Test" re-runs field-test for real against whatever value you
+// type.
 import { useMutation } from "@tanstack/react-query";
 import { useState } from "react";
 import { fieldTest } from "../api/client";
@@ -48,7 +58,9 @@ export function RulesPage() {
       <p className="hint">
         Loads the real pipeline the live dispatcher executed for a test value. Drag to reorder and
         the enable/disable toggle are visualization aids only — they do not change what the server
-        runs (per-field pipeline configuration isn't wired into normalizers yet).
+        runs (per-field step ordering isn't wired into normalizers yet). A profile's locale,
+        dictionary, and error-policy config now do actually affect behavior — see a real run's
+        results, not this profile-agnostic test tool.
       </p>
 
       <form

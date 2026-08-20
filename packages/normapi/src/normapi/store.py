@@ -350,20 +350,23 @@ class InMemoryStore:
         field_name: str,
         semantic_type: FieldSemanticType,
         values: Sequence[str | None],
-        error_policy: ErrorPolicy,
+        error_policy: ErrorPolicy | None = None,
     ) -> NormalizationRun:
         """Actually normalizes `values` through the live Dispatcher and
         stores the original/result pairs against the run — real
-        execution, not a scaffold no-op."""
+        execution, not a scaffold no-op.
+
+        `error_policy=None` (the caller didn't explicitly override it)
+        defers to the run's own profile per field — see
+        `NormalizationProfile.build_context`'s docstring for the full
+        resolution order. An explicit value here always wins."""
         run = self.get_run(run_id)
         if run.is_terminal():
             msg = f"Run {run_id!r} already reached terminal status {run.status!r}"
             raise RunNotExecutableError(msg)
 
         profile = self.get_profile(run.profile_id, run.profile_version)
-        ctx = NormalizationContext(
-            field_name=field_name, semantic_type=semantic_type, error_policy=error_policy
-        )
+        ctx = profile.build_context(field_name, semantic_type, error_policy=error_policy)
 
         recorder = RunRecorder(run)
         recorder.start()

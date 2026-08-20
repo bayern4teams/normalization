@@ -9,6 +9,7 @@ import pytest
 
 from normcore import (
     ComponentVersionInfo,
+    ErrorPolicy,
     FieldNormalizationConfig,
     FieldSemanticType,
     NormalizationPipeline,
@@ -84,6 +85,101 @@ def test_profile_config_for_lookup_and_immutability() -> None:
     # claim (a real code guarantee, not just a policy statement).
     with pytest.raises(Exception, match=r"frozen|Instance is frozen"):
         profile.status = ProfileStatus.ACTIVE  # type: ignore[misc]
+
+
+def _profile(
+    field_configs: tuple[FieldNormalizationConfig, ...] = (),
+    locale_policy: dict[str, str] | None = None,
+) -> NormalizationProfile:
+    return NormalizationProfile(
+        id="p1",
+        name="p",
+        version="v1",
+        locale_policy=locale_policy or {},
+        field_configs=field_configs,
+        created_at="2026-08-17T00:00:00Z",
+        updated_at="2026-08-17T00:00:00Z",
+        created_by="test",
+    )
+
+
+@pytest.mark.unit
+class TestBuildContext:
+    """`NormalizationProfile.build_context` (M10) — the real profile ->
+    NormalizationContext plumbing several normalizers already branch on
+    (`ctx.country`/`ctx.locale`/`ctx.default_region`), see
+    tests/golden/test_m10_corpus.py for proof this actually changes live
+    normalizer output, not just that the context object is shaped right.
+    """
+
+    def test_profile_locale_policy_populates_context(self) -> None:
+        profile = _profile(locale_policy={"country": "US", "default_region": "US"})
+        ctx = profile.build_context("f", FieldSemanticType.FREE_TEXT)
+        assert ctx.country == "US"
+        assert ctx.default_region == "US"
+
+    def test_field_locale_overrides_win_over_profile_locale_policy(self) -> None:
+        field_config = FieldNormalizationConfig(
+            field_ref="f",
+            semantic_type=FieldSemanticType.FREE_TEXT,
+            locale_overrides={"country": "GB"},
+        )
+        profile = _profile(field_configs=(field_config,), locale_policy={"country": "US"})
+        ctx = profile.build_context("f", FieldSemanticType.FREE_TEXT)
+        assert ctx.country == "GB"
+
+    def test_unrelated_field_does_not_see_another_fields_overrides(self) -> None:
+        field_config = FieldNormalizationConfig(
+            field_ref="f1",
+            semantic_type=FieldSemanticType.FREE_TEXT,
+            locale_overrides={"country": "GB"},
+        )
+        profile = _profile(field_configs=(field_config,), locale_policy={"country": "US"})
+        ctx = profile.build_context("f2", FieldSemanticType.FREE_TEXT)
+        assert ctx.country == "US"
+
+    def test_unknown_locale_keys_are_silently_dropped_not_raised(self) -> None:
+        profile = _profile(locale_policy={"nonsense_key": "x", "country": "US"})
+        ctx = profile.build_context("f", FieldSemanticType.FREE_TEXT)
+        assert ctx.country == "US"
+        assert not hasattr(ctx, "nonsense_key")
+
+    def test_dictionary_refs_become_dictionary_set(self) -> None:
+        field_config = FieldNormalizationConfig(
+            field_ref="f",
+            semantic_type=FieldSemanticType.FREE_TEXT,
+            dictionary_refs=("honorifics.common", "custom.aliases"),
+        )
+        profile = _profile(field_configs=(field_config,))
+        ctx = profile.build_context("f", FieldSemanticType.FREE_TEXT)
+        assert ctx.dictionary_set == ("honorifics.common", "custom.aliases")
+
+    def test_explicit_error_policy_wins_over_field_config(self) -> None:
+        field_config = FieldNormalizationConfig(
+            field_ref="f",
+            semantic_type=FieldSemanticType.FREE_TEXT,
+            error_policy=ErrorPolicy.SKIP_FIELD,
+        )
+        profile = _profile(field_configs=(field_config,))
+        ctx = profile.build_context(
+            "f", FieldSemanticType.FREE_TEXT, error_policy=ErrorPolicy.MARK_INVALID
+        )
+        assert ctx.error_policy is ErrorPolicy.MARK_INVALID
+
+    def test_field_config_error_policy_used_when_none_supplied(self) -> None:
+        field_config = FieldNormalizationConfig(
+            field_ref="f",
+            semantic_type=FieldSemanticType.FREE_TEXT,
+            error_policy=ErrorPolicy.SKIP_FIELD,
+        )
+        profile = _profile(field_configs=(field_config,))
+        ctx = profile.build_context("f", FieldSemanticType.FREE_TEXT, error_policy=None)
+        assert ctx.error_policy is ErrorPolicy.SKIP_FIELD
+
+    def test_default_error_policy_when_no_field_config_and_none_supplied(self) -> None:
+        profile = _profile()
+        ctx = profile.build_context("f", FieldSemanticType.FREE_TEXT, error_policy=None)
+        assert ctx.error_policy is ErrorPolicy.RETURN_ORIGINAL
 
 
 @pytest.mark.unit

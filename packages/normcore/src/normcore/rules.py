@@ -19,6 +19,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from normcore.context import NormalizationContext
 from normcore.enums import (
     ErrorPolicy,
     FieldSemanticType,
@@ -27,6 +28,13 @@ from normcore.enums import (
     Reversibility,
     SemanticSource,
 )
+
+# The NormalizationContext fields a profile's locale_policy/field-level
+# locale_overrides are allowed to set — every other key is silently
+# dropped rather than raising, since these dicts are free-form
+# `dict[str, str]` at the API boundary with no schema validation of
+# their own (§60-62); a typo'd key should not crash a run.
+_CONTEXT_LOCALE_FIELDS = frozenset({"country", "locale", "language", "script", "default_region"})
 
 
 class NormalizationRule(BaseModel):
@@ -166,3 +174,46 @@ class NormalizationProfile(BaseModel):
             if config.field_ref == field_ref:
                 return config
         return None
+
+    def build_context(
+        self,
+        field_name: str,
+        semantic_type: FieldSemanticType,
+        *,
+        error_policy: ErrorPolicy | None = None,
+    ) -> NormalizationContext:
+        """Real profile-driven context construction — Source.txt §60-62,
+        §101. Several normalizers already branch on `ctx.country`/
+        `ctx.locale`/`ctx.default_region` (phone region resolution, date
+        MDY/DMY, currency symbol disambiguation, identifier validation
+        country, ...); this is what actually threads a profile's
+        `locale_policy` (profile-wide defaults) and a field's own
+        `locale_overrides` (win on conflicting keys) into those existing
+        branches, rather than every caller building a bare context that
+        leaves them all `None`. `dictionary_refs` becomes
+        `ctx.dictionary_set`. `error_policy`: an explicit caller-supplied
+        value always wins (e.g. a one-off request override); otherwise
+        falls back to the field config's own `error_policy`, then finally
+        `ErrorPolicy.RETURN_ORIGINAL` if there is no field config at all.
+        """
+        field_config = self.config_for(field_name)
+        locale_values = dict(self.locale_policy)
+        if field_config is not None:
+            locale_values.update(field_config.locale_overrides)
+        resolved_locale = {k: v for k, v in locale_values.items() if k in _CONTEXT_LOCALE_FIELDS}
+
+        resolved_error_policy = error_policy
+        if resolved_error_policy is None:
+            resolved_error_policy = (
+                field_config.error_policy
+                if field_config is not None
+                else ErrorPolicy.RETURN_ORIGINAL
+            )
+
+        return NormalizationContext(
+            field_name=field_name,
+            semantic_type=semantic_type,
+            error_policy=resolved_error_policy,
+            dictionary_set=field_config.dictionary_refs if field_config is not None else (),
+            **resolved_locale,
+        )

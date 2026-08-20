@@ -66,7 +66,11 @@ class RunExecutionRequest(BaseModel):
     field_name: str
     semantic_type: FieldSemanticType
     values: list[str | None]
-    error_policy: ErrorPolicy = ErrorPolicy.RETURN_ORIGINAL
+    # None (the default — omitted from the request body) means "defer to
+    # the run's own profile's per-field error_policy" (§60-62, M10) rather
+    # than silently forcing RETURN_ORIGINAL regardless of profile config;
+    # an explicit value here still always wins as a one-off override.
+    error_policy: ErrorPolicy | None = None
 
 
 class ProfileRollbackRequest(BaseModel):
