@@ -183,14 +183,17 @@ h4 {
 
 .status-pill--active,
 .status-pill--completed,
-.status-pill--normalized {
+.status-pill--normalized,
+.status-pill--accepted,
+.status-pill--whitelisted {
   background: color-mix(in srgb, var(--success) 15%, transparent);
   border-color: var(--success);
 }
 
 .status-pill--invalid,
 .status-pill--failed,
-.status-pill--error {
+.status-pill--error,
+.status-pill--rejected {
   background: color-mix(in srgb, var(--danger) 15%, transparent);
   border-color: var(--danger);
 }
@@ -281,6 +284,10 @@ button:disabled {
 
 .state-message--error {
   color: var(--danger);
+}
+
+.state-message--success {
+  color: var(--success);
 }
 
 .hint {

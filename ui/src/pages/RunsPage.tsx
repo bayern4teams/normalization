@@ -1,9 +1,11 @@
 // Source.txt §89/§94 — Runs list + create-and-execute a run against a
-// real profile with real values through the live Dispatcher.
+// real profile with real values through the live Dispatcher. Values can
+// be pasted (M6) or read from a real connected source (M10 backend,
+// wired into this page in M12's UI catch-up).
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { createRun, listProfiles, listRuns } from "../api/client";
+import { createRun, listProfiles, listRuns, listSourceTables, listSources } from "../api/client";
 import { FIELD_SEMANTIC_TYPES, type FieldSemanticType } from "../api/types";
 import { QueryState } from "../components/QueryState";
 
@@ -25,6 +27,7 @@ export function RunsPage() {
     },
   });
   const profilesQuery = useQuery({ queryKey: ["profiles"], queryFn: listProfiles });
+  const sourcesQuery = useQuery({ queryKey: ["sources"], queryFn: listSources });
 
   const [profileId, setProfileId] = useState("");
   const [sourceSnapshot, setSourceSnapshot] = useState("manual-ui-run");
@@ -32,8 +35,25 @@ export function RunsPage() {
   const [semanticType, setSemanticType] = useState<FieldSemanticType>("PERSON_NAME");
   const [rawValues, setRawValues] = useState("José García\nJose Garcia\nJOSÉ GARCÍA");
 
+  const [valuesMode, setValuesMode] = useState<"paste" | "source">("paste");
+  const [sourceId, setSourceId] = useState("");
+  const [sourceTable, setSourceTable] = useState("");
+  const [sourceColumn, setSourceColumn] = useState("");
+  const tablesQuery = useQuery({
+    queryKey: ["source-tables", sourceId],
+    queryFn: () => listSourceTables(sourceId),
+    enabled: Boolean(sourceId),
+  });
+
   const createMutation = useMutation({
     mutationFn: () => {
+      if (valuesMode === "source") {
+        return createRun(profileId, sourceSnapshot, {
+          field_name: fieldName,
+          semantic_type: semanticType,
+          source: { source_id: sourceId, table: sourceTable, column: sourceColumn },
+        });
+      }
       const values = rawValues
         .split("\n")
         .map((v) => v.trim())
@@ -51,6 +71,10 @@ export function RunsPage() {
     },
   });
 
+  const canSubmit =
+    Boolean(profileId) &&
+    (valuesMode === "paste" || (Boolean(sourceId) && Boolean(sourceTable) && Boolean(sourceColumn)));
+
   return (
     <section>
       <h1>Runs</h1>
@@ -59,7 +83,7 @@ export function RunsPage() {
         className="preview-form"
         onSubmit={(e) => {
           e.preventDefault();
-          if (profileId) createMutation.mutate();
+          if (canSubmit) createMutation.mutate();
         }}
       >
         <div className="preview-form__row">
@@ -96,11 +120,76 @@ export function RunsPage() {
             </select>
           </label>
         </div>
-        <label className="preview-form__values">
-          Values (one per line)
-          <textarea rows={4} value={rawValues} onChange={(e) => setRawValues(e.target.value)} />
-        </label>
-        <button type="submit" disabled={createMutation.isPending || !profileId}>
+
+        <div className="preview-form__row">
+          <label>
+            Values from
+            <select
+              value={valuesMode}
+              onChange={(e) => setValuesMode(e.target.value as "paste" | "source")}
+            >
+              <option value="paste">Pasted values</option>
+              <option value="source">Connected source (§105)</option>
+            </select>
+          </label>
+        </div>
+
+        {valuesMode === "paste" ? (
+          <label className="preview-form__values">
+            Values (one per line)
+            <textarea rows={4} value={rawValues} onChange={(e) => setRawValues(e.target.value)} />
+          </label>
+        ) : (
+          <div className="preview-form__row">
+            <label>
+              Source
+              <select
+                value={sourceId}
+                onChange={(e) => {
+                  setSourceId(e.target.value);
+                  setSourceTable("");
+                }}
+              >
+                <option value="">Select a source…</option>
+                {sourcesQuery.data?.map((id) => (
+                  <option key={id} value={id}>
+                    {id}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Table
+              <select
+                value={sourceTable}
+                onChange={(e) => setSourceTable(e.target.value)}
+                disabled={!sourceId}
+              >
+                <option value="">Select a table…</option>
+                {tablesQuery.data?.map((t) => (
+                  <option key={t} value={t}>
+                    {t}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Column
+              <input
+                value={sourceColumn}
+                onChange={(e) => setSourceColumn(e.target.value)}
+                placeholder="column name"
+              />
+            </label>
+          </div>
+        )}
+        {valuesMode === "source" && sourcesQuery.data?.length === 0 && (
+          <p className="hint">
+            No sources configured on this server (NORM_SOURCES_CONFIG_PATH unset).
+          </p>
+        )}
+
+        <button type="submit" disabled={createMutation.isPending || !canSubmit}>
           Create + execute run
         </button>
       </form>
@@ -141,7 +230,10 @@ export function RunsPage() {
                 </td>
                 <td>{run.profile_version}</td>
                 <td>
-                  <span className={`status-pill status-pill--${run.status.toLowerCase()}`}>
+                  <span
+                    className={`status-pill status-pill--${run.status.toLowerCase()}`}
+                    title={run.failure_reason ?? undefined}
+                  >
                     {run.status}
                   </span>
                 </td>

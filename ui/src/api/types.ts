@@ -162,6 +162,14 @@ export interface NormalizationRun {
   finished_at: string | null;
   status: RunStatus;
   metrics: NormalizationRunMetrics;
+  failure_reason: string | null;
+}
+
+export interface RunSourceRequest {
+  source_id: string;
+  table: string;
+  column: string;
+  row_limit?: number;
 }
 
 export interface NormalizationError {
@@ -175,10 +183,22 @@ export interface NormalizationError {
   library_version: string | null;
 }
 
+export type CollisionDecisionType = "ACCEPTED" | "REJECTED" | "WHITELISTED";
+
+export interface CollisionDecision {
+  run_id: string;
+  normalized_value: string;
+  decision: CollisionDecisionType;
+  decided_by: string;
+  decided_at: string;
+  note: string | null;
+}
+
 export interface CollisionGroup {
   normalized_value: string;
   original_values: string[];
   total_occurrences: number;
+  decision: CollisionDecision | null;
 }
 
 export interface ImpactReport {

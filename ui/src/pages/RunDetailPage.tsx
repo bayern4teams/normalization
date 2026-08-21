@@ -76,6 +76,11 @@ export function RunDetailPage() {
               <dt>env_id</dt>
               <dd>{runQuery.data.env_id}</dd>
             </dl>
+            {runQuery.data.status === "FAILED" && runQuery.data.failure_reason && (
+              <p className="state-message state-message--error">
+                Failed: {runQuery.data.failure_reason}
+              </p>
+            )}
             <p className="hint">
               Per-run library version listing is not wired up yet (env_id is a real hash, but its
               human-readable expansion isn't exposed via this API at this milestone).
@@ -162,7 +167,13 @@ export function RunDetailPage() {
         </table>
       </QueryState>
 
-      <h3>Collisions</h3>
+      <h3>
+        Collisions {collisionsQuery.data && collisionsQuery.data.length > 0 && (
+          <Link to="/collisions" className="hint">
+            (review in Collision Dashboard)
+          </Link>
+        )}
+      </h3>
       <QueryState
         isLoading={collisionsQuery.isPending}
         isError={collisionsQuery.isError}
@@ -176,14 +187,26 @@ export function RunDetailPage() {
               <th>Normalized value</th>
               <th>Original values</th>
               <th>Occurrences</th>
+              <th>Decision</th>
             </tr>
           </thead>
           <tbody>
-            {collisionsQuery.data?.map((c, i) => (
-              <tr key={i}>
+            {collisionsQuery.data?.map((c) => (
+              <tr key={c.normalized_value}>
                 <td>{c.normalized_value}</td>
                 <td>{c.original_values.join(", ")}</td>
                 <td>{c.total_occurrences}</td>
+                <td>
+                  {c.decision ? (
+                    <span
+                      className={`status-pill status-pill--${c.decision.decision.toLowerCase()}`}
+                    >
+                      {c.decision.decision}
+                    </span>
+                  ) : (
+                    <span className="hint">not reviewed</span>
+                  )}
+                </td>
               </tr>
             ))}
           </tbody>

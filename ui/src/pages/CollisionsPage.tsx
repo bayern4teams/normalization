@@ -1,21 +1,37 @@
-// Source.txt §92 Collision Dashboard. Collisions are computed live per
-// run (no stored accept/reject/whitelist state exists server-side yet —
-// disclosed in the M7 verification pack rather than faked here), so
-// "Inspect" is the one real interactive affordance; Accept/Reject/
-// Whitelist would need a persistence layer this milestone doesn't add.
-import { useQuery } from "@tanstack/react-query";
+// Source.txt §92 Collision Dashboard. Accept rule/Reject rule/Whitelist
+// collision are real, persisted decisions as of M11
+// (POST /runs/{id}/collisions/decision) — wired into this page in M12's
+// UI catch-up. "Change configuration" links back to the profile/rules
+// pages rather than adding new state of its own (no separate backend
+// concept exists for it).
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { getRunCollisions, listRuns } from "../api/client";
+import { getRunCollisions, listRuns, recordCollisionDecision } from "../api/client";
+import type { CollisionDecisionType } from "../api/types";
 import { QueryState } from "../components/QueryState";
 
 export function CollisionsPage() {
   const [runId, setRunId] = useState("");
+  const [decidedBy, setDecidedBy] = useState("ui-user");
+  const queryClient = useQueryClient();
   const runsQuery = useQuery({ queryKey: ["runs"], queryFn: listRuns });
   const collisionsQuery = useQuery({
     queryKey: ["run-collisions", runId],
     queryFn: () => getRunCollisions(runId),
     enabled: Boolean(runId),
+  });
+
+  const decideMutation = useMutation({
+    mutationFn: (vars: { normalizedValue: string; decision: CollisionDecisionType }) =>
+      recordCollisionDecision(runId, {
+        normalized_value: vars.normalizedValue,
+        decision: vars.decision,
+        decided_by: decidedBy || "ui-user",
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["run-collisions", runId] });
+    },
   });
 
   return (
@@ -34,8 +50,18 @@ export function CollisionsPage() {
             </option>
           ))}
         </select>
+        <input
+          placeholder="Decided by"
+          value={decidedBy}
+          onChange={(e) => setDecidedBy(e.target.value)}
+        />
         {runId && <Link to={`/runs/${runId}`}>View run</Link>}
       </div>
+      {decideMutation.isError && (
+        <p className="state-message state-message--error">
+          Decision failed: {(decideMutation.error as Error).message}
+        </p>
+      )}
 
       {runId && (
         <QueryState
@@ -51,11 +77,13 @@ export function CollisionsPage() {
                 <th>Normalized value</th>
                 <th>Original values</th>
                 <th>Count</th>
+                <th>Decision</th>
+                <th>Actions</th>
               </tr>
             </thead>
             <tbody>
-              {collisionsQuery.data?.map((c, i) => (
-                <tr key={i}>
+              {collisionsQuery.data?.map((c) => (
+                <tr key={c.normalized_value}>
                   <td>{c.normalized_value}</td>
                   <td>
                     <ul className="plain-list">
@@ -65,6 +93,56 @@ export function CollisionsPage() {
                     </ul>
                   </td>
                   <td>{c.total_occurrences}</td>
+                  <td>
+                    {c.decision ? (
+                      <span
+                        className={`status-pill status-pill--${c.decision.decision.toLowerCase()}`}
+                        title={`by ${c.decision.decided_by} at ${c.decision.decided_at}`}
+                      >
+                        {c.decision.decision}
+                      </span>
+                    ) : (
+                      <span className="hint">not reviewed</span>
+                    )}
+                  </td>
+                  <td className="inline-form">
+                    <button
+                      type="button"
+                      disabled={decideMutation.isPending}
+                      onClick={() =>
+                        decideMutation.mutate({
+                          normalizedValue: c.normalized_value,
+                          decision: "ACCEPTED",
+                        })
+                      }
+                    >
+                      Accept rule
+                    </button>
+                    <button
+                      type="button"
+                      disabled={decideMutation.isPending}
+                      onClick={() =>
+                        decideMutation.mutate({
+                          normalizedValue: c.normalized_value,
+                          decision: "REJECTED",
+                        })
+                      }
+                    >
+                      Reject rule
+                    </button>
+                    <button
+                      type="button"
+                      disabled={decideMutation.isPending}
+                      onClick={() =>
+                        decideMutation.mutate({
+                          normalizedValue: c.normalized_value,
+                          decision: "WHITELISTED",
+                        })
+                      }
+                    >
+                      Whitelist
+                    </button>
+                  </td>
                 </tr>
               ))}
             </tbody>

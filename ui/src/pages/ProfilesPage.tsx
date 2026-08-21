@@ -1,4 +1,13 @@
 // Source.txt §89 Profiles list + create — real POST/GET /normalization/profiles.
+// Creates a bare profile (name/description/created_by) — locale_policy
+// and per-field locale_overrides/dictionary_refs/error_policy (real,
+// backend-wired since M10, see NormalizationProfile.build_context) have
+// no editor UI yet. A full field-config editor (repeatable rows with
+// locale key/value pairs, dictionary multi-select, error-policy select)
+// is real, separate UI work not attempted in M12's catch-up pass —
+// disclosed here, not silently omitted. Setting locale_policy today
+// requires POSTing directly (see tests/golden/test_m10_corpus.py for
+// the exact shape).
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link } from "react-router-dom";

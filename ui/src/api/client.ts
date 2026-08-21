@@ -3,8 +3,11 @@
 // client; a page with nothing to show renders an honest empty state
 // instead.
 
+import { getApiKey } from "./authStore";
 import type {
   AbComparisonReport,
+  CollisionDecision,
+  CollisionDecisionType,
   CollisionGroup,
   DictionarySummary,
   ErrorPolicy,
@@ -20,6 +23,7 @@ import type {
   OverviewReport,
   ProfileSuggestion,
   QualityReport,
+  RunSourceRequest,
   TypeSuggestion,
 } from "./types";
 
@@ -47,9 +51,14 @@ export class ApiError extends Error {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const apiKey = getApiKey();
   const resp = await fetch(`${BASE}${path}`, {
     ...init,
-    headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
+    headers: {
+      "Content-Type": "application/json",
+      ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
+      ...(init?.headers ?? {}),
+    },
   });
   if (!resp.ok) {
     let detail: unknown;
@@ -170,12 +179,19 @@ export function listRuns(): Promise<NormalizationRun[]> {
 export function createRun(
   profileId: string,
   sourceSnapshot: string,
-  execution?: {
-    field_name: string;
-    semantic_type: FieldSemanticType;
-    values: (string | null)[];
-    error_policy?: ErrorPolicy;
-  },
+  execution?:
+    | {
+        field_name: string;
+        semantic_type: FieldSemanticType;
+        values: (string | null)[];
+        error_policy?: ErrorPolicy;
+      }
+    | {
+        field_name: string;
+        semantic_type: FieldSemanticType;
+        source: RunSourceRequest;
+        error_policy?: ErrorPolicy;
+      },
 ): Promise<NormalizationRun> {
   const params = new URLSearchParams({
     profile_id: profileId,
@@ -197,6 +213,26 @@ export function getRunErrors(runId: string): Promise<NormalizationError[]> {
 
 export function getRunCollisions(runId: string): Promise<CollisionGroup[]> {
   return request(`/runs/${runId}/collisions`);
+}
+
+export function recordCollisionDecision(
+  runId: string,
+  body: { normalized_value: string; decision: CollisionDecisionType; decided_by: string; note?: string },
+): Promise<CollisionDecision> {
+  return request(`/runs/${runId}/collisions/decision`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+// --- sources (§105, M10) ---------------------------------------------------
+
+export function listSources(): Promise<string[]> {
+  return request("/sources");
+}
+
+export function listSourceTables(sourceId: string): Promise<string[]> {
+  return request(`/sources/${sourceId}/tables`);
 }
 
 export function getRunValues(
