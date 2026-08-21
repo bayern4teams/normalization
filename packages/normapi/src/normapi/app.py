@@ -129,6 +129,12 @@ _DEFAULT_SIDECAR_DUCKDB_PATH = os.environ.get("NORM_SIDECAR_DUCKDB_PATH")
 # every other optional-integration env var's "off by default" behavior.
 _DEFAULT_SOURCES_CONFIG_PATH = os.environ.get("NORM_SOURCES_CONFIG_PATH")
 
+# Lightweight API-key auth (M11, see normapi.auth) — unset means auth is
+# fully disabled, matching every other optional-integration env var's
+# "off by default" behavior; every existing test's plain
+# TestClient(create_app()) construction is unaffected.
+_DEFAULT_API_KEY = os.environ.get("NORM_API_KEY")
+
 
 def create_app(
     *,
@@ -139,6 +145,7 @@ def create_app(
     sidecar_parquet_root: str | Path | None = None,
     sidecar_duckdb_path: str | Path | None = None,
     sources_config_path: str | Path | None = None,
+    api_key: str | None = None,
 ) -> FastAPI:
     app = FastAPI(
         title="Normalization Engine API",
@@ -220,6 +227,7 @@ def create_app(
         if resolved_sources_config_path
         else SourceRegistry({})
     )
+    app.state.api_key = api_key or _DEFAULT_API_KEY
 
     app.include_router(router)
 

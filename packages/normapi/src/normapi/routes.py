@@ -36,6 +36,11 @@ Every route is registered and returns a schema-valid response (M1's Gate
 G1 requirement). As of M6: profile/run CRUD+rollback, field-test/preview,
 dictionary write/versioning/rollback, and impact/collision/A-B analysis
 are all wired to real logic — no remaining 501 stubs on the §98 surface.
+
+M11: every POST/PUT/PATCH/DELETE route on this router requires
+`Authorization: Bearer <NORM_API_KEY>` when that env var is set (see
+normapi.auth) — a single router-level dependency, not per-route, so a
+future mutating route is protected by construction.
 """
 
 from __future__ import annotations
@@ -61,6 +66,7 @@ from normanalysis import (
     suggest_profile,
     suggest_semantic_type,
 )
+from normapi.auth import enforce_api_key_for_mutations
 from normapi.dependencies import (
     get_custom_dictionary_store,
     get_dictionary_loader,
@@ -112,7 +118,7 @@ from normdict import (
     DictionaryNotFoundError,
 )
 
-router = APIRouter(prefix="/normalization")
+router = APIRouter(prefix="/normalization", dependencies=[Depends(enforce_api_key_for_mutations)])
 
 
 # --- profiles -----------------------------------------------------------

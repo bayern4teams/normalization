@@ -40,3 +40,7 @@ def get_cache(request: Request) -> NormalizationCache:
 
 def get_source_registry(request: Request) -> SourceRegistry:
     return request.app.state.source_registry  # type: ignore[no-any-return]
+
+
+def get_api_key(request: Request) -> str | None:
+    return request.app.state.api_key  # type: ignore[no-any-return]
