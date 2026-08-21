@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from pathlib import Path
 
 import psycopg
@@ -66,6 +67,27 @@ def client(tmp_path: Path) -> TestClient:
     return TestClient(app)
 
 
+_TERMINAL_STATUSES = {"COMPLETED", "FAILED", "PARTIAL"}
+
+
+def _wait_for_terminal(
+    client: TestClient, run_id: str, *, timeout: float = 15.0
+) -> dict[str, object]:
+    """M11: run execution is asynchronous — poll GET /runs/{id} until it
+    reaches a terminal status. A larger timeout than the local-file
+    golden tests use, since these hit real network round-trips to 4
+    different real database engines."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        resp = client.get(f"/normalization/runs/{run_id}")
+        assert resp.status_code == 200
+        run: dict[str, object] = resp.json()
+        if run["status"] in _TERMINAL_STATUSES:
+            return run
+        time.sleep(0.05)
+    pytest.fail(f"Run {run_id} did not reach a terminal status within {timeout}s")
+
+
 def _create_profile(client: TestClient) -> str:
     resp = client.post(
         "/normalization/profiles",
@@ -87,8 +109,7 @@ def _execute_from_source(client: TestClient, source_id: str, table: str) -> dict
         },
     )
     assert resp.status_code == 201, resp.text
-    result: dict[str, object] = resp.json()
-    return result
+    return _wait_for_terminal(client, resp.json()["id"])
 
 
 @pytest.mark.integration

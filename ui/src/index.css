@@ -197,6 +197,7 @@ h4 {
 
 .status-pill--ambiguous,
 .status-pill--pending,
+.status-pill--running,
 .status-pill--deprecated,
 .status-pill--needs_review {
   background: color-mix(in srgb, var(--warning) 15%, transparent);

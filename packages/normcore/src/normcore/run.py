@@ -86,6 +86,12 @@ class NormalizationRun(BaseModel):
     finished_at: str | None = None
     status: RunStatus = RunStatus.PENDING
     metrics: NormalizationRunMetrics = Field(default_factory=NormalizationRunMetrics)
+    # M11: set only when status reaches FAILED — a run's background
+    # execution (see normapi.store.InMemoryStore.start_run_execution)
+    # raising an unexpected exception (a bad source table/column, a
+    # connector outage, ...) is captured here rather than silently
+    # leaving the run stuck at RUNNING forever.
+    failure_reason: str | None = None
 
     def is_terminal(self) -> bool:
         return self.status in (RunStatus.COMPLETED, RunStatus.FAILED, RunStatus.PARTIAL)

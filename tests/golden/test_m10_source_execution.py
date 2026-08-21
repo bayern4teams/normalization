@@ -9,6 +9,7 @@ demo-* containers).
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 
 import pyarrow as pa
@@ -18,6 +19,24 @@ from fastapi.testclient import TestClient
 from normapi.app import create_app
 
 _DICT_ROOT = Path(__file__).parents[2] / "data" / "dictionaries"
+_TERMINAL_STATUSES = {"COMPLETED", "FAILED", "PARTIAL"}
+
+
+def _wait_for_terminal(
+    client: TestClient, run_id: str, *, timeout: float = 5.0
+) -> dict[str, object]:
+    """M11: run execution is asynchronous — poll GET /runs/{id} until it
+    reaches a terminal status instead of assuming the POST response
+    already reflects completion."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        resp = client.get(f"/normalization/runs/{run_id}")
+        assert resp.status_code == 200
+        run: dict[str, object] = resp.json()
+        if run["status"] in _TERMINAL_STATUSES:
+            return run
+        time.sleep(0.02)
+    pytest.fail(f"Run {run_id} did not reach a terminal status within {timeout}s")
 
 
 @pytest.fixture
@@ -91,9 +110,11 @@ def test_run_executes_against_real_values_read_from_a_source(client: TestClient)
         },
     )
     assert resp.status_code == 201
-    run = resp.json()
+    run = _wait_for_terminal(client, resp.json()["id"])
     assert run["status"] == "COMPLETED"
-    assert run["metrics"]["records_processed"] == 3
+    metrics = run["metrics"]
+    assert isinstance(metrics, dict)
+    assert metrics["records_processed"] == 3
 
     values_resp = client.get(f"/normalization/runs/{run['id']}/values")
     assert values_resp.status_code == 200
@@ -118,7 +139,11 @@ def test_run_source_row_limit_truncates_real_read(client: TestClient) -> None:
         },
     )
     assert resp.status_code == 201
-    assert resp.json()["metrics"]["records_processed"] == 2
+    run = _wait_for_terminal(client, resp.json()["id"])
+    assert run["status"] == "COMPLETED"
+    metrics = run["metrics"]
+    assert isinstance(metrics, dict)
+    assert metrics["records_processed"] == 2
 
 
 @pytest.mark.golden
@@ -161,7 +186,13 @@ def test_run_source_unknown_source_id_is_404(client: TestClient) -> None:
 
 
 @pytest.mark.golden
-def test_run_source_unknown_table_is_400(client: TestClient) -> None:
+def test_run_source_unknown_table_fails_asynchronously_with_a_reason(client: TestClient) -> None:
+    """M11: only the cheap source_id existence check happens
+    synchronously (still an immediate 404 for that — see
+    test_run_source_unknown_source_id_is_404). An unknown TABLE requires
+    a real connector read to discover, so it's deferred into the
+    background: the POST still returns 201/RUNNING, and the bad table
+    surfaces as a polled FAILED status with a real failure_reason."""
     profile_id = _create_profile(client)
     resp = client.post(
         f"/normalization/runs?profile_id={profile_id}&source_snapshot=snap",
@@ -171,4 +202,8 @@ def test_run_source_unknown_table_is_400(client: TestClient) -> None:
             "source": {"source_id": "demo_files", "table": "nope.csv", "column": "name"},
         },
     )
-    assert resp.status_code == 400
+    assert resp.status_code == 201
+    run = _wait_for_terminal(client, resp.json()["id"])
+    assert run["status"] == "FAILED"
+    assert run["failure_reason"]
+    assert "nope.csv" in str(run["failure_reason"])

@@ -45,6 +45,7 @@ sharing the same (profile_version, semantic_type, context, env_id).
 
 from __future__ import annotations
 
+import threading
 import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
@@ -74,7 +75,7 @@ from normcore import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
     from pathlib import Path
 
     from normexec.cache import NormalizationCache
@@ -341,6 +342,99 @@ class InMemoryStore:
         if self._pg is not None:
             self._pg.save_run(run)
         return run
+
+    def start_run_execution(
+        self,
+        run_id: str,
+        *,
+        dispatcher: Dispatcher,
+        field_name: str,
+        semantic_type: FieldSemanticType,
+        resolve_values: Callable[[], Sequence[str | None]],
+        error_policy: ErrorPolicy | None = None,
+    ) -> NormalizationRun:
+        """Starts a run's execution in a background thread and returns
+        immediately (M11) — Source.txt §70's own `RunStatus` already
+        modeled RUNNING/FAILED as real lifecycle states; M6-M10's
+        `execute_run()` always finished synchronously within the same
+        request, so no caller could ever actually observe them. Poll
+        `GET /runs/{id}`: the run stays PENDING until the background
+        thread's `RunRecorder.start()` transitions it to RUNNING (the
+        recorder itself owns that PENDING->RUNNING transition and
+        rejects being constructed on anything but a PENDING run — this
+        method deliberately does NOT also set RUNNING itself, to avoid
+        two different places racing to make the same transition), then
+        COMPLETED/FAILED when done.
+
+        `resolve_values` is called INSIDE the background thread, not
+        before returning — for a source-mode run this is where the real,
+        potentially slow connector read happens, off the request/
+        response path (M10's row cap existed specifically because that
+        read used to block the request; it still applies as a memory
+        bound, but no longer as a latency one).
+
+        `execute_run` itself is untouched and remains the synchronous,
+        directly-testable primitive every existing test already uses;
+        this is a thin background-thread wrapper around it, used only by
+        the live HTTP route.
+        """
+        run = self.get_run(run_id)
+        if run.is_terminal():
+            msg = f"Run {run_id!r} already reached terminal status {run.status!r}"
+            raise RunNotExecutableError(msg)
+
+        thread = threading.Thread(
+            target=self._run_execution_worker,
+            kwargs={
+                "run_id": run_id,
+                "dispatcher": dispatcher,
+                "field_name": field_name,
+                "semantic_type": semantic_type,
+                "resolve_values": resolve_values,
+                "error_policy": error_policy,
+            },
+            daemon=True,
+        )
+        thread.start()
+        return run
+
+    def _run_execution_worker(
+        self,
+        *,
+        run_id: str,
+        dispatcher: Dispatcher,
+        field_name: str,
+        semantic_type: FieldSemanticType,
+        resolve_values: Callable[[], Sequence[str | None]],
+        error_policy: ErrorPolicy | None,
+    ) -> None:
+        """A background thread with an uncaught exception just dies
+        silently in Python — this `except Exception` is the mechanism by
+        which a failure (a bad source table/column, a connector outage,
+        an unexpected normalizer crash) actually reaches the shared run
+        record as a real FAILED status with a reason, rather than
+        leaving the run stuck at RUNNING forever."""
+        try:
+            values = resolve_values()
+            self.execute_run(
+                run_id,
+                dispatcher=dispatcher,
+                field_name=field_name,
+                semantic_type=semantic_type,
+                values=values,
+                error_policy=error_policy,
+            )
+        except Exception as exc:
+            failed = self.get_run(run_id).model_copy(
+                update={
+                    "status": RunStatus.FAILED,
+                    "finished_at": datetime.now(UTC).isoformat(),
+                    "failure_reason": str(exc),
+                }
+            )
+            self._runs[run_id] = failed
+            if self._pg is not None:
+                self._pg.save_run(failed)
 
     def execute_run(
         self,

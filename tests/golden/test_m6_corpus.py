@@ -7,6 +7,7 @@ through the live API surface.
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 import pytest
@@ -14,6 +15,25 @@ from fastapi.testclient import TestClient
 from normapi.app import create_app
 
 _DICT_ROOT = Path(__file__).parents[2] / "data" / "dictionaries"
+_TERMINAL_STATUSES = {"COMPLETED", "FAILED", "PARTIAL"}
+
+
+def _wait_for_terminal(
+    client: TestClient, run_id: str, *, timeout: float = 5.0
+) -> dict[str, object]:
+    """M11: run execution is asynchronous (POST /runs returns immediately
+    with status RUNNING) — poll GET /runs/{id} until it reaches a
+    terminal status instead of assuming the POST response already
+    reflects completion."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        resp = client.get(f"/normalization/runs/{run_id}")
+        assert resp.status_code == 200
+        run: dict[str, object] = resp.json()
+        if run["status"] in _TERMINAL_STATUSES:
+            return run
+        time.sleep(0.02)
+    pytest.fail(f"Run {run_id} did not reach a terminal status within {timeout}s")
 
 
 @pytest.fixture
@@ -41,8 +61,7 @@ def _execute_run(
         json={"field_name": "name", "semantic_type": "FREE_TEXT", "values": values},
     )
     assert resp.status_code == 201
-    result: dict[str, object] = resp.json()
-    return result
+    return _wait_for_terminal(client, resp.json()["id"])
 
 
 @pytest.mark.golden

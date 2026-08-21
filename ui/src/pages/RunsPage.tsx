@@ -7,9 +7,23 @@ import { createRun, listProfiles, listRuns } from "../api/client";
 import { FIELD_SEMANTIC_TYPES, type FieldSemanticType } from "../api/types";
 import { QueryState } from "../components/QueryState";
 
+const ACTIVE_STATUSES = new Set(["PENDING", "RUNNING"]);
+
 export function RunsPage() {
   const queryClient = useQueryClient();
-  const runsQuery = useQuery({ queryKey: ["runs"], queryFn: listRuns });
+  const runsQuery = useQuery({
+    queryKey: ["runs"],
+    queryFn: listRuns,
+    // M11: run execution is asynchronous — a run created just now can
+    // still be PENDING/RUNNING here. Poll while any run is non-terminal
+    // so the page catches its real COMPLETED/FAILED transition without
+    // requiring a manual navigation away and back.
+    refetchInterval: (query) => {
+      const runs = query.state.data;
+      const hasActiveRun = runs?.some((run) => ACTIVE_STATUSES.has(run.status));
+      return hasActiveRun ? 1500 : false;
+    },
+  });
   const profilesQuery = useQuery({ queryKey: ["profiles"], queryFn: listProfiles });
 
   const [profileId, setProfileId] = useState("");

@@ -14,6 +14,14 @@ export function RunDetailPage() {
     queryKey: ["run", runId],
     queryFn: () => getRun(runId as string),
     enabled: Boolean(runId),
+    // M11: run execution is asynchronous — poll while this run is still
+    // PENDING/RUNNING so the page catches its real COMPLETED/FAILED
+    // transition (and Change Impact becoming available) without a
+    // manual refresh.
+    refetchInterval: (query) => {
+      const status = query.state.data?.status;
+      return status === "PENDING" || status === "RUNNING" ? 1500 : false;
+    },
   });
   const impactQuery = useQuery({
     queryKey: ["impact", runId],

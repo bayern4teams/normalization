@@ -39,10 +39,13 @@ are all wired to real logic — no remaining 501 stubs on the §98 surface.
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated
 
 from fastapi import APIRouter, Body, Depends, HTTPException
 from normcore.pii import safe_preview
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Sequence
 
 from normanalysis import (
     HandoffArtifact,
@@ -320,6 +323,38 @@ def list_runs(store: Annotated[InMemoryStore, Depends(get_store)]) -> list[Norma
     return store.list_runs()
 
 
+def _resolve_values_thunk(
+    execution: RunExecutionRequest, sources: SourceRegistry
+) -> Callable[[], Sequence[str | None]]:
+    """Builds the callable `start_run_execution` invokes from inside the
+    background thread. For `source`-mode, only the cheap in-memory
+    registry lookup (does source_id exist at all) happens here,
+    synchronously — the real connector read is deferred into the
+    returned closure so it runs off the request/response path."""
+    if execution.values is not None:
+        pasted_values = execution.values
+
+        def resolve_pasted() -> Sequence[str | None]:
+            return pasted_values
+
+        return resolve_pasted
+
+    # RunExecutionRequest's own validator guarantees this is set.
+    assert execution.source is not None
+    source = execution.source
+    try:
+        sources.get(source.source_id)
+    except UnknownSourceError as exc:
+        raise HTTPException(status_code=404, detail=f"No such source: {source.source_id}") from exc
+
+    def resolve_from_source() -> Sequence[str | None]:
+        return sources.read_column_values(
+            source.source_id, source.table, source.column, row_limit=source.row_limit
+        )
+
+    return resolve_from_source
+
+
 @router.post("/runs", response_model=NormalizationRun, status_code=201)
 def create_run(
     profile_id: str,
@@ -330,14 +365,22 @@ def create_run(
     sources: Annotated[SourceRegistry, Depends(get_source_registry)],
     execution: Annotated[RunExecutionRequest | None, Body()] = None,
 ) -> NormalizationRun:
-    """`execution` is optional (M6): when supplied, the run actually
-    normalizes real values through the live Dispatcher and the run
-    reaches COMPLETED with real metrics/errors/collisions/impact data
-    attached; when omitted, behavior is unchanged from M1 — a PENDING run
-    with no field execution. `execution.values` (pasted, M6) and
-    `execution.source` (read from a real connected source, M10) are the
-    two ways to supply those values — `RunExecutionRequest` itself
-    enforces exactly one is present."""
+    """`execution` is optional (M6): when supplied, the run's field
+    execution actually starts against the live Dispatcher; when omitted,
+    behavior is unchanged from M1 — a PENDING run with no field
+    execution. `execution.values` (pasted, M6) and `execution.source`
+    (read from a real connected source, M10) are the two ways to supply
+    those values — `RunExecutionRequest` itself enforces exactly one is
+    present.
+
+    M11: execution is asynchronous. This call returns immediately — the
+    run is still PENDING at that instant and transitions to RUNNING
+    shortly after in the background, then COMPLETED/FAILED; poll
+    `GET /runs/{id}` for the terminal status. For `source`-mode, only the cheap
+    "does this source_id exist" check happens synchronously here (an
+    immediate 404 for a typo'd source_id); the actual table/column read
+    happens in the background, so a bad table/column now surfaces as a
+    polled FAILED status with `failure_reason`, not a synchronous 400."""
     try:
         run = store.create_run(
             profile_id=profile_id, env_id=dispatcher.env_id, source_snapshot=source_snapshot
@@ -346,31 +389,13 @@ def create_run(
         raise HTTPException(status_code=404, detail=f"No such profile: {profile_id}") from exc
 
     if execution is not None:
-        if execution.values is not None:
-            values = execution.values
-        else:
-            # RunExecutionRequest's own validator guarantees this is set.
-            assert execution.source is not None
-            try:
-                values = sources.read_column_values(
-                    execution.source.source_id,
-                    execution.source.table,
-                    execution.source.column,
-                    row_limit=execution.source.row_limit,
-                )
-            except UnknownSourceError as exc:
-                raise HTTPException(
-                    status_code=404, detail=f"No such source: {execution.source.source_id}"
-                ) from exc
-            except (ValueError, FileNotFoundError) as exc:
-                raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-        run = store.execute_run(
+        resolve_values = _resolve_values_thunk(execution, sources)
+        run = store.start_run_execution(
             run.id,
             dispatcher=dispatcher,
             field_name=execution.field_name,
             semantic_type=execution.semantic_type,
-            values=values,
+            resolve_values=resolve_values,
             error_policy=execution.error_policy,
         )
     return run
