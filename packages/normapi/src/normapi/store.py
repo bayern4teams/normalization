@@ -65,6 +65,7 @@ from normanalysis import (
     InvariantSampleReport,
     RunRecorder,
     find_collisions,
+    record_run_metrics,
     sample_and_check,
 )
 from normapi.postgres_store import PostgresMetadataStore
@@ -87,6 +88,7 @@ if TYPE_CHECKING:
 
     from normexec.cache import NormalizationCache
 
+    from normanalysis import NormalizationMetrics, TelemetryHandles
     from normcore import Dispatcher, ErrorPolicy
 
 
@@ -170,6 +172,7 @@ class InMemoryStore:
         postgres_dsn: str | None = None,
         sidecar_parquet_root: str | Path | None = None,
         sidecar_duckdb_path: str | Path | None = None,
+        telemetry: tuple[TelemetryHandles, NormalizationMetrics] | None = None,
     ) -> None:
         # profile_id -> {version: NormalizationProfile}
         self._profiles: dict[str, dict[str, NormalizationProfile]] = {}
@@ -205,6 +208,13 @@ class InMemoryStore:
             if sidecar_parquet_root and sidecar_duckdb_path
             else None
         )
+        # Optional (defaults to no telemetry emission, same rationale as
+        # above) — §122 real OTel metrics/spans only emitted when
+        # `normapi.app.create_app()` supplies handles, closing the gap
+        # where `setup_telemetry()`/`NormalizationMetrics` were real and
+        # tested since M1 but never actually reachable from the live app
+        # (found during M12's observability-export work).
+        self._telemetry = telemetry
 
     def _hydrate_from_postgres(self, pg: PostgresMetadataStore) -> None:
         """Reconstructs in-memory state from whatever a PREVIOUS process
@@ -518,6 +528,15 @@ class InMemoryStore:
         )
         if self._sidecar is not None:
             self._write_execution_to_sidecar(run_id, field_name, results)
+        if self._telemetry is not None:
+            handles, telemetry_metrics = self._telemetry
+            record_run_metrics(
+                handles,
+                telemetry_metrics,
+                finished.metrics,
+                field_name=field_name,
+                semantic_type=semantic_type,
+            )
         return finished
 
     def _write_execution_to_sidecar(

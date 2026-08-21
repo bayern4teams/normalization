@@ -18,7 +18,7 @@ from normanalysis.handoff import (
     build_handoff_artifact,
 )
 from normanalysis.impact import ImpactReport, compute_impact
-from normanalysis.instrumentation import instrumented_normalize
+from normanalysis.instrumentation import instrumented_normalize, record_run_metrics
 from normanalysis.invariant_sampler import (
     InvariantSampleReport,
     InvariantViolation,
@@ -64,6 +64,7 @@ __all__ = [
     "find_collisions",
     "instrumented_normalize",
     "profile_field",
+    "record_run_metrics",
     "sample_and_check",
     "setup_telemetry",
     "suggest_profile",

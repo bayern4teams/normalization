@@ -50,6 +50,9 @@ bug to fix immediately.
 | fastapi | >=0.115,<1 | MIT | PyPI | API layer | Low | — |
 | sqlalchemy | >=2.0,<3 | MIT | PyPI | Metadata store ORM, connector reflection | Low | — |
 | httpx | >=0.27,<1 | BSD-3-Clause | PyPI | libpostal sidecar client | Low | — |
+| psycopg / psycopg-binary | >=3.2,<4 | LGPL-3.0-only | [github.com/psycopg/psycopg](https://github.com/psycopg/psycopg) | Postgres metadata-store driver (M9, ADR-013) | **LGPL — unmodified, dynamic-import only** (added to `scripts/license_policy.toml`; a real gap found during M12's observability work — added in M9, never added to the policy file or this table until now, so the license gate silently failed on it since M9) | — |
+| opentelemetry-api / opentelemetry-sdk | >=1.27,<2 | Apache-2.0 | [github.com/open-telemetry/opentelemetry-python](https://github.com/open-telemetry/opentelemetry-python) | Tracing/metrics SDK (§122) | Low | — |
+| opentelemetry-exporter-otlp-proto-http | >=1.27,<2 | Apache-2.0 | [github.com/open-telemetry/opentelemetry-python](https://github.com/open-telemetry/opentelemetry-python) | Real OTLP export to an external collector (M12) — was promised in `telemetry.py`'s own docstring since M1 but never actually implemented until now | Low — same project as the SDK above, versions move together | — |
 
 ## Rejected dependencies (do not (re-)add without a superseding ADR)
 

@@ -28,7 +28,16 @@ licenses = [
 licenses = ["LGPL-2.1-only", "LGPL-2.1-or-later", "LGPL-3.0-only", "LGPL-3.0-or-later"]
 # nameparser confirmed LGPL via PyPI classifier "GNU Library or Lesser General
 # Public License (LGPL)" as of 2.1.0 (2026-08-07) — see docs/dependency-inventory.md.
-packages = ["pycountry", "python-stdnum", "nameparser"]
+# psycopg/psycopg-binary (LGPL-3.0-only): added in M9 for real Postgres
+# persistence but never added here — a real gap, found during M12's
+# observability work when a NEW dependency addition made this script's
+# output worth actually reading closely. Used unmodified via `uv add`
+# (installed from PyPI wheels, never vendored/patched in-tree) and
+# dynamically imported (`import psycopg`), meeting this category's own
+# criteria exactly — this gate has been silently failing since M9 because
+# no verification pack ever actually ran this script as part of its own
+# Layer 1 checks.
+packages = ["pycountry", "python-stdnum", "nameparser", "psycopg", "psycopg-binary"]
 
 [denied]
 licenses = [

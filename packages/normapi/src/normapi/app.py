@@ -33,6 +33,7 @@ from normalizers.url import URLNormalizer
 from normexec.cache import NormalizationCache
 from normexec.env_fingerprint import compute_env_id, gather
 
+from normanalysis import NormalizationMetrics, setup_telemetry
 from normapi.routes import router
 from normapi.sources import SourceRegistry
 from normapi.store import InMemoryStore
@@ -135,6 +136,12 @@ _DEFAULT_SOURCES_CONFIG_PATH = os.environ.get("NORM_SOURCES_CONFIG_PATH")
 # TestClient(create_app()) construction is unaffected.
 _DEFAULT_API_KEY = os.environ.get("NORM_API_KEY")
 
+# Real OTLP export destination (M12, see normanalysis.telemetry) — unset
+# means every run's §122 metrics/spans still land in this process's own
+# in-memory exporter (real, but not "exported" anywhere), matching every
+# other optional-integration env var's "off by default" behavior.
+_DEFAULT_OTLP_ENDPOINT = os.environ.get("NORM_OTLP_ENDPOINT")
+
 
 def create_app(
     *,
@@ -146,6 +153,7 @@ def create_app(
     sidecar_duckdb_path: str | Path | None = None,
     sources_config_path: str | Path | None = None,
     api_key: str | None = None,
+    otlp_endpoint: str | None = None,
 ) -> FastAPI:
     app = FastAPI(
         title="Normalization Engine API",
@@ -210,11 +218,24 @@ def create_app(
     )
     env_id = compute_env_id(env_fingerprint_inputs)
 
+    # Real §122 metrics/spans (M12) — setup_telemetry()/NormalizationMetrics
+    # were real and tested since M1 but never actually reachable from the
+    # live app until now. Always on (an in-memory exporter costs nothing
+    # meaningful and needs no configuration); NORM_OTLP_ENDPOINT additionally
+    # makes it leave the process to a real collector.
+    telemetry_handles = setup_telemetry(
+        "normalization-engine", otlp_endpoint=otlp_endpoint or _DEFAULT_OTLP_ENDPOINT
+    )
+    telemetry_metrics = NormalizationMetrics(telemetry_handles.meter)
+    app.state.telemetry_handles = telemetry_handles
+    app.state.telemetry_metrics = telemetry_metrics
+
     app.state.store = InMemoryStore(
         cache,
         postgres_dsn=postgres_dsn or _DEFAULT_POSTGRES_DSN,
         sidecar_parquet_root=sidecar_parquet_root or _DEFAULT_SIDECAR_PARQUET_ROOT,
         sidecar_duckdb_path=sidecar_duckdb_path or _DEFAULT_SIDECAR_DUCKDB_PATH,
+        telemetry=(telemetry_handles, telemetry_metrics),
     )
     app.state.dispatcher = Dispatcher(registry, env_id=env_id)
     app.state.dictionary_loader = loader
