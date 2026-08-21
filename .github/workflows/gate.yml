@@ -130,8 +130,15 @@ jobs:
 
   mutation-testing:
     needs: signoff-precondition
+    # M8 built the gate; M12 is when the roadmap commits to actually
+    # closing the score to the 75% threshold (disclosed at 66% since
+    # M8 — see M8/M9/M10/M11's verification packs). A real, previously
+    # undisclosed bug: this condition was hardcoded to M8 only, so the
+    # gate was never wired to enforce anything for the milestone whose
+    # own job it explicitly is — found while actually working on M12's
+    # mutation-coverage deliverable, not by re-reading this file's docs.
     if: >
-      needs.signoff-precondition.outputs.milestone == 'M8'
+      contains(fromJSON('["M8","M12"]'), needs.signoff-precondition.outputs.milestone)
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:

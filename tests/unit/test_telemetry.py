@@ -196,6 +196,7 @@ class _OtlpCapture(http.server.BaseHTTPRequestHandler):
 
 
 @pytest.mark.unit
+@pytest.mark.slow_fork
 def test_otlp_export_sends_real_bytes_to_a_real_receiver() -> None:
     _OtlpCapture.received = []
     server = http.server.HTTPServer(("127.0.0.1", 0), _OtlpCapture)

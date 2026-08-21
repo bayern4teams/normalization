@@ -244,7 +244,16 @@ also_copy = [
 # services or a running dev server that mutmut's isolated `mutants/`
 # sandbox has no way to provide, so running them per-mutant would just
 # fail the baseline outright, not measure real mutation coverage.
-pytest_add_cli_args = ["-m", "unit or golden or property"]
+# `and not slow_fork` excludes tests real infra shows are unsafe to
+# re-run thousands of times under mutmut's own per-mutant subprocess
+# forking (see that marker's own docstring below) — found live, M12: a
+# real mutation run got to 6144/6646 mutants (92%) then hung
+# indefinitely, stuck re-forking against the same mutant forever. Root
+# cause: test_otlp_export_sends_real_bytes_to_a_real_receiver opens a
+# real socket server + OTLP exporter per invocation; some resource
+# (file descriptors / thread handles) leaked across thousands of forked
+# per-mutant test-runner subprocesses until forking itself broke.
+pytest_add_cli_args = ["-m", "(unit or golden or property) and not slow_fork"]
 
 [tool.pytest.ini_options]
 markers = [
@@ -255,5 +264,6 @@ markers = [
     "integration: requires docker compose services",
     "e2e: full end-to-end UI/API flows",
     "bench: performance benchmarks",
+    "slow_fork: opens real sockets/threads per-invocation — safe for normal test runs, but excluded from mutmut's per-mutant reruns (see [tool.mutmut]'s pytest_add_cli_args comment; a real mutation run hung at 92% until this was added)",
 ]
 testpaths = ["tests"]
