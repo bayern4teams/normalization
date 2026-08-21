@@ -59,7 +59,14 @@ from normcore.contract import (
 from normexec.planner import DistinctValuePlanner
 from normio.sidecar_store import SidecarStore
 
-from normanalysis import InvariantSampleReport, RunRecorder, sample_and_check
+from normanalysis import (
+    CollisionDecision,
+    CollisionDecisionType,
+    InvariantSampleReport,
+    RunRecorder,
+    find_collisions,
+    sample_and_check,
+)
 from normapi.postgres_store import PostgresMetadataStore
 from normcore import (
     FieldNormalizationConfig,
@@ -95,6 +102,12 @@ class RunNotExecutableError(RuntimeError):
     """Raised when execute_run() is called on a run that already reached
     a terminal status — a run's field execution happens at most once,
     consistent with NormalizationRun being immutable once terminal."""
+
+
+class UnknownCollisionError(LookupError):
+    """Raised when a collision decision references a normalized_value
+    that isn't actually a real collision group for that run (§92,
+    M11)."""
 
 
 _SIDECAR_SCHEMA = pa.schema(
@@ -165,6 +178,9 @@ class InMemoryStore:
         self._active_version: dict[str, str] = {}
         self._runs: dict[str, NormalizationRun] = {}
         self._executions: dict[str, _RunExecution] = {}
+        # (run_id, normalized_value) -> a human reviewer's real decision
+        # on that collision group (§92, M11).
+        self._collision_decisions: dict[tuple[str, str], CollisionDecision] = {}
         # Optional (defaults to no caching, matching prior behavior for
         # any caller/test that constructs a bare InMemoryStore) — real
         # distinct-value dedup + cross-call caching only activates when a
@@ -201,6 +217,8 @@ class InMemoryStore:
         self._active_version.update(pg.list_all_active_versions())
         for run in pg.list_runs():
             self._runs[run.id] = run
+        for decision in pg.list_all_collision_decisions():
+            self._collision_decisions[(decision.run_id, decision.normalized_value)] = decision
 
     def create_profile(
         self,
@@ -634,3 +652,46 @@ class InMemoryStore:
 
     def list_runs(self) -> list[NormalizationRun]:
         return list(self._runs.values())
+
+    def record_collision_decision(
+        self,
+        run_id: str,
+        normalized_value: str,
+        *,
+        decision: CollisionDecisionType,
+        decided_by: str,
+        note: str | None = None,
+    ) -> CollisionDecision:
+        """§92: a human reviewer's real, persisted disposition on one
+        collision group. Rejects a `normalized_value` that isn't
+        actually a real collision group for this run — recording a
+        decision on something that was never flagged would be
+        meaningless, not just unhelpful."""
+        execution = self.get_execution(run_id)
+        if execution is None:
+            msg = f"Run {run_id!r} has no execution to have collisions from"
+            raise UnknownCollisionError(msg)
+        groups = find_collisions(execution.originals, execution.results)
+        if not any(group.normalized_value == normalized_value for group in groups):
+            msg = f"{normalized_value!r} is not a real collision group for run {run_id!r}"
+            raise UnknownCollisionError(msg)
+
+        record = CollisionDecision(
+            run_id=run_id,
+            normalized_value=normalized_value,
+            decision=decision,
+            decided_by=decided_by,
+            decided_at=datetime.now(UTC).isoformat(),
+            note=note,
+        )
+        self._collision_decisions[(run_id, normalized_value)] = record
+        if self._pg is not None:
+            self._pg.save_collision_decision(record)
+        return record
+
+    def list_collision_decisions(self, run_id: str) -> list[CollisionDecision]:
+        return [
+            decision
+            for (decision_run_id, _), decision in self._collision_decisions.items()
+            if decision_run_id == run_id
+        ]

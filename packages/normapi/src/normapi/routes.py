@@ -30,6 +30,7 @@
     GET  /normalization/suggest-profile                (M7-audit, §62/§84)
     GET  /normalization/sources                         (M10, §105)
     GET  /normalization/sources/{id}/tables              (M10, §105)
+    POST /normalization/runs/{id}/collisions/decision     (M11, §92)
 
 Every route is registered and returns a schema-valid response (M1's Gate
 G1 requirement). As of M6: profile/run CRUD+rollback, field-test/preview,
@@ -48,6 +49,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
 from normanalysis import (
+    CollisionDecision,
     HandoffArtifact,
     build_handoff_artifact,
     compare_runs,
@@ -68,6 +70,7 @@ from normapi.dependencies import (
 )
 from normapi.scaffold_profile import SCAFFOLD_PROFILE
 from normapi.schemas import (
+    CollisionDecisionRequest,
     DetectTypeRequest,
     DictionaryCreateRequest,
     DictionaryRollbackRequest,
@@ -88,6 +91,7 @@ from normapi.store import (
     InMemoryStore,
     ProfileNotFoundError,
     RunNotFoundError,
+    UnknownCollisionError,
 )
 from normcore import (
     Dispatcher,
@@ -512,6 +516,9 @@ def get_run_values(
 def get_run_collisions(
     run_id: str, store: Annotated[InMemoryStore, Depends(get_store)]
 ) -> list[dict[str, object]]:
+    """§92 Collision Dashboard: each group's current real decision (if
+    any human has recorded one — accept/reject/whitelist) is attached
+    under `decision`, `null` when no one has reviewed it yet."""
     try:
         execution = store.get_execution(run_id)
     except RunNotFoundError as exc:
@@ -519,7 +526,42 @@ def get_run_collisions(
     if execution is None:
         return []
     groups = find_collisions(execution.originals, execution.results)
-    return [group.model_dump(mode="json") for group in groups]
+    decisions = {d.normalized_value: d for d in store.list_collision_decisions(run_id)}
+    return [
+        {
+            **group.model_dump(mode="json"),
+            "decision": (
+                decisions[group.normalized_value].model_dump(mode="json")
+                if group.normalized_value in decisions
+                else None
+            ),
+        }
+        for group in groups
+    ]
+
+
+@router.post(
+    "/runs/{run_id}/collisions/decision", response_model=CollisionDecision, status_code=201
+)
+def record_collision_decision(
+    run_id: str,
+    body: CollisionDecisionRequest,
+    store: Annotated[InMemoryStore, Depends(get_store)],
+) -> CollisionDecision:
+    """§92: Accept rule / Reject rule / Whitelist collision — the real
+    backend behind the Collision Dashboard's action buttons."""
+    try:
+        return store.record_collision_decision(
+            run_id,
+            body.normalized_value,
+            decision=body.decision,
+            decided_by=body.decided_by,
+            note=body.note,
+        )
+    except RunNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=f"No such run: {run_id}") from exc
+    except UnknownCollisionError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.get("/runs/{run_id}/profile")

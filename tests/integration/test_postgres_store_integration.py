@@ -22,10 +22,21 @@ from collections.abc import Iterator
 
 import psycopg
 import pytest
+from normalizers.passthrough import PassthroughNormalizer
 from normapi.postgres_store import PostgresMetadataStore
 from normapi.store import InMemoryStore
 
-from normcore import NormalizationProfile, NormalizationRun, NormalizationRunMetrics, RunStatus
+from normanalysis import CollisionDecision, CollisionDecisionType
+from normcore import (
+    Dispatcher,
+    ErrorPolicy,
+    FieldSemanticType,
+    NormalizationProfile,
+    NormalizationRun,
+    NormalizationRunMetrics,
+    NormalizerRegistry,
+    RunStatus,
+)
 
 _PG_DSN = os.environ.get(
     "TEST_METADATA_PG_DSN", "postgresql://normalization:normalization@localhost:5535/normalization"
@@ -167,6 +178,60 @@ class TestPostgresMetadataStoreDirect:
         active = {p.id: p.version for p in pg_store.list_active_profiles()}
         assert active[profile_id] == "v2"
 
+    def test_collision_decision_round_trips_and_upserts(
+        self, pg_store: PostgresMetadataStore
+    ) -> None:
+        run_id = str(uuid.uuid4())
+        decision = CollisionDecision(
+            run_id=run_id,
+            normalized_value="jose garcia",
+            decision=CollisionDecisionType.WHITELISTED,
+            decided_by="alice",
+            decided_at="2026-08-19T00:00:00Z",
+            note="intentional accent variants",
+        )
+        pg_store.save_collision_decision(decision)
+
+        loaded = pg_store.list_collision_decisions(run_id)
+        assert len(loaded) == 1
+        assert loaded[0] == decision
+
+        updated = decision.model_copy(
+            update={"decision": CollisionDecisionType.REJECTED, "decided_by": "bob"}
+        )
+        pg_store.save_collision_decision(updated)
+        loaded_after = pg_store.list_collision_decisions(run_id)
+        assert (
+            len(loaded_after) == 1
+        )  # same (run_id, normalized_value) key -> upsert, not a 2nd row
+        assert loaded_after[0].decision is CollisionDecisionType.REJECTED
+        assert loaded_after[0].decided_by == "bob"
+
+    def test_list_all_collision_decisions_spans_runs(self, pg_store: PostgresMetadataStore) -> None:
+        run_a, run_b = str(uuid.uuid4()), str(uuid.uuid4())
+        pg_store.save_collision_decision(
+            CollisionDecision(
+                run_id=run_a,
+                normalized_value="x",
+                decision=CollisionDecisionType.ACCEPTED,
+                decided_by="u",
+                decided_at="2026-08-19T00:00:00Z",
+            )
+        )
+        pg_store.save_collision_decision(
+            CollisionDecision(
+                run_id=run_b,
+                normalized_value="y",
+                decision=CollisionDecisionType.REJECTED,
+                decided_by="u",
+                decided_at="2026-08-19T00:00:00Z",
+            )
+        )
+        all_decisions = pg_store.list_all_collision_decisions()
+        run_ids = {d.run_id for d in all_decisions}
+        assert run_a in run_ids
+        assert run_b in run_ids
+
 
 @pytest.mark.integration
 class TestInMemoryStorePersistenceAcrossInstances:
@@ -246,3 +311,43 @@ class TestInMemoryStorePersistenceAcrossInstances:
         active = store_b.get_profile(profile.id)  # no version -> resolves active
         assert active.version == "v1"
         assert active.status.value == "ACTIVE"
+
+    def test_collision_decision_created_by_one_store_is_visible_from_a_second(self) -> None:
+        try:
+            store_a = InMemoryStore(postgres_dsn=_PG_DSN)
+        except psycopg.OperationalError as exc:
+            pytest.skip(f"metadata postgres not reachable at {_PG_DSN}: {exc}")
+
+        registry = NormalizerRegistry()
+        registry.register(PassthroughNormalizer())
+        dispatcher = Dispatcher(registry, env_id="e" * 64)
+        profile = store_a.create_profile(
+            name="restart-test-collision",
+            description="",
+            locale_policy={},
+            default_operations=(),
+            field_configs=(),
+            created_by="u",
+        )
+        run = store_a.create_run(
+            profile_id=profile.id, env_id=dispatcher.env_id, source_snapshot="s"
+        )
+        store_a.execute_run(
+            run.id,
+            dispatcher=dispatcher,
+            field_name="name",
+            semantic_type=FieldSemanticType.UNKNOWN,
+            values=["a", "A"],  # PassthroughNormalizer casefolds -> real collision on "a"
+            error_policy=ErrorPolicy.RETURN_ORIGINAL,
+        )
+        decision = store_a.record_collision_decision(
+            run.id,
+            "a",
+            decision=CollisionDecisionType.WHITELISTED,
+            decided_by="alice",
+        )
+
+        # A fresh instance, as a real restart would create.
+        store_b = InMemoryStore(postgres_dsn=_PG_DSN)
+        recovered = store_b.list_collision_decisions(run.id)
+        assert recovered == [decision]

@@ -14,6 +14,7 @@ from typing import Any, Self
 
 from pydantic import BaseModel, Field, model_validator
 
+from normanalysis import CollisionDecisionType
 from normcore import (
     ErrorPolicy,
     FieldNormalizationConfig,
@@ -98,6 +99,19 @@ class RunExecutionRequest(BaseModel):
         return self
 
 
+class CollisionDecisionRequest(BaseModel):
+    """§92 Collision Dashboard: a human reviewer's real disposition on
+    one collision group. `normalized_value` is carried in the body
+    rather than the URL path — a collision group's real value (e.g.
+    accented, containing spaces) doesn't need URL-path-encoding
+    treatment this way."""
+
+    normalized_value: str
+    decision: CollisionDecisionType
+    decided_by: str
+    note: str | None = None
+
+
 class ProfileRollbackRequest(BaseModel):
     target_version: str
 
@@ -177,6 +191,7 @@ class NotImplementedResponse(BaseModel):
 
 
 __all__ = [
+    "CollisionDecisionRequest",
     "DetectTypeRequest",
     "DictionaryCreateRequest",
     "DictionaryRollbackRequest",

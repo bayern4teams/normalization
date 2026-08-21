@@ -4,7 +4,12 @@ quality analysis (§71, §77-§80, §90, §93, §96-§97, landed in M6-M7).
 """
 
 from normanalysis.ab_comparison import AbComparisonReport, SideMetrics, compare_runs
-from normanalysis.collisions import CollisionGroup, find_collisions
+from normanalysis.collisions import (
+    CollisionDecision,
+    CollisionDecisionType,
+    CollisionGroup,
+    find_collisions,
+)
 from normanalysis.handoff import (
     HandoffArtifact,
     HandoffFieldSchema,
@@ -29,6 +34,8 @@ from normanalysis.type_detection import TypeSuggestion, suggest_semantic_type
 
 __all__ = [
     "AbComparisonReport",
+    "CollisionDecision",
+    "CollisionDecisionType",
     "CollisionGroup",
     "FieldProfile",
     "HandoffArtifact",

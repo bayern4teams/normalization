@@ -4,9 +4,11 @@ docs/adr/ADR-013-normalization-storage.md.
 ADR-013: "Metadata (profiles, runs, dictionaries, collisions, impact
 reports, sign-off records) lives in PostgreSQL — relational,
 transactional, well-suited to versioned/audited entities, distinct from
-the bulk columnar normalized-value data." This module covers profiles
-and run *records* (the `NormalizationRun` itself: status, metrics,
-timestamps) — the lightweight relational metadata that was, until M9,
+the bulk columnar normalized-value data." This module covers profiles,
+run *records* (the `NormalizationRun` itself: status, metrics,
+timestamps), and — since M11 — collision *decisions* (a human
+reviewer's real accept/reject/whitelist disposition on a collision
+group, §92): all lightweight relational metadata that was, until M9,
 lost on every process restart along with everything else in
 `InMemoryStore`.
 
@@ -32,6 +34,7 @@ from __future__ import annotations
 import psycopg
 from psycopg.types.json import Jsonb
 
+from normanalysis import CollisionDecision
 from normcore import NormalizationProfile, NormalizationRun
 
 
@@ -68,6 +71,14 @@ class PostgresMetadataStore:
                 "  id VARCHAR PRIMARY KEY,"
                 "  profile_id VARCHAR NOT NULL,"
                 "  data JSONB NOT NULL"
+                ")"
+            )
+            cur.execute(
+                "CREATE TABLE IF NOT EXISTS collision_decisions ("
+                "  run_id VARCHAR NOT NULL,"
+                "  normalized_value VARCHAR NOT NULL,"
+                "  data JSONB NOT NULL,"
+                "  PRIMARY KEY (run_id, normalized_value)"
                 ")"
             )
 
@@ -169,6 +180,39 @@ class PostgresMetadataStore:
             cur.execute("SELECT data FROM runs")
             rows = cur.fetchall()
         return [NormalizationRun.model_validate(row[0]) for row in rows]
+
+    # --- collision decisions (§92, M11) --------------------------------
+
+    def save_collision_decision(self, decision: CollisionDecision) -> None:
+        with self._conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO collision_decisions (run_id, normalized_value, data) "
+                "VALUES (%s, %s, %s) "
+                "ON CONFLICT (run_id, normalized_value) DO UPDATE SET data = EXCLUDED.data",
+                (
+                    decision.run_id,
+                    decision.normalized_value,
+                    Jsonb(decision.model_dump(mode="json")),
+                ),
+            )
+
+    def list_collision_decisions(self, run_id: str) -> list[CollisionDecision]:
+        with self._conn.cursor() as cur:
+            cur.execute(
+                "SELECT data FROM collision_decisions WHERE run_id = %s",
+                (run_id,),
+            )
+            rows = cur.fetchall()
+        return [CollisionDecision.model_validate(row[0]) for row in rows]
+
+    def list_all_collision_decisions(self) -> list[CollisionDecision]:
+        """Every decision ever recorded, across every run — the startup
+        hydration source, mirroring `list_runs()`'s own "load everything,
+        nothing silently missing after a restart" approach."""
+        with self._conn.cursor() as cur:
+            cur.execute("SELECT data FROM collision_decisions")
+            rows = cur.fetchall()
+        return [CollisionDecision.model_validate(row[0]) for row in rows]
 
     def close(self) -> None:
         self._conn.close()
