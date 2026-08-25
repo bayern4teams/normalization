@@ -2,15 +2,18 @@
 
 Status: living document — every row must remain accurate as implementation
 proceeds; update in the same PR that touches the corresponding module or
-test. Last updated: M7 follow-up self-audit (2026-08-19) — the user asked
-for an unbiased, from-scratch audit of M1–M7 before M8 began. That audit
-cross-checked this file against the real repository state for the first
-time since M0 and found several real, previously-undisclosed gaps (not
-just staleness): §32 (POSTCODE had no registered normalizer), §61/§62/§84
-(field-type detection and profile auto-suggestion were never built), and
-missing regression coverage for §123/§129/§135. All were fixed, tested,
-and verified live in the same session — see `docs/verification/
-M7-verification-pack.md`'s addendum for the full list.
+test. Last updated: M13 ledger catch-up (2026-08-26) — added the
+"M13–M22 program" section below mapping the new product-pipeline milestones
+(`docs/plan/M13-M22-program-plan.md`), none of Source.txt's original 138
+sections. Prior update: M7 follow-up self-audit (2026-08-19) — the user
+asked for an unbiased, from-scratch audit of M1–M7 before M8 began. That
+audit cross-checked this file against the real repository state for the
+first time since M0 and found several real, previously-undisclosed gaps
+(not just staleness): §32 (POSTCODE had no registered normalizer),
+§61/§62/§84 (field-type detection and profile auto-suggestion were never
+built), and missing regression coverage for §123/§129/§135. All were
+fixed, tested, and verified live in the same session — see
+`docs/verification/M7-verification-pack.md`'s addendum for the full list.
 
 **Test location columns below are the topic/intent captured at the time
 each row was written, not a guaranteed exact current filename** — actual
@@ -199,3 +202,31 @@ Legend — **Mile.**: milestone; **Ph.**: implementation phase per §127.
   script proper (so a future PR that silently drops a row is caught by
   CI, not just by a human re-reading this file) is a reasonable M8
   follow-up, tracked here rather than silently assumed done.
+
+## M13–M22 program (beyond Source.txt's original 138 sections)
+
+`docs/plan/M13-M22-program-plan.md` is a user-approved follow-on program,
+not part of the original spec — the `check-traceability` §N coverage check
+above does not and should not cover these rows, since there is no
+corresponding `§N` header in `Source.txt` for any of them. Tracked here for
+the same reason every other milestone is tracked here: so no piece of this
+program's own scope is silently dropped as work proceeds.
+
+**All rows below are PLANNED, not yet implemented**, as of 2026-08-26. Do
+not treat a row's presence here as evidence of real work — only a real,
+live-verified `docs/verification/M{n}-verification-pack.md` is evidence.
+This table is updated to reflect real status as each milestone closes,
+matching the discipline every M0–M12 row above already follows.
+
+| Item | Milestone | Module (planned) | Test location (planned) | Status |
+|---|---|---|---|---|
+| Ledger catch-up (retrospective plan, M12 pack, `check_signoff.py` fix) | M13 | `docs/plan/*`, `docs/verification/M12-verification-pack.md`, `scripts/check_signoff.py` | — (docs + a small script fix, no new test surface) | Done, this session |
+| Connector catalog (databases/tables/columns/samples) + real streaming reads | M14 | `normio.catalog`, `normio.capabilities`, `normio.connectors.clickhouse`/`_sql_base` | `tests/unit/test_catalog.py`, `tests/integration/test_streaming_reads.py` (live against real ClickHouse) | Planned |
+| Connection registry with encrypted credentials | M15 | `normapi.secrets`, `normapi.connections`, `normapi.migrations` | `tests/unit/test_connections.py`, `tests/integration/test_connection_registry.py` | Planned |
+| Catalog API + connection-keyed column mappings; semantic-type-not-read-from-profile bug fix | M16 | `normapi.mappings`, `normapi.routes` (catalog endpoints), `normapi.store.execute_run` | `tests/golden/test_m16_mappings.py`, regression test for the `build_context`/`field_ref` bug | Planned |
+| Multi-column, chunked, resumable runs | M17 | `normcore.run` (`RunColumnSpec`, `RunProgress`), `normexec.stream`, `normexec.sinks`, `normapi.executor` | `tests/integration/test_multicolumn_runs.py` (live, includes a real kill-and-resume test) | Planned |
+| Multi-column reporting rebuilt on the sidecar (incl. bounded `/overview`/`/quality`) | M18 | `normapi.routes` (9 handlers), `normio.sidecar_store` | `tests/integration/test_multicolumn_reporting.py` (live, multi-million-row scale) | Planned |
+| Destination writer — schema-mirrored write-back, side table for quality data | M19 | `normsink.destination`, `normsink.clickhouse` (new package) | `tests/integration/test_destination_writer.py` (live, includes idempotency + self-write-refusal proof) | Planned |
+| Incremental watermark + full resync | M20 | `normapi.watermarks`, `normio` `read_chunk`'s `since` param | `tests/integration/test_incremental_watermark.py` (live, includes a NULL-watermark-skip proof) | Planned |
+| 3-step UI (Connect / Explore / Report), legacy tabs behind `ModeContext` | M21 | `ui/src/pages/{Connect,Explore,Report}Page.tsx`, `ui/src/app/{App,Nav}.tsx` | `ui/e2e/three-step-flow.spec.ts` (live, against real ClickHouse) | Planned |
+| One-command startup (`ui` compose service, source env wiring) | M22 | `ui/Dockerfile`, `ui/nginx.conf`, `compose.yaml` | Manual: `docker compose up -d` from a clean clone → full flow | Planned |

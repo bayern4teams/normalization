@@ -25,7 +25,39 @@ import subprocess
 import sys
 from pathlib import Path
 
-MILESTONE_ORDER = ["M0", "M1", "M2", "M3", "M4", "M5", "M6", "M7", "M8"]
+MILESTONE_ORDER = [
+    "M0",
+    "M1",
+    "M2",
+    "M3",
+    "M4",
+    "M5",
+    "M6",
+    "M7",
+    "M8",
+    "M9",
+    "M10",
+    "M11",
+    "M12",
+    "M13",
+    "M14",
+    "M15",
+    "M16",
+    "M17",
+    "M18",
+    "M19",
+    "M20",
+    "M21",
+    "M22",
+]
+# NOTE (M13 ledger catch-up, 2026-08-26): this list stopped at M8 even
+# though M9-M12 were built, gated in CI (gate.yml resolves a milestone
+# name from the branch/dispatch input with no bound to this list), and
+# merged — meaning `check_signoff.py --milestone M9` (and M10/M11/M12)
+# would have failed argparse's `choices` validation outright had anyone
+# actually invoked it locally with those names. This was a real,
+# previously-undisclosed gap in the gate's own precondition tooling,
+# found during the M13 documentation catch-up, not by design.
 
 SIGNOFF_BLOCK_RE = re.compile(
     r"##\s*Human Sign-off\s*\n"
