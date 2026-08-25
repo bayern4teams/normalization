@@ -7,7 +7,13 @@ import pyarrow as pa
 import pytest
 from normalizers.identifier import IdentifierNormalizer, UuidNormalizer
 from normcore.context import NormalizationContext
-from normcore.enums import FieldSemanticType, MissingKind, NormalizationStatus, QualityFlag
+from normcore.enums import (
+    FieldSemanticType,
+    MissingKind,
+    NormalizationStatus,
+    QualityFlag,
+    Reversibility,
+)
 
 
 @pytest.fixture
@@ -139,6 +145,109 @@ class TestCountrySpecificCheckDigits:
 
 
 @pytest.mark.unit
+class TestIdentifierNormalizerExactFields:
+    """A real mutmut run (M12) found 29 surviving mutants in
+    `IdentifierNormalizer.normalize` — the field-by-field checks above
+    only ever assert one or two fields per branch, never pin down
+    exact `confidence`/`structured`/`lossiness`/defaults."""
+
+    def test_missing_none_every_field(self, normalizer: IdentifierNormalizer) -> None:
+        result = normalizer.normalize(None, _ctx())
+        assert result.original is None
+        assert result.original_kind is MissingKind.NULL
+        assert result.display is None
+        assert result.comparison is None
+        assert result.search is None
+        assert result.structured == {}
+        assert result.validation_status == "MISSING"
+        assert result.normalization_status is NormalizationStatus.NORMALIZED
+        assert result.confidence == 1.0
+        assert result.errors == []
+        assert result.flags == []
+        assert result.lossiness is Reversibility.LOSSLESS
+        assert result.profile_version == ""
+        assert result.env_id == ""
+        assert result.trace == []
+
+    def test_missing_empty_every_field(self, normalizer: IdentifierNormalizer) -> None:
+        result = normalizer.normalize("", _ctx())
+        assert result.original == ""
+        assert result.original_kind is MissingKind.EMPTY_STRING
+        assert result.validation_status == "MISSING"
+        assert result.normalization_status is NormalizationStatus.NORMALIZED
+        assert result.confidence == 1.0
+
+    def test_plain_valid_identifier_every_field(self, normalizer: IdentifierNormalizer) -> None:
+        result = normalizer.normalize("000123", _ctx())
+        assert result.original == "000123"
+        assert result.original_kind is None
+        assert result.display == "000123"
+        assert result.comparison == "000123"
+        assert result.search == "000123"
+        assert result.structured == {
+            "cleaned": "000123",
+            "has_internal_separator": False,
+            "check_digit_valid": None,
+            "identifier_type": None,
+        }
+        assert result.validation_status == "VALID"
+        assert result.normalization_status is NormalizationStatus.NORMALIZED
+        assert result.confidence == 1.0
+        assert result.errors == []
+        assert result.flags == []
+        assert result.lossiness is Reversibility.REVERSIBLE
+        assert result.profile_version == ""
+        assert result.env_id == ""
+        assert len(result.trace) == 1
+        assert result.trace[0].changed is False
+        assert result.trace[0].library == "python-stdnum"
+
+    def test_hyphenated_every_field(self, normalizer: IdentifierNormalizer) -> None:
+        result = normalizer.normalize("AB-001", _ctx())
+        assert result.flags == [QualityFlag.POTENTIAL_COLLISION]
+        assert result.structured["has_internal_separator"] is True
+        assert result.confidence == 1.0
+        assert result.validation_status == "VALID"
+
+    def test_valid_us_ein_every_field(self, normalizer: IdentifierNormalizer) -> None:
+        ctx = _ctx(FieldSemanticType.TAX_ID, country="US")
+        result = normalizer.normalize("12-3456789", ctx)
+        assert result.confidence == 1.0
+        assert result.validation_status == "VALID"
+        assert result.normalization_status is NormalizationStatus.NORMALIZED
+        assert result.structured == {
+            "cleaned": "12-3456789",
+            "has_internal_separator": True,
+            "check_digit_valid": True,
+            "identifier_type": "US",
+        }
+
+    def test_lowercase_letters_are_uppercased(self, normalizer: IdentifierNormalizer) -> None:
+        """Case normalization is always upper, never lower — a mutant
+        flipping `.upper()` to `.lower()` is invisible to every other
+        test in this file since they all use inputs with no letters or
+        already-uppercase letters."""
+        result = normalizer.normalize("ab-cd1234", _ctx())
+        assert result.display == "AB-CD1234"
+        assert result.comparison == "AB-CD1234"
+
+    def test_invalid_us_ein_every_field(self, normalizer: IdentifierNormalizer) -> None:
+        """The check-digit-invalid branch: confidence drops to exactly
+        0.3, not just <1.0, and validation_status flips to INVALID."""
+        ctx = _ctx(FieldSemanticType.TAX_ID, country="US")
+        result = normalizer.normalize("00-0000000", ctx)
+        assert result.confidence == 0.3
+        assert result.validation_status == "INVALID"
+        assert result.normalization_status is NormalizationStatus.INVALID
+        assert result.structured == {
+            "cleaned": "00-0000000",
+            "has_internal_separator": True,
+            "check_digit_valid": False,
+            "identifier_type": "US",
+        }
+
+
+@pytest.mark.unit
 class TestBatch:
     def test_normalize_batch_matches_scalar(self, normalizer: IdentifierNormalizer) -> None:
         ctx = _ctx()
@@ -183,3 +292,75 @@ class TestUuidNormalizer:
         ctx = _ctx(FieldSemanticType.UUID)
         assert uuid_normalizer.normalize(None, ctx).original_kind is MissingKind.NULL
         assert uuid_normalizer.normalize("", ctx).original_kind is MissingKind.EMPTY_STRING
+
+    def test_missing_none_every_field(self, uuid_normalizer: UuidNormalizer) -> None:
+        result = uuid_normalizer.normalize(None, _ctx(FieldSemanticType.UUID))
+        assert result.original is None
+        assert result.original_kind is MissingKind.NULL
+        assert result.normalization_status is NormalizationStatus.NORMALIZED
+        assert result.validation_status == "MISSING"
+        assert result.confidence == 1.0
+        assert result.display is None
+        assert result.profile_version == ""
+        assert result.env_id == ""
+
+    def test_missing_empty_every_field(self, uuid_normalizer: UuidNormalizer) -> None:
+        result = uuid_normalizer.normalize("", _ctx(FieldSemanticType.UUID))
+        assert result.original == ""
+        assert result.original_kind is MissingKind.EMPTY_STRING
+        assert result.normalization_status is NormalizationStatus.NORMALIZED
+        assert result.validation_status == "MISSING"
+        assert result.confidence == 1.0
+
+    def test_valid_uuid_every_field(self, uuid_normalizer: UuidNormalizer) -> None:
+        """A real mutmut run (M12) found 41 surviving mutants in
+        `UuidNormalizer.normalize` — mostly literal constants
+        (confidence, `""` defaults, `lossiness`) never pinned down
+        exactly by the field-by-field checks above."""
+        raw = "{550E8400-E29B-41D4-A716-446655440000}"
+        result = uuid_normalizer.normalize(raw, _ctx(FieldSemanticType.UUID))
+        assert result.original == raw
+        assert result.display == "550e8400-e29b-41d4-a716-446655440000"
+        assert result.comparison == "550e8400-e29b-41d4-a716-446655440000"
+        assert result.search == "550e8400-e29b-41d4-a716-446655440000"
+        assert result.structured == {
+            "version": 4,
+            "canonical": "550e8400-e29b-41d4-a716-446655440000",
+        }
+        assert result.validation_status == "VALID"
+        assert result.normalization_status is NormalizationStatus.NORMALIZED
+        assert result.confidence == 1.0
+        assert result.errors == []
+        assert result.lossiness is Reversibility.REVERSIBLE
+        assert result.profile_version == ""
+        assert result.env_id == ""
+        assert len(result.trace) == 1
+        assert result.trace[0].changed is True
+        assert result.trace[0].library == "python-stdnum"
+
+    def test_already_canonical_form_trace_changed_is_false(
+        self, uuid_normalizer: UuidNormalizer
+    ) -> None:
+        """`changed` compares the canonical form against the
+        already-stripped `cleaned` value, not the raw `value` —
+        already-canonical input must report unchanged."""
+        canonical = "550e8400-e29b-41d4-a716-446655440000"
+        result = uuid_normalizer.normalize(canonical, _ctx(FieldSemanticType.UUID))
+        assert result.trace[0].changed is False
+
+    def test_invalid_uuid_every_field(self, uuid_normalizer: UuidNormalizer) -> None:
+        result = uuid_normalizer.normalize("not-a-uuid", _ctx(FieldSemanticType.UUID))
+        assert result.original == "not-a-uuid"
+        assert result.display == "not-a-uuid"
+        assert result.comparison is None
+        assert result.search is None
+        assert result.structured == {}
+        assert result.validation_status == "INVALID"
+        assert result.normalization_status is NormalizationStatus.INVALID
+        assert result.confidence == 0.0
+        assert result.errors == ["not a valid UUID"]
+        assert result.lossiness is Reversibility.LOSSLESS
+        assert len(result.trace) == 1
+        assert result.trace[0].changed is False
+        assert result.profile_version == ""
+        assert result.env_id == ""

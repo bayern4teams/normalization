@@ -8,7 +8,8 @@ import pyarrow as pa
 import pytest
 from normalizers.name import NameNormalizer
 from normcore.context import NormalizationContext
-from normcore.enums import FieldSemanticType, MissingKind, NormalizationStatus
+from normcore.enums import FieldSemanticType, MissingKind, NormalizationStatus, Reversibility
+from normcore.errors import NormalizerFailure
 from normdict.loader import DictionaryLoader
 
 _DICT_ROOT = Path(__file__).parents[2] / "data" / "dictionaries"
@@ -202,6 +203,17 @@ class TestGivenAndFamilyNameFields:
         result = normalizer.normalize("Garcia", ctx)
         assert result.structured["family_name"] == "Garcia"
 
+    def test_given_family_name_original_never_overwritten(self, normalizer: NameNormalizer) -> None:
+        """The GIVEN_NAME/FAMILY_NAME dispatch branch passes `value`
+        (not `None`) as `original` through to `_normalize_single_component`
+        — `test_original_never_overwritten` above only covers the
+        PERSON_NAME dispatch branch."""
+        ctx = NormalizationContext(
+            field_name="first_name", semantic_type=FieldSemanticType.GIVEN_NAME
+        )
+        result = normalizer.normalize("Jose", ctx)
+        assert result.original == "Jose"
+
     def test_given_name_field_never_ambiguous(self, normalizer: NameNormalizer) -> None:
         """A single field-scoped component has nothing to disambiguate —
         the whole value IS that one component by construction."""
@@ -210,6 +222,71 @@ class TestGivenAndFamilyNameFields:
         )
         result = normalizer.normalize("Smith", ctx)
         assert result.normalization_status is not NormalizationStatus.AMBIGUOUS
+
+
+@pytest.mark.unit
+class TestNameNormalizerExactFields:
+    """A real mutmut run (M12) found surviving mutants in
+    `NameNormalizer.normalize` itself (the dispatcher, not the
+    `_normalize_person_name`/`_normalize_single_component` helpers) —
+    exact `confidence`/`lossiness`/defaults and the accent-stripped
+    `search` field were never pinned down exactly."""
+
+    def test_missing_none_every_field(
+        self, normalizer: NameNormalizer, ctx: NormalizationContext
+    ) -> None:
+        result = normalizer.normalize(None, ctx)
+        assert result.original is None
+        assert result.original_kind is MissingKind.NULL
+        assert result.display is None
+        assert result.comparison is None
+        assert result.search is None
+        assert result.structured == {}
+        assert result.validation_status == "MISSING"
+        assert result.normalization_status is NormalizationStatus.NORMALIZED
+        assert result.confidence == 1.0
+        assert result.errors == []
+        assert result.lossiness is Reversibility.LOSSLESS
+        assert result.profile_version == ""
+        assert result.env_id == ""
+        assert result.trace == []
+
+    def test_missing_empty_every_field(
+        self, normalizer: NameNormalizer, ctx: NormalizationContext
+    ) -> None:
+        result = normalizer.normalize("", ctx)
+        assert result.original == ""
+        assert result.original_kind is MissingKind.EMPTY_STRING
+        assert result.validation_status == "MISSING"
+        assert result.confidence == 1.0
+
+    def test_accented_name_search_differs_from_comparison(
+        self, normalizer: NameNormalizer, ctx: NormalizationContext
+    ) -> None:
+        """`search` is built from the accent-stripped form
+        (`UnicodeProcessingOptions(include_accent_stripped=True)`),
+        `comparison` is not — a mutant flipping that option to False
+        is invisible unless an accented name's two fields are checked
+        for inequality."""
+        result = normalizer.normalize("José Miguel García", ctx)
+        assert result.display == "José Miguel García"
+        assert result.comparison == "josé miguel garcía"
+        assert result.search == "jose miguel garcia"
+        assert result.search != result.comparison
+
+    def test_unicode_processing_failure_raises_normalizer_failure(
+        self, normalizer: NameNormalizer, ctx: NormalizationContext
+    ) -> None:
+        class _FailingUnicode:
+            def process(self, value: str, options: object) -> None:
+                raise RuntimeError("boom")
+
+        normalizer._unicode = _FailingUnicode()  # type: ignore[assignment]
+        with pytest.raises(NormalizerFailure) as excinfo:
+            normalizer.normalize("Test Name", ctx)
+        assert excinfo.value.operation == "unicode_process"
+        assert "UnicodeNormalizer failed on field 'full_name'" in str(excinfo.value)
+        assert "boom" in str(excinfo.value)
 
 
 @pytest.mark.unit

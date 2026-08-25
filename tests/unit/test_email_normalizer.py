@@ -6,7 +6,13 @@ import pyarrow as pa
 import pytest
 from normalizers.email import EmailNormalizer
 from normcore.context import NormalizationContext
-from normcore.enums import FieldSemanticType, MissingKind, NormalizationStatus
+from normcore.enums import (
+    FieldSemanticType,
+    MissingKind,
+    NormalizationStatus,
+    QualityFlag,
+    Reversibility,
+)
 
 
 @pytest.fixture
@@ -140,6 +146,89 @@ class TestDeliverabilityNeverChecked:
             "POSSIBLY_DELIVERABLE",
             "UNDELIVERABLE",
         }
+
+
+@pytest.mark.unit
+class TestEmailNormalizerExactFields:
+    """A real mutmut run (M12) found 13 surviving mutants in
+    `EmailNormalizer.normalize` — the field-by-field checks above only
+    ever assert a couple of `structured` keys, never pin down exact
+    `comparison`/`search`/`lossiness`/defaults."""
+
+    def test_missing_none_every_field(
+        self, normalizer: EmailNormalizer, ctx: NormalizationContext
+    ) -> None:
+        result = normalizer.normalize(None, ctx)
+        assert result.original is None
+        assert result.original_kind is MissingKind.NULL
+        assert result.display is None
+        assert result.comparison is None
+        assert result.search is None
+        assert result.structured == {}
+        assert result.validation_status == "MISSING"
+        assert result.normalization_status is NormalizationStatus.NORMALIZED
+        assert result.confidence == 1.0
+        assert result.errors == []
+        assert result.flags == []
+        assert result.lossiness is Reversibility.LOSSLESS
+        assert result.profile_version == ""
+        assert result.env_id == ""
+        assert result.trace == []
+
+    def test_missing_empty_every_field(
+        self, normalizer: EmailNormalizer, ctx: NormalizationContext
+    ) -> None:
+        result = normalizer.normalize("", ctx)
+        assert result.original == ""
+        assert result.original_kind is MissingKind.EMPTY_STRING
+        assert result.validation_status == "MISSING"
+        assert result.confidence == 1.0
+
+    def test_valid_every_field(
+        self, normalizer: EmailNormalizer, ctx: NormalizationContext
+    ) -> None:
+        result = normalizer.normalize("John.Smith+tag@Example.COM", ctx)
+        assert result.original == "John.Smith+tag@Example.COM"
+        assert result.display == "John.Smith+tag@example.com"
+        assert result.comparison == "John.Smith+tag@example.com"
+        assert result.search == "john.smith+tag@example.com"
+        assert result.structured == {
+            "display_name": None,
+            "local_part": "John.Smith+tag",
+            "domain": "example.com",
+            "domain_ascii": "example.com",
+            "normalized_address": "John.Smith+tag@example.com",
+        }
+        assert result.validation_status == "VALID_SYNTAX"
+        assert result.normalization_status is NormalizationStatus.NORMALIZED
+        assert result.confidence == 1.0
+        assert result.errors == []
+        assert result.flags == []
+        assert result.lossiness is Reversibility.PARTIALLY_REVERSIBLE
+        assert result.profile_version == ""
+        assert result.env_id == ""
+        assert len(result.trace) == 1
+        assert result.trace[0].changed is True
+        assert result.trace[0].library == "email-validator"
+
+    def test_invalid_every_field(
+        self, normalizer: EmailNormalizer, ctx: NormalizationContext
+    ) -> None:
+        result = normalizer.normalize("not an email", ctx)
+        assert result.original == "not an email"
+        assert result.display == "not an email"
+        assert result.comparison is None
+        assert result.search is None
+        assert result.structured == {}
+        assert result.validation_status == "INVALID_SYNTAX"
+        assert result.normalization_status is NormalizationStatus.INVALID
+        assert result.confidence == 0.0
+        assert result.errors == ["An email address must have an @-sign."]
+        assert result.flags == [QualityFlag.EMAIL_INVALID]
+        assert result.lossiness is Reversibility.LOSSLESS
+        assert result.profile_version == ""
+        assert result.env_id == ""
+        assert result.trace == []
 
 
 @pytest.mark.unit

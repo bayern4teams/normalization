@@ -49,3 +49,5 @@ ui/blob-report/
 
 .DS_Store
 Thumbs.db
+
+sources.json

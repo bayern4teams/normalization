@@ -6,7 +6,13 @@ import pyarrow as pa
 import pytest
 from normalizers.phone import PhoneNormalizer
 from normcore.context import NormalizationContext
-from normcore.enums import FieldSemanticType, MissingKind, NormalizationStatus, QualityFlag
+from normcore.enums import (
+    FieldSemanticType,
+    MissingKind,
+    NormalizationStatus,
+    QualityFlag,
+    Reversibility,
+)
 
 
 @pytest.fixture
@@ -132,6 +138,122 @@ class TestInvalidNumbers:
             assert result.structured["is_valid"] is False
         else:
             assert result.normalization_status is NormalizationStatus.INVALID
+
+
+@pytest.mark.unit
+class TestExactFields:
+    """A real mutmut run (M12) found 42 surviving mutants in
+    `PhoneNormalizer.normalize` — mostly literal constants (confidence
+    values, empty-list/dict defaults, `lossiness`) the field-by-field
+    checks above never pinned down exactly."""
+
+    def test_missing_none_every_field(self, normalizer: PhoneNormalizer) -> None:
+        result = normalizer.normalize(None, _ctx())
+        assert result.original is None
+        assert result.original_kind is MissingKind.NULL
+        assert result.normalization_status is NormalizationStatus.NORMALIZED
+        assert result.validation_status == "MISSING"
+        assert result.confidence == 1.0
+        assert result.display is None
+        assert result.profile_version == ""
+        assert result.env_id == ""
+
+    def test_missing_empty_every_field(self, normalizer: PhoneNormalizer) -> None:
+        result = normalizer.normalize("", _ctx())
+        assert result.original == ""
+        assert result.original_kind is MissingKind.EMPTY_STRING
+        assert result.normalization_status is NormalizationStatus.NORMALIZED
+        assert result.validation_status == "MISSING"
+        assert result.confidence == 1.0
+
+    def test_valid_via_explicit_plus_every_field(self, normalizer: PhoneNormalizer) -> None:
+        result = normalizer.normalize("+1 415-555-2671", _ctx())
+        assert result.original == "+1 415-555-2671"
+        assert result.display == "+1 415-555-2671"
+        assert result.comparison == "+14155552671"
+        assert result.search == "+14155552671"
+        assert result.structured == {
+            "country_code": 1,
+            "national_number": "4155552671",
+            "extension": None,
+            "e164": "+14155552671",
+            "international_format": "+1 415-555-2671",
+            "national_format": "(415) 555-2671",
+            "is_possible": True,
+            "is_valid": True,
+            "region": "US",
+            "region_source": "number_prefix",
+            "validation_message": None,
+        }
+        assert result.validation_status == "VALID"
+        assert result.normalization_status is NormalizationStatus.PARSED
+        assert result.confidence == 1.0
+        assert result.flags == []
+        assert result.errors == []
+        assert result.lossiness is Reversibility.PARTIALLY_REVERSIBLE
+        assert result.profile_version == ""
+        assert result.env_id == ""
+        assert len(result.trace) == 1
+        assert result.trace[0].changed is True
+        assert result.trace[0].library == "phonenumbers"
+
+    def test_parses_but_fails_validity_every_field(self, normalizer: PhoneNormalizer) -> None:
+        """A well-formed-enough string that `phonenumbers.parse()`
+        accepts but `is_valid_number()` rejects — a distinct code path
+        from the NumberParseException branch below."""
+        result = normalizer.normalize("123", _ctx(country="US"))
+        assert result.structured["is_possible"] is False
+        assert result.structured["is_valid"] is False
+        assert result.structured["region"] is None
+        assert (
+            result.structured["validation_message"]
+            == "Number is not a valid number for its region."
+        )
+        assert result.validation_status == "INVALID"
+        assert result.normalization_status is NormalizationStatus.INVALID
+        assert result.confidence == 0.5
+        assert result.flags == [QualityFlag.PHONE_INVALID]
+        assert result.errors == []
+        assert result.lossiness is Reversibility.PARTIALLY_REVERSIBLE
+
+    def test_unparseable_string_every_field(self, normalizer: PhoneNormalizer) -> None:
+        """`phonenumbers.parse()` itself raising `NumberParseException` —
+        `structured` stays `{}` (never partially populated), `trace`
+        stays empty (no parse step was completed), and `lossiness`
+        defaults to LOSSLESS rather than claiming PARTIALLY_REVERSIBLE
+        for a parse that never happened."""
+        result = normalizer.normalize("not a phone number", _ctx(country="US"))
+        assert result.original == "not a phone number"
+        assert result.display == "not a phone number"
+        assert result.comparison is None
+        assert result.search is None
+        assert result.structured == {}
+        assert result.validation_status == "INVALID"
+        assert result.normalization_status is NormalizationStatus.INVALID
+        assert result.confidence == 0.0
+        assert result.flags == [QualityFlag.PHONE_INVALID]
+        assert result.errors == ["(1) The string supplied did not seem to be a phone number."]
+        assert result.lossiness is Reversibility.LOSSLESS
+        assert result.trace == []
+        assert result.profile_version == ""
+        assert result.env_id == ""
+
+    def test_ambiguous_no_region_every_field(self, normalizer: PhoneNormalizer) -> None:
+        result = normalizer.normalize("415-555-2671", _ctx())
+        assert result.original == "415-555-2671"
+        assert result.display == "415-555-2671"
+        assert result.comparison is None
+        assert result.search is None
+        assert result.structured == {"region_source": "unknown"}
+        assert result.validation_status == "AMBIGUOUS"
+        assert result.normalization_status is NormalizationStatus.AMBIGUOUS
+        assert result.confidence == 0.0
+        assert result.flags == []
+        assert result.errors == []
+        assert result.lossiness is Reversibility.LOSSLESS
+        assert result.trace == []
+        assert result.profile_version == ""
+        assert result.env_id == ""
 
 
 @pytest.mark.unit

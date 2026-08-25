@@ -12,7 +12,13 @@ import pyarrow as pa
 import pytest
 from normalizers.address import AddressNormalizer, LibpostalUnavailableError
 from normcore.context import NormalizationContext
-from normcore.enums import FieldSemanticType, MissingKind, NormalizationStatus, QualityFlag
+from normcore.enums import (
+    FieldSemanticType,
+    MissingKind,
+    NormalizationStatus,
+    QualityFlag,
+    Reversibility,
+)
 
 
 class FakeLibpostalParser:
@@ -199,6 +205,196 @@ class TestPartialParseAndFallback:
         normalizer = AddressNormalizer(parser)
         outcome = normalizer.validate("gibberish", _ctx())
         assert outcome.is_valid is False
+
+
+@pytest.mark.unit
+class TestExactFieldsOnFullSuccess:
+    """A real mutmut run (M12) found 49 surviving mutants in
+    `AddressNormalizer.normalize` alone, mostly literal constants
+    (confidence values, empty-list defaults, comparison operators) that
+    the field-by-field checks above never pinned down exactly."""
+
+    def test_complete_parse_every_field(self) -> None:
+        parse = [
+            ("10", "house_number"),
+            ("main st", "road"),
+            ("springfield", "city"),
+            ("some category", "category"),
+            ("a place", "near"),
+            ("", "unit"),
+        ]
+        parser = FakeLibpostalParser({"addr": parse})
+        normalizer = AddressNormalizer(parser)
+        result = normalizer.normalize("addr", _ctx())
+
+        assert result.original == "addr"
+        assert result.display == "addr"
+        # category/near labels and blank values are excluded from
+        # comparison, but NOT filtered out of structured (additive).
+        assert result.comparison == "10 main st springfield"
+        assert result.search == result.comparison
+        assert result.structured == {
+            "house_number": "10",
+            "road": "main st",
+            "city": "springfield",
+            "category": "some category",
+            "near": "a place",
+            "unit": "",
+        }
+        assert result.flags == []
+        assert result.validation_status == "VALID"
+        assert result.normalization_status is NormalizationStatus.PARSED
+        assert result.confidence == 1.0
+        assert result.errors == []
+        assert result.lossiness is Reversibility.PARTIALLY_REVERSIBLE
+        assert result.profile_version == ""
+        assert result.env_id == ""
+        assert result.trace[-1].library == "libpostal"
+        assert result.trace[-1].library_version == "1.1.4"
+        assert result.trace[-1].changed is True
+        assert result.trace[-1].reversibility is Reversibility.PARTIALLY_REVERSIBLE
+
+    def test_missing_city_only_is_partial_with_0_7_confidence(self) -> None:
+        parse = [("10", "house_number"), ("main st", "road")]
+        parser = FakeLibpostalParser({"addr": parse})
+        result = AddressNormalizer(parser).normalize("addr", _ctx())
+        assert result.flags == [QualityFlag.ADDRESS_PARSE_PARTIAL]
+        assert result.validation_status == "PARTIAL"
+        assert result.normalization_status is NormalizationStatus.PARTIAL
+        assert result.confidence == 0.7
+
+    def test_missing_road_only_is_also_partial(self) -> None:
+        """The flag condition is `not road OR not city` — road missing
+        alone must trip it exactly like city missing alone."""
+        parse = [("10", "house_number"), ("springfield", "city")]
+        parser = FakeLibpostalParser({"addr": parse})
+        result = AddressNormalizer(parser).normalize("addr", _ctx())
+        assert result.flags == [QualityFlag.ADDRESS_PARSE_PARTIAL]
+        assert result.confidence == 0.7
+
+    def test_invalid_postcode_with_complete_parse_is_not_flagged_partial(self) -> None:
+        """postcode_valid=False alone does not add ADDRESS_PARSE_PARTIAL
+        — only missing road/city does. confidence still drops to 0.6, but
+        validation_status stays VALID since it derives from `flags`, not
+        from postcode validity directly (an existing, real quirk of this
+        function's logic worth pinning down exactly)."""
+        parse = [
+            ("10", "house_number"),
+            ("main st", "road"),
+            ("springfield", "city"),
+            ("999-999", "postcode"),
+            ("uk", "country"),
+        ]
+        parser = FakeLibpostalParser({"addr": parse})
+        result = AddressNormalizer(parser).normalize("addr", _ctx())
+        assert result.flags == []
+        assert result.validation_status == "VALID"
+        assert result.normalization_status is NormalizationStatus.PARSED
+        assert result.confidence == 0.6
+        assert result.structured["postcode_valid"] is False
+
+    def test_invalid_postcode_and_partial_parse_confidence_is_clamped_to_0_6(self) -> None:
+        """Both conditions active: confidence starts at 0.6 (postcode
+        invalid) then `min(confidence, 0.7)` for the partial-parse flag
+        — 0.6 stays 0.6, proving the clamp is a min, not an overwrite."""
+        parse = [
+            ("10", "house_number"),
+            ("main st", "road"),
+            ("999-999", "postcode"),
+            ("uk", "country"),
+        ]
+        parser = FakeLibpostalParser({"addr": parse})
+        result = AddressNormalizer(parser).normalize("addr", _ctx())
+        assert result.flags == [QualityFlag.ADDRESS_PARSE_PARTIAL]
+        assert result.confidence == 0.6
+        assert result.validation_status == "PARTIAL"
+
+
+@pytest.mark.unit
+class TestExactFieldsOnFallbackAndMissing:
+    def test_fallback_every_field(self) -> None:
+        parser = FakeLibpostalParser({}, always_fail=True)
+        result = AddressNormalizer(parser).normalize("123 Main St", _ctx())
+
+        assert result.original == "123 Main St"
+        assert result.display == "123 Main St"
+        assert result.comparison is None
+        assert result.search is None
+        assert result.structured == {}
+        assert result.validation_status == "PARTIAL"
+        assert result.normalization_status is NormalizationStatus.PARTIAL
+        assert result.confidence == 0.3
+        assert result.flags == [QualityFlag.ADDRESS_PARSE_PARTIAL, QualityFlag.PARSER_FALLBACK]
+        assert result.errors == ["simulated sidecar outage"]
+        assert result.lossiness is Reversibility.LOSSLESS
+        assert result.profile_version == ""
+        assert result.env_id == ""
+        # The fallback trace is unicode-cleanup steps only — the parse
+        # step is appended AFTER the fallback branch would have
+        # returned, so it must never claim a libpostal parse happened.
+        assert all(step.library != "libpostal" for step in result.trace)
+
+    def test_missing_none_every_field(self) -> None:
+        result = AddressNormalizer(FakeLibpostalParser({})).normalize(None, _ctx())
+        assert result.original is None
+        assert result.original_kind is MissingKind.NULL
+        assert result.normalization_status is NormalizationStatus.NORMALIZED
+        assert result.validation_status == "MISSING"
+        assert result.confidence == 1.0
+        assert result.display is None
+        assert result.errors == []
+        assert result.profile_version == ""
+        assert result.env_id == ""
+
+    def test_missing_empty_every_field(self) -> None:
+        result = AddressNormalizer(FakeLibpostalParser({})).normalize("", _ctx())
+        assert result.original == ""
+        assert result.original_kind is MissingKind.EMPTY_STRING
+        assert result.normalization_status is NormalizationStatus.NORMALIZED
+        assert result.validation_status == "MISSING"
+        assert result.confidence == 1.0
+
+    def test_circuit_open_call_carries_the_real_value_and_reason(self) -> None:
+        """Once the circuit is actually open (not just mid-failure), the
+        fallback for THAT call must still carry the real `original`/
+        `display` for the value being normalized right now, and the
+        exact reason text — not the value from whichever call tripped
+        the breaker earlier."""
+        parser = FakeLibpostalParser({}, always_fail=True)
+        normalizer = AddressNormalizer(parser)
+        for _ in range(3):
+            normalizer.normalize("123 Main St", _ctx())
+        assert parser.call_count == 3  # breaker now open
+
+        result = normalizer.normalize("456 Oak Ave", _ctx())
+        assert parser.call_count == 3  # no new call while open
+        assert result.original == "456 Oak Ave"
+        assert result.display == "456 Oak Ave"
+        assert result.errors == ["circuit breaker open"]
+
+
+@pytest.mark.unit
+class TestLocaleSensitiveComparison:
+    def test_turkish_locale_uses_dotless_i_casefold(self) -> None:
+        """`comparison` is built via `text_ops.casefold(..., ctx.locale)`
+        — Turkish casefolding of 'I' differs from the locale-agnostic
+        default (U+0131 dotless-i vs U+0069 dotted-i), verified against
+        the real ICU casefold implementation before writing this
+        assertion."""
+        parse = [("istanbul rd", "road"), ("ISTANBUL", "city")]
+        parser = FakeLibpostalParser({"addr": parse})
+        ctx_tr = NormalizationContext(
+            field_name="address", semantic_type=FieldSemanticType.ADDRESS, locale="tr"
+        )
+        result = AddressNormalizer(parser).normalize("addr", ctx_tr)
+        dotless_i = chr(0x0131)  # RUF001: avoid the ambiguous glyph literally in source
+        assert result.comparison == f"istanbul rd {dotless_i}stanbul"
+
+    def test_no_locale_uses_default_casefold(self) -> None:
+        parse = [("istanbul rd", "road"), ("ISTANBUL", "city")]
+        parser = FakeLibpostalParser({"addr": parse})
+        result = AddressNormalizer(parser).normalize("addr", _ctx())
+        assert result.comparison == "istanbul rd istanbul"
 
 
 @pytest.mark.unit

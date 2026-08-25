@@ -116,6 +116,16 @@ class URLNormalizer:
         cleaned = value.strip()
         try:
             parts = urlsplit(cleaned)
+            # `.port` is a lazy property — urlsplit() itself never
+            # validates it, so a malformed port ("http://host:abc/")
+            # only raises when accessed here. Must stay inside this
+            # try/except alongside urlsplit() itself, or a single bad
+            # port crashes normalize() uncaught (Dispatcher only catches
+            # NormalizerFailure, not raw ValueError) instead of producing
+            # the INVALID result this except clause exists to give it —
+            # found live: normalize("http://example.com:abc/", ...)
+            # raised ValueError all the way out before this fix.
+            port_number = parts.port
         except ValueError as exc:
             return _invalid(value, ctx, reason=str(exc))
 
@@ -135,7 +145,7 @@ class URLNormalizer:
         if parts.username:
             password_part = f":{parts.password}" if parts.password else ""
             userinfo = f"{parts.username}{password_part}@"
-        port = _normalize_port(scheme, parts.port)
+        port = _normalize_port(scheme, port_number)
         netloc = f"{userinfo}{host}{port}"
 
         path = _normalize_percent_encoding(parts.path)
@@ -158,7 +168,7 @@ class URLNormalizer:
         structured = {
             "scheme": scheme,
             "host": host,
-            "port": parts.port,
+            "port": port_number,
             "path": path,
             "query": query,
             "fragment": fragment,

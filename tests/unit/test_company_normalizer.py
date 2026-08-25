@@ -8,7 +8,8 @@ import pyarrow as pa
 import pytest
 from normalizers.company import CompanyNormalizer
 from normcore.context import NormalizationContext
-from normcore.enums import FieldSemanticType, MissingKind, NormalizationStatus
+from normcore.enums import FieldSemanticType, MissingKind, NormalizationStatus, Reversibility
+from normcore.errors import NormalizerFailure
 from normdict.loader import DictionaryLoader
 
 _DICT_ROOT = Path(__file__).parents[2] / "data" / "dictionaries"
@@ -163,6 +164,150 @@ class TestStatusAndViews:
         assert result.comparison is not None
         assert "inc" not in result.comparison.casefold()
         assert "acme corp" in result.comparison.casefold()
+
+
+@pytest.mark.unit
+class TestExactFields:
+    """A real mutmut run (M12) found 43 surviving mutants in
+    `CompanyNormalizer.normalize` — mostly literal constants (`VALID`,
+    `1.0`, `""`) and the `strip_changed or unicode_result.changed`
+    boolean-or the field checks above never pinned down exactly."""
+
+    def test_no_suffix_no_cleanup_change_every_field(
+        self, normalizer: CompanyNormalizer, ctx: NormalizationContext
+    ) -> None:
+        result = normalizer.normalize("Wonderland Systems", ctx)
+        assert result.original == "Wonderland Systems"
+        assert result.display == "Wonderland Systems"
+        assert result.comparison == "wonderland systems"
+        assert result.search == result.comparison
+        assert result.structured == {
+            "legal_name": "Wonderland Systems",
+            "base_name": "Wonderland Systems",
+            "organization_type": None,
+            "elf_code": None,
+            "jurisdiction_hint": None,
+            "suffix_canonical": None,
+        }
+        assert result.validation_status == "VALID"
+        assert result.normalization_status is NormalizationStatus.UNCHANGED
+        assert result.confidence == 1.0
+        assert result.lossiness is Reversibility.LOSSLESS
+        assert result.profile_version == ""
+        assert result.env_id == ""
+        assert result.trace[-1].rule_id == "company.strip_legal_suffix"
+        assert result.trace[-1].changed is False
+        assert result.trace[-1].lossy is True
+        assert result.trace[-1].library == "normalizers"
+
+    def test_cleanup_change_without_suffix_strip_is_still_normalized(
+        self, normalizer: CompanyNormalizer, ctx: NormalizationContext
+    ) -> None:
+        """`status` is `strip_changed OR unicode_result.changed` — extra
+        whitespace collapsed by unicode cleanup alone (no suffix to
+        strip) must still flip status to NORMALIZED, proving this is a
+        real OR and neither operand alone."""
+        result = normalizer.normalize("  Wonderland   Systems  ", ctx)
+        assert result.normalization_status is NormalizationStatus.NORMALIZED
+        assert result.display == "Wonderland Systems"
+        assert result.lossiness is Reversibility.LOSSLESS
+        assert result.trace[-1].changed is False  # the suffix-strip step itself didn't change
+
+    def test_suffix_stripped_every_field(
+        self, normalizer: CompanyNormalizer, ctx: NormalizationContext
+    ) -> None:
+        result = normalizer.normalize("Acme Corp Inc.", ctx)
+        assert result.original == "Acme Corp Inc."
+        assert result.display == "Acme Corp Inc."
+        assert result.comparison == "acme corp"
+        assert result.search == "acme corp"
+        assert result.structured == {
+            "legal_name": "Acme Corp Inc.",
+            "base_name": "Acme Corp",
+            "organization_type": "Corporation",
+            "elf_code": "XXX1",
+            "jurisdiction_hint": "US",
+            "suffix_canonical": "Inc",
+        }
+        assert result.validation_status == "VALID"
+        assert result.normalization_status is NormalizationStatus.NORMALIZED
+        assert result.confidence == 1.0
+        assert result.lossiness is Reversibility.PARTIALLY_REVERSIBLE
+        assert result.profile_version == ""
+        assert result.env_id == ""
+        assert result.trace[-1].changed is True
+        assert result.trace[-1].lossy is True
+
+    def test_comparison_applies_punctuation_normalization_after_casefold(
+        self, normalizer: CompanyNormalizer, ctx: NormalizationContext
+    ) -> None:
+        """`comparison` is `normalize_punctuation(casefold(base_name))`
+        — a base name that itself contains punctuation (not just the
+        stripped suffix) must go through both steps, not just casefold."""
+        result = normalizer.normalize("Acme, Corp. Inc.", ctx)
+        assert result.structured["base_name"] == "Acme, Corp."
+        assert result.comparison == "acme, corp."
+
+    def test_missing_none_every_field(
+        self, normalizer: CompanyNormalizer, ctx: NormalizationContext
+    ) -> None:
+        result = normalizer.normalize(None, ctx)
+        assert result.original is None
+        assert result.original_kind is MissingKind.NULL
+        assert result.normalization_status is NormalizationStatus.NORMALIZED
+        assert result.validation_status == "MISSING"
+        assert result.confidence == 1.0
+        assert result.display is None
+        assert result.profile_version == ""
+        assert result.env_id == ""
+
+    def test_missing_empty_every_field(
+        self, normalizer: CompanyNormalizer, ctx: NormalizationContext
+    ) -> None:
+        result = normalizer.normalize("", ctx)
+        assert result.original == ""
+        assert result.original_kind is MissingKind.EMPTY_STRING
+        assert result.normalization_status is NormalizationStatus.NORMALIZED
+        assert result.validation_status == "MISSING"
+        assert result.confidence == 1.0
+
+    def test_unicode_processing_failure_raises_normalizer_failure_with_exact_message(
+        self, normalizer: CompanyNormalizer, ctx: NormalizationContext
+    ) -> None:
+        """`self._unicode.process()` failing is wrapped into a
+        `NormalizerFailure` — the message/operation must be exact, not
+        just "an exception happened"."""
+
+        class BoomUnicode:
+            def process(self, value: str, options: object) -> object:
+                raise RuntimeError("unicode boom")
+
+        normalizer._unicode = BoomUnicode()  # type: ignore[assignment]
+        with pytest.raises(NormalizerFailure) as excinfo:
+            normalizer.normalize("Acme Inc", ctx)
+        assert str(excinfo.value) == (
+            "UnicodeNormalizer failed on field 'company_name': unicode boom"
+        )
+        assert excinfo.value.operation == "unicode_process"
+
+    def test_turkish_locale_uses_dotless_i_casefold(self, normalizer: CompanyNormalizer) -> None:
+        """`comparison` is `text_ops.casefold(base_name, ctx.locale)` —
+        Turkish casefolding of 'I' differs from the locale-agnostic
+        default (U+0131 dotless-i vs U+0069 dotted-i), verified against
+        the real ICU casefold implementation before writing this
+        assertion."""
+        ctx_tr = NormalizationContext(
+            field_name="company_name", semantic_type=FieldSemanticType.COMPANY_NAME, locale="tr"
+        )
+        result = normalizer.normalize("ISTANBUL Systems", ctx_tr)
+        dotless_i = chr(0x0131)  # RUF001: avoid the ambiguous glyph literally in source
+        assert result.comparison == f"{dotless_i}stanbul systems"
+
+    def test_no_locale_uses_default_casefold(
+        self, normalizer: CompanyNormalizer, ctx: NormalizationContext
+    ) -> None:
+        result = normalizer.normalize("ISTANBUL Systems", ctx)
+        assert result.comparison == "istanbul systems"
 
 
 @pytest.mark.unit
