@@ -13,6 +13,7 @@ kept separate from the base read-only `SourceConnector` contract.
 
 from __future__ import annotations
 
+import threading
 from typing import TYPE_CHECKING
 
 import clickhouse_connect
@@ -53,16 +54,30 @@ class ClickHouseConnector:
             host=host, port=port, username=username, password=password, database=database
         )
         self._database = database
+        # M22 finding, live-verified against the real ClickHouse behind
+        # M22's own containerized deployment: `clickhouse_connect`'s
+        # client is NOT safe for concurrent calls from multiple threads
+        # ("Attempt to execute concurrent queries within the same
+        # session") — a real, reproducible race the moment two catalog-
+        # browsing requests against the same pooled connection (M16's
+        # `SourceRegistry.get_by_connection`, reused across requests by
+        # design) land on FastAPI's thread pool at the same time, e.g.
+        # ExplorePage's parallel columns+samples queries. Same root cause
+        # M18 already found and fixed for DuckDB — the fix here is the
+        # same shape: serialize every real call into the client.
+        self._lock = threading.Lock()
 
     def list_tables(self) -> Sequence[str]:
-        result = self._client.query(
-            "SELECT name FROM system.tables WHERE database = {db:String} ORDER BY name",
-            parameters={"db": self._database},
-        )
+        with self._lock:
+            result = self._client.query(
+                "SELECT name FROM system.tables WHERE database = {db:String} ORDER BY name",
+                parameters={"db": self._database},
+            )
         return [row[0] for row in result.result_rows]
 
     def list_databases(self) -> Sequence[str]:
-        result = self._client.query("SELECT name FROM system.databases ORDER BY name")
+        with self._lock:
+            result = self._client.query("SELECT name FROM system.databases ORDER BY name")
         return [row[0] for row in result.result_rows if row[0] not in _SYSTEM_DATABASES]
 
     def list_columns(self, table: str) -> tuple[ColumnSpec, ...]:
@@ -74,11 +89,12 @@ class ClickHouseConnector:
         `is_in_primary_key` still cleanly reports `personID` and
         `contactString` as the two key columns — verified live against
         the real origin2 database)."""
-        result = self._client.query(
-            "SELECT name, type, is_in_primary_key FROM system.columns "
-            "WHERE database = %(db)s AND table = %(t)s ORDER BY position",
-            parameters={"db": self._database, "t": table},
-        )
+        with self._lock:
+            result = self._client.query(
+                "SELECT name, type, is_in_primary_key FROM system.columns "
+                "WHERE database = %(db)s AND table = %(t)s ORDER BY position",
+                parameters={"db": self._database, "t": table},
+            )
         return tuple(
             ColumnSpec(
                 name=name,
@@ -93,10 +109,12 @@ class ClickHouseConnector:
         return {c.name for c in self.list_columns(table)}
 
     def table_spec(self, table: str) -> TableSpec:
-        result = self._client.query(
-            "SELECT engine, total_rows FROM system.tables WHERE database = %(db)s AND name = %(t)s",
-            parameters={"db": self._database, "t": table},
-        )
+        with self._lock:
+            result = self._client.query(
+                "SELECT engine, total_rows FROM system.tables "
+                "WHERE database = %(db)s AND name = %(t)s",
+                parameters={"db": self._database, "t": table},
+            )
         if not result.result_rows:
             msg = f"Unknown table: {table!r}"
             raise ValueError(msg)
@@ -112,23 +130,26 @@ class ClickHouseConnector:
         if table not in set(self.list_tables()):
             msg = f"Unknown table: {table!r}"
             raise ValueError(msg)
-        return self._client.query_arrow(f"SELECT * FROM `{table}` LIMIT {int(limit)}")
+        with self._lock:
+            return self._client.query_arrow(f"SELECT * FROM `{table}` LIMIT {int(limit)}")
 
     def sample_values(self, table: str, column: str, *, limit: int = 5) -> Sequence[object]:
         if column not in self._column_names(table):
             msg = f"Unknown column for table {table!r}: {column!r}"
             raise ValueError(msg)
-        result = self._client.query(
-            f"SELECT DISTINCT `{column}` FROM `{table}` WHERE `{column}` IS NOT NULL "
-            f"LIMIT {int(limit)}"
-        )
+        with self._lock:
+            result = self._client.query(
+                f"SELECT DISTINCT `{column}` FROM `{table}` WHERE `{column}` IS NOT NULL "
+                f"LIMIT {int(limit)}"
+            )
         return [row[0] for row in result.result_rows]
 
     def count_null(self, table: str, column: str) -> int:
         if column not in self._column_names(table):
             msg = f"Unknown column for table {table!r}: {column!r}"
             raise ValueError(msg)
-        result = self._client.query(f"SELECT count(*) FROM `{table}` WHERE `{column}` IS NULL")
+        with self._lock:
+            result = self._client.query(f"SELECT count(*) FROM `{table}` WHERE `{column}` IS NULL")
         count: int = result.result_rows[0][0]
         return count
 
@@ -183,7 +204,8 @@ class ClickHouseConnector:
             query += f" WHERE {where_sql}"
         query += f" ORDER BY {order_by} LIMIT {int(limit)}"
 
-        arrow_table = self._client.query_arrow(query, parameters=parameters or None)
+        with self._lock:
+            arrow_table = self._client.query_arrow(query, parameters=parameters or None)
         if arrow_table.num_rows == 0:
             return None
 
@@ -236,7 +258,7 @@ class ClickHouseConnector:
         query = f"SELECT {column_list} FROM `{table}`"
 
         row_offset = 0
-        with self._client.query_arrow_stream(query) as stream:
+        with self._lock, self._client.query_arrow_stream(query) as stream:
             for block in stream:
                 # `query_arrow_stream` yields one RecordBatch per network
                 # block from ClickHouse (size determined by the server,

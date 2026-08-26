@@ -48,6 +48,29 @@ services:
       NORM_SIDECAR_DUCKDB_PATH: /data/sidecar/catalog.duckdb
       NORM_SIDECAR_PARQUET_ROOT: /data/sidecar/parquet
       NORM_DICTIONARIES_DIR: /app/data/dictionaries
+      # M15's connection registry (encrypted credentials, M13-M22 program)
+      # needs a real 32-byte key to boot with any saved connection —
+      # generate one with:
+      #   uv run python -c "from normapi.secrets import generate_secret_key; print(generate_secret_key())"
+      # and put it in a real (gitignored) .env — see .env.example. Left
+      # unset the app still boots (no connections saved yet), but the
+      # M21 Connect step will fail until this is real.
+      NORM_SECRET_KEY: ${NORM_SECRET_KEY:-}
+      # M17's persistent DuckDB cache tier is real and built, but its own
+      # bench (M17 pack) measured it as a net loss at real ~8M-distinct-
+      # value scale — deliberately left OFF (`:memory:`) here, not an
+      # oversight.
+      NORM_CACHE_PATH: ":memory:"
+      # Optional legacy single-column path (M10, largely superseded by
+      # M15/M21's Connect flow) — server-side JSON, never a client-
+      # supplied DSN. Empty by default so a clean clone boots without
+      # requiring a sources.json to exist. To use it: create sources.json
+      # (see .env.example), set NORM_SOURCES_CONFIG_PATH in your .env,
+      # and add a bind mount for it under this service's `volumes:`.
+      # NOTE if you do: a `"host": "localhost"` entry in that file means
+      # the *container's* localhost, not the Docker host's — point it at
+      # `host.docker.internal` instead on Docker Desktop.
+      NORM_SOURCES_CONFIG_PATH: ${NORM_SOURCES_CONFIG_PATH:-}
     volumes:
       - sidecar_data:/data/sidecar
     depends_on:
@@ -61,6 +84,21 @@ services:
       timeout: 5s
       retries: 10
       start_period: 20s
+
+  ui:
+    build:
+      context: .
+      dockerfile: ui/Dockerfile
+    ports:
+      # 8090, not 80/8080/5173/4173 — 8080 is already the api service's
+      # own port, and 5173/4173 are the vite dev-server/preview ports
+      # normapi's CORS allowlist (app.py's _DEFAULT_CORS_ORIGINS) already
+      # names for `npm run dev`/`npm run preview` use, deliberately kept
+      # distinct from this real containerized deployment's port.
+      - "8090:80"
+    depends_on:
+      api:
+        condition: service_healthy
 
   # --- demo read-only source containers (integration tests / spikes only) ---
   # Every one of these provisions a genuinely restricted `readonly_user` at

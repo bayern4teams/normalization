@@ -13,6 +13,7 @@ Requires: docker compose up -d demo-postgres demo-mysql demo-clickhouse
 from __future__ import annotations
 
 import os
+import threading
 from typing import TYPE_CHECKING
 
 import pytest
@@ -158,3 +159,43 @@ class TestCatalogAndStreamingAcrossConnectors:
             assert keys == {"1", "2", "3"}
         finally:
             connector.close()
+
+
+@pytest.mark.integration
+def test_clickhouse_connector_survives_real_concurrent_calls_from_multiple_threads() -> None:
+    """M22 regression test for a real bug found via live testing: this
+    project's own containerized deployment (docs/plan/M13-M22-program-
+    plan.md's one-command-startup milestone). `normapi.sources.
+    SourceRegistry.get_by_connection` caches ONE `ClickHouseConnector`
+    per (connection_id, database) and reuses it across every subsequent
+    request — including two real, genuinely concurrent HTTP requests
+    (Explore's parallel `columns`/`samples` queries land on FastAPI's
+    thread pool at the same time). `clickhouse_connect`'s client is not
+    safe for that: a real `docker compose up` run against a real
+    ClickHouse hit `ProgrammingError: Attempt to execute concurrent
+    queries within the same session` — the same root cause M18 already
+    found and fixed for DuckDB, applied here to `ClickHouseConnector`'s
+    new `threading.Lock`. This drives the SAME connector instance from
+    real threads, concurrently, many times over — flaky before the fix
+    (raced within a handful of iterations in manual reproduction), always
+    clean after."""
+    connector = _clickhouse()
+    errors: list[BaseException] = []
+
+    def hit_it() -> None:
+        try:
+            connector.list_columns("customers")
+            connector.sample_rows("customers", limit=3)
+        except BaseException as exc:
+            errors.append(exc)
+
+    try:
+        for _ in range(10):
+            threads = [threading.Thread(target=hit_it) for _ in range(8)]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
+        assert errors == []
+    finally:
+        connector.close()
