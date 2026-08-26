@@ -14,6 +14,12 @@ input into SQL — `table` and `columns` are validated against
 `list_tables()`/`information_schema` results and quoted via SQLAlchemy's
 identifier quoting, not string-concatenated, to close the SQL-injection
 path even though this is an internal, not user-facing, component.
+
+M14 (docs/plan/M13-M22-program-plan.md) adds catalog introspection
+(`CatalogConnector`) and keyset-paginated chunked reads
+(`StreamingSourceConnector`), dialect-branched on `self._engine.dialect.name`
+since Postgres and MySQL expose database listing and row-count estimates
+through different system catalogs.
 """
 
 from __future__ import annotations
@@ -23,8 +29,15 @@ from typing import TYPE_CHECKING, Any
 import pyarrow as pa
 import sqlalchemy as sa
 
+from normio.catalog import ColumnSpec, TableSpec
+
 if TYPE_CHECKING:
     from collections.abc import Iterator, Sequence
+
+# Built-in catalogs excluded from list_databases() — never real user data.
+_SYSTEM_DATABASES = frozenset(
+    {"template0", "template1", "information_schema", "performance_schema", "mysql", "sys"}
+)
 
 
 class SqlConnectorBase:
@@ -35,6 +48,151 @@ class SqlConnectorBase:
         inspector = sa.inspect(self._engine)
         return sorted(inspector.get_table_names())
 
+    def list_databases(self) -> Sequence[str]:
+        dialect = self._engine.dialect.name
+        with self._engine.connect() as conn:
+            if dialect == "postgresql":
+                rows = conn.execute(
+                    sa.text(
+                        "SELECT datname FROM pg_database "
+                        "WHERE NOT datistemplate AND datallowconn ORDER BY datname"
+                    )
+                )
+            else:
+                rows = conn.execute(sa.text("SHOW DATABASES"))
+            return [row[0] for row in rows if row[0] not in _SYSTEM_DATABASES]
+
+    def list_columns(self, table: str) -> tuple[ColumnSpec, ...]:
+        inspector = sa.inspect(self._engine)
+        pk_columns = set(inspector.get_pk_constraint(table).get("constrained_columns") or [])
+        return tuple(
+            ColumnSpec(
+                name=col["name"],
+                type=str(col["type"]),
+                nullable=bool(col["nullable"]),
+                is_primary_key=col["name"] in pk_columns,
+            )
+            for col in inspector.get_columns(table)
+        )
+
+    def table_spec(self, table: str) -> TableSpec:
+        if table not in set(self.list_tables()):
+            msg = f"Unknown table: {table!r}"
+            raise ValueError(msg)
+        return TableSpec(
+            name=table, columns=self.list_columns(table), approx_rows=self._approx_row_count(table)
+        )
+
+    def _approx_row_count(self, table: str) -> int | None:
+        """Best-effort only — sourced from catalog statistics (Postgres'
+        `pg_class.reltuples`, MySQL's `information_schema.tables.
+        table_rows`), which are stale or absent (`-1`/`NULL`) until the
+        engine has run its own analyze/stats job. `None` means "unknown",
+        never a guessed value."""
+        dialect = self._engine.dialect.name
+        with self._engine.connect() as conn:
+            if dialect == "postgresql":
+                row = conn.execute(
+                    sa.text("SELECT reltuples FROM pg_class WHERE relname = :t"), {"t": table}
+                ).fetchone()
+                if row is None or row[0] is None or row[0] < 0:
+                    return None
+                return int(row[0])
+            row = conn.execute(
+                sa.text(
+                    "SELECT table_rows FROM information_schema.tables "
+                    "WHERE table_schema = DATABASE() AND table_name = :t"
+                ),
+                {"t": table},
+            ).fetchone()
+            return None if row is None or row[0] is None else int(row[0])
+
+    def sample_rows(self, table: str, *, limit: int = 5) -> pa.Table:
+        metadata = sa.MetaData()
+        sql_table = sa.Table(table, metadata, autoload_with=self._engine)
+        query = sa.select(*sql_table.columns).limit(limit)
+        with self._engine.connect() as conn:
+            rows = conn.execute(query).fetchall()
+        column_names = [c.name for c in sql_table.columns]
+        return pa.table(_columns_from_rows(rows, column_names), names=column_names)
+
+    def sample_values(self, table: str, column: str, *, limit: int = 5) -> Sequence[object]:
+        metadata = sa.MetaData()
+        sql_table = sa.Table(table, metadata, autoload_with=self._engine)
+        if column not in sql_table.c:
+            msg = f"Unknown column for table {table!r}: {column!r}"
+            raise ValueError(msg)
+        col = sql_table.c[column]
+        query = sa.select(col).distinct().where(col.is_not(None)).limit(limit)
+        with self._engine.connect() as conn:
+            return [row[0] for row in conn.execute(query)]
+
+    def read_chunk(
+        self,
+        table: str,
+        *,
+        key_columns: Sequence[str],
+        columns: Sequence[str] | None = None,
+        after_key: tuple[object, ...] | None = None,
+        limit: int = 100_000,
+        since: object | None = None,
+    ) -> pa.RecordBatch | None:
+        if not key_columns:
+            msg = "read_chunk requires at least one key column"
+            raise ValueError(msg)
+        metadata = sa.MetaData()
+        sql_table = sa.Table(table, metadata, autoload_with=self._engine)
+        known_columns = {c.name for c in sql_table.columns}
+        unknown_keys = set(key_columns) - known_columns
+        if unknown_keys:
+            msg = f"Unknown key columns for table {table!r}: {sorted(unknown_keys)}"
+            raise ValueError(msg)
+
+        if columns is not None:
+            unknown = set(columns) - known_columns
+            if unknown:
+                msg = f"Unknown columns for table {table!r}: {sorted(unknown)}"
+                raise ValueError(msg)
+            select_columns = list(columns)
+        else:
+            select_columns = [c.name for c in sql_table.columns]
+
+        fetch_columns = list(dict.fromkeys([*select_columns, *key_columns]))
+        select_exprs = [sql_table.c[name] for name in fetch_columns]
+        key_exprs = [sql_table.c[name] for name in key_columns]
+
+        query = sa.select(*select_exprs)
+        if after_key is not None:
+            if len(after_key) != len(key_columns):
+                msg = "after_key must have exactly one value per key_columns entry"
+                raise ValueError(msg)
+            after_literals = [sa.literal(value) for value in after_key]
+            query = query.where(sa.tuple_(*key_exprs) > sa.tuple_(*after_literals))
+        if since is not None:
+            if "created_at" not in known_columns:
+                msg = f"Table {table!r} has no created_at column to filter by `since`"
+                raise ValueError(msg)
+            query = query.where(sql_table.c["created_at"] > since)
+        query = query.order_by(*key_exprs).limit(limit)
+
+        with self._engine.connect() as conn:
+            rows = conn.execute(query).fetchall()
+        if not rows:
+            return None
+
+        key_positions = [fetch_columns.index(c) for c in key_columns]
+        keys = pa.array(
+            [_KEY_SEPARATOR.join(str(row[pos]) for pos in key_positions) for row in rows],
+            type=pa.large_string(),
+        )
+        arrays = [pa.array([row[i] for row in rows]) for i in range(len(fetch_columns))]
+        batch = pa.RecordBatch.from_arrays(
+            [*arrays, keys], names=[*fetch_columns, "source_row_key"]
+        )
+        if fetch_columns != select_columns:
+            batch = batch.select([*select_columns, "source_row_key"])
+        return batch
+
     def read_table(
         self,
         table: str,
@@ -44,17 +202,24 @@ class SqlConnectorBase:
     ) -> Iterator[pa.RecordBatch]:
         metadata = sa.MetaData()
         sql_table = sa.Table(table, metadata, autoload_with=self._engine)
+        known_columns = {c.name for c in sql_table.columns}
 
         if columns is not None:
-            unknown = set(columns) - {c.name for c in sql_table.columns}
+            unknown = set(columns) - known_columns
             if unknown:
                 msg = f"Unknown columns for table {table!r}: {sorted(unknown)}"
                 raise ValueError(msg)
-            select_columns = [sql_table.c[name] for name in columns]
+            select_names = list(columns)
         else:
-            select_columns = list(sql_table.columns)
+            select_names = [c.name for c in sql_table.columns]
 
-        column_names = [c.name for c in select_columns]
+        key_columns = self.list_columns(table)
+        pk_names = [c.name for c in key_columns if c.is_primary_key]
+        use_positional_key = not pk_names
+        fetch_names = (
+            select_names if use_positional_key else list(dict.fromkeys([*select_names, *pk_names]))
+        )
+        select_columns = [sql_table.c[name] for name in fetch_names]
         query = sa.select(*select_columns)
 
         with self._engine.connect() as raw_conn:
@@ -70,22 +235,58 @@ class SqlConnectorBase:
                 rows = result.fetchmany(batch_size)
                 if not rows:
                     break
-                yield _rows_to_batch(rows, column_names, row_offset, table)
+                if use_positional_key:
+                    yield _rows_to_batch_positional(rows, fetch_names, row_offset, table)
+                else:
+                    yield _rows_to_batch_keyed(rows, fetch_names, select_names, pk_names)
                 row_offset += len(rows)
 
     def close(self) -> None:
         self._engine.dispose()
 
 
-def _rows_to_batch(
-    rows: Sequence[sa.Row[Any]], column_names: list[str], row_offset: int, table_name: str
-) -> pa.RecordBatch:
+# ASCII unit separator — see clickhouse.py's identical constant for why
+# this character over "|" or ":".
+_KEY_SEPARATOR = "\x1f"
+
+
+def _columns_from_rows(rows: Sequence[sa.Row[Any]], column_names: list[str]) -> list[list[object]]:
     columns_data: list[list[object]] = [[] for _ in column_names]
     for row in rows:
         for i, value in enumerate(row):
             columns_data[i].append(value)
+    return columns_data
+
+
+def _rows_to_batch_positional(
+    rows: Sequence[sa.Row[Any]], column_names: list[str], row_offset: int, table_name: str
+) -> pa.RecordBatch:
+    """A table with no declared primary key has no stable identity to key
+    by — falls back to a positional key, same limitation the previous
+    implementation always had for every table, now explicit rather than
+    silently assumed."""
+    columns_data = _columns_from_rows(rows, column_names)
     arrays = [pa.array(col) for col in columns_data]
     keys = pa.array(
         [f"{table_name}:{row_offset + i}" for i in range(len(rows))], type=pa.large_string()
     )
     return pa.RecordBatch.from_arrays([*arrays, keys], names=[*column_names, "source_row_key"])
+
+
+def _rows_to_batch_keyed(
+    rows: Sequence[sa.Row[Any]],
+    fetch_names: list[str],
+    select_names: list[str],
+    pk_names: list[str],
+) -> pa.RecordBatch:
+    columns_data = _columns_from_rows(rows, fetch_names)
+    arrays = [pa.array(col) for col in columns_data]
+    pk_positions = [fetch_names.index(name) for name in pk_names]
+    keys = pa.array(
+        [_KEY_SEPARATOR.join(str(row[pos]) for pos in pk_positions) for row in rows],
+        type=pa.large_string(),
+    )
+    batch = pa.RecordBatch.from_arrays([*arrays, keys], names=[*fetch_names, "source_row_key"])
+    if fetch_names != select_names:
+        batch = batch.select([*select_names, "source_row_key"])
+    return batch

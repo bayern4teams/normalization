@@ -113,19 +113,34 @@ class UnknownCollisionError(LookupError):
 
 
 _SIDECAR_SCHEMA = pa.schema(
-    [pa.field("source_row_key", pa.large_string()), *NORMALIZED_VALUE_ARROW_SCHEMA]
+    [
+        pa.field("source_row_key", pa.large_string()),
+        pa.field("row_ordinal", pa.int64()),
+        *NORMALIZED_VALUE_ARROW_SCHEMA,
+    ]
 )
 
 
 def _results_to_record_batch(results: list[NormalizedValue]) -> pa.RecordBatch:
-    """One row per result, `source_row_key` = its index — see
+    """One row per result, `source_row_key` = its index (see
     `_write_execution_to_sidecar`'s docstring for why an index is a
-    legitimate stand-in for a real source_row_key here."""
+    legitimate stand-in for a real source_row_key here) and `row_ordinal`
+    the same index as a genuine int64 — the field `_table_to_results`
+    actually sorts by. `source_row_key` becomes a real, non-numeric,
+    connector-derived key once M17 wires streamed source data into this
+    same sidecar (`normio`'s connectors now emit keys like
+    `personID\\x1fcontactString`, not a positional index); `row_ordinal`
+    is what stays sortable regardless of what `source_row_key` looks
+    like."""
     rows = [normalized_value_to_arrow_row(result) for result in results]
     arrays = [
         pa.array(
             [
-                str(i) if field.name == "source_row_key" else rows[i][field.name]
+                str(i)
+                if field.name == "source_row_key"
+                else i
+                if field.name == "row_ordinal"
+                else rows[i][field.name]
                 for i in range(len(rows))
             ],
             type=field.type,
@@ -137,9 +152,15 @@ def _results_to_record_batch(results: list[NormalizedValue]) -> pa.RecordBatch:
 
 def _table_to_results(table: pa.Table) -> tuple[list[str | None], list[NormalizedValue]]:
     """Inverse of `_results_to_record_batch`, reading a whole run back
-    (originals, results) in original row order."""
+    (originals, results) in original row order. Sorts by `row_ordinal` —
+    a real int64 column — rather than parsing `source_row_key` as an int;
+    the latter crashes the instant a source_row_key stops being a
+    positional integer (verified real gap, found during M14: a
+    connector-derived key is a composite string, e.g.
+    `"10000023481\\x1flonnyr@gmail.com"`, and `int(...)` on that raises
+    ValueError)."""
     rows = table.to_pylist()
-    rows.sort(key=lambda row: int(row["source_row_key"]))  # numeric, not lexicographic
+    rows.sort(key=lambda row: row["row_ordinal"])
     results = [arrow_row_to_normalized_value(row) for row in rows]
     originals: list[str | None] = [row["original"] for row in rows]
     return originals, results
