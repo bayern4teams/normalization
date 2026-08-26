@@ -47,11 +47,11 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Annotated
+from typing import TYPE_CHECKING, Annotated, cast
 
 from fastapi import APIRouter, Body, Depends, HTTPException
 from normcore.pii import safe_preview
-from normio.capabilities import CatalogConnector
+from normio.capabilities import CatalogConnector, CatalogSourceConnector
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -85,10 +85,14 @@ from normapi.dependencies import (
     get_source_registry,
     get_store,
 )
+from normapi.mappings import ColumnMapping, materialize_field_config
 from normapi.postgres_store import PostgresMetadataStore
 from normapi.scaffold_profile import SCAFFOLD_PROFILE
 from normapi.schemas import (
     CollisionDecisionRequest,
+    ColumnMappingResponse,
+    ColumnMappingUpsertRequest,
+    ColumnSpecResponse,
     ConnectionCreateRequest,
     ConnectionKindInfo,
     ConnectionResponse,
@@ -108,6 +112,7 @@ from normapi.schemas import (
     ProfileSuggestionResponse,
     ProfileVersionRequest,
     RunExecutionRequest,
+    TableSpecResponse,
     TypeSuggestionResponse,
 )
 from normapi.sources import SourceRegistry, UnknownSourceError, build_connector_from_parts
@@ -125,6 +130,7 @@ from normcore import (
     NormalizationProfile,
     NormalizationRun,
     NormalizedValue,
+    SemanticSource,
 )
 from normdict import (
     BuiltinIdCollisionError,
@@ -511,6 +517,202 @@ def delete_connection(
     sources.refresh(connection_id)
 
 
+# --- catalog browsing (M16) -------------------------------------------------
+
+
+def _require_connection(
+    pg_store: PostgresMetadataStore | None, connection_id: str
+) -> ConnectionRecord:
+    if pg_store is None:
+        raise _connection_registry_unavailable()
+    record = pg_store.get_connection(connection_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail=f"No such connection: {connection_id}")
+    return record
+
+
+def _require_catalog_connector(
+    sources: SourceRegistry, connection_id: str, database: str, kind: str
+) -> CatalogSourceConnector:
+    connector = sources.get_by_connection(connection_id, database)
+    if not isinstance(connector, CatalogConnector):
+        raise HTTPException(
+            status_code=501, detail=f"{kind!r} connections do not support catalog browsing"
+        )
+    return cast("CatalogSourceConnector", connector)
+
+
+@router.get("/connections/{connection_id}/databases", response_model=list[str])
+def list_connection_databases(
+    connection_id: str,
+    pg_store: Annotated[PostgresMetadataStore | None, Depends(get_postgres_store)],
+    sources: Annotated[SourceRegistry, Depends(get_source_registry)],
+) -> list[str]:
+    record = _require_connection(pg_store, connection_id)
+    connector = _require_catalog_connector(sources, connection_id, record.database, record.kind)
+    return list(connector.list_databases())
+
+
+@router.get("/connections/{connection_id}/databases/{database}/tables", response_model=list[str])
+def list_connection_tables(
+    connection_id: str,
+    database: str,
+    pg_store: Annotated[PostgresMetadataStore | None, Depends(get_postgres_store)],
+    sources: Annotated[SourceRegistry, Depends(get_source_registry)],
+) -> list[str]:
+    record = _require_connection(pg_store, connection_id)
+    connector = _require_catalog_connector(sources, connection_id, database, record.kind)
+    return list(connector.list_tables())
+
+
+@router.get(
+    "/connections/{connection_id}/databases/{database}/tables/{table}/columns",
+    response_model=TableSpecResponse,
+)
+def get_connection_table_columns(
+    connection_id: str,
+    database: str,
+    table: str,
+    pg_store: Annotated[PostgresMetadataStore | None, Depends(get_postgres_store)],
+    sources: Annotated[SourceRegistry, Depends(get_source_registry)],
+) -> TableSpecResponse:
+    record = _require_connection(pg_store, connection_id)
+    connector = _require_catalog_connector(sources, connection_id, database, record.kind)
+    try:
+        spec = connector.table_spec(table)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return TableSpecResponse(
+        name=spec.name,
+        engine=spec.engine,
+        approx_rows=spec.approx_rows,
+        columns=[
+            ColumnSpecResponse(
+                name=c.name, type=c.type, nullable=c.nullable, is_primary_key=c.is_primary_key
+            )
+            for c in spec.columns
+        ],
+    )
+
+
+@router.get(
+    "/connections/{connection_id}/databases/{database}/tables/{table}/samples",
+    response_model=dict[str, list[str]],
+)
+def sample_connection_table(
+    connection_id: str,
+    database: str,
+    table: str,
+    *,
+    pg_store: Annotated[PostgresMetadataStore | None, Depends(get_postgres_store)],
+    sources: Annotated[SourceRegistry, Depends(get_source_registry)],
+    n: int = 5,
+) -> dict[str, list[str]]:
+    """One response for EVERY column's samples — a UI rendering the
+    Explore step for a real table (e.g. `Company`'s 14 columns) needs
+    exactly one request here, not one per column."""
+    record = _require_connection(pg_store, connection_id)
+    connector = _require_catalog_connector(sources, connection_id, database, record.kind)
+    try:
+        columns = connector.list_columns(table)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {
+        column.name: [str(v) for v in connector.sample_values(table, column.name, limit=n)]
+        for column in columns
+    }
+
+
+# --- column mappings (M16) --------------------------------------------------
+
+
+def _to_mapping_response(mapping: ColumnMapping) -> ColumnMappingResponse:
+    return ColumnMappingResponse(
+        database=mapping.database,
+        table_name=mapping.table_name,
+        column_name=mapping.column_name,
+        semantic_type=mapping.semantic_type,
+        semantic_source=mapping.semantic_source,
+        enabled=mapping.enabled,
+        updated_at=mapping.updated_at,
+        updated_by=mapping.updated_by,
+    )
+
+
+def _materialize_into_profile(
+    store: InMemoryStore, profile_id: str, mapping: ColumnMapping
+) -> None:
+    """Decision from the M13-M22 program's M16 section: the mappings
+    table is the UI-facing editable surface, but `run.profile_version`
+    stays the one thing execution actually reads — this is the one
+    function that turns a saved mapping into a real profile version,
+    replacing any existing field_config for the same `field_ref` rather
+    than appending a duplicate."""
+    try:
+        profile = store.get_profile(profile_id)
+    except ProfileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=f"No such profile: {profile_id}") from exc
+    new_config = materialize_field_config(mapping)
+    kept = tuple(c for c in profile.field_configs if c.field_ref != new_config.field_ref)
+    store.create_version(
+        profile_id,
+        description=None,
+        locale_policy=None,
+        default_operations=None,
+        field_configs=(*kept, new_config),
+        created_by=mapping.updated_by,
+    )
+
+
+@router.put(
+    "/connections/{connection_id}/databases/{database}/tables/{table}/columns/{column}/mapping",
+    response_model=ColumnMappingResponse,
+)
+def upsert_column_mapping(
+    connection_id: str,
+    database: str,
+    table: str,
+    column: str,
+    body: ColumnMappingUpsertRequest,
+    *,
+    store: Annotated[InMemoryStore, Depends(get_store)],
+    pg_store: Annotated[PostgresMetadataStore | None, Depends(get_postgres_store)],
+) -> ColumnMappingResponse:
+    record = _require_connection(pg_store, connection_id)
+    assert pg_store is not None  # narrowed by _require_connection raising otherwise
+    mapping = ColumnMapping(
+        connection_identity=record.identity,
+        database=database,
+        table_name=table,
+        column_name=column,
+        semantic_type=body.semantic_type,
+        semantic_source=SemanticSource.USER,
+        enabled=body.enabled,
+        updated_at=datetime.now(UTC).isoformat(),
+        updated_by=body.updated_by,
+    )
+    pg_store.save_mapping(mapping)
+    if body.profile_id is not None:
+        _materialize_into_profile(store, body.profile_id, mapping)
+    return _to_mapping_response(mapping)
+
+
+@router.get(
+    "/connections/{connection_id}/databases/{database}/tables/{table}/mappings",
+    response_model=list[ColumnMappingResponse],
+)
+def list_column_mappings(
+    connection_id: str,
+    database: str,
+    table: str,
+    pg_store: Annotated[PostgresMetadataStore | None, Depends(get_postgres_store)],
+) -> list[ColumnMappingResponse]:
+    record = _require_connection(pg_store, connection_id)
+    assert pg_store is not None
+    mappings = pg_store.list_mappings_for_table(record.identity, database, table)
+    return [_to_mapping_response(m) for m in mappings]
+
+
 # --- preview / field-test ---------------------------------------------------
 
 
@@ -555,10 +757,22 @@ def _resolve_values_thunk(
     execution: RunExecutionRequest, sources: SourceRegistry
 ) -> Callable[[], Sequence[str | None]]:
     """Builds the callable `start_run_execution` invokes from inside the
-    background thread. For `source`-mode, only the cheap in-memory
-    registry lookup (does source_id exist at all) happens here,
-    synchronously — the real connector read is deferred into the
-    returned closure so it runs off the request/response path."""
+    background thread. For a file-config `source` (`database` unset),
+    the cheap in-memory registry lookup (does source_id exist at all)
+    happens here, synchronously, for an immediate 404 on a typo'd id —
+    the real connector read is deferred into the returned closure so it
+    runs off the request/response path.
+
+    For a connection-based `source` (M15/M16, `database` given), that
+    synchronous pre-check is deliberately SKIPPED: unlike a file-config
+    source (whose connector already exists, built eagerly at startup —
+    checking it is a free dict lookup), a connection-based source builds
+    its connector lazily on first use, which means actually connecting to
+    the real database. Doing that on the request path would reintroduce
+    exactly the blocking-request problem M11's async execution exists to
+    avoid. A bad/deleted connection id therefore surfaces the same way a
+    bad table/column already does: a polled FAILED status with
+    `failure_reason`, not a synchronous 404."""
     if execution.values is not None:
         pasted_values = execution.values
 
@@ -570,17 +784,47 @@ def _resolve_values_thunk(
     # RunExecutionRequest's own validator guarantees this is set.
     assert execution.source is not None
     source = execution.source
-    try:
-        sources.get(source.source_id)
-    except UnknownSourceError as exc:
-        raise HTTPException(status_code=404, detail=f"No such source: {source.source_id}") from exc
+    if source.database is None:
+        try:
+            sources.get(source.source_id)
+        except UnknownSourceError as exc:
+            raise HTTPException(
+                status_code=404, detail=f"No such source: {source.source_id}"
+            ) from exc
 
     def resolve_from_source() -> Sequence[str | None]:
         return sources.read_column_values(
-            source.source_id, source.table, source.column, row_limit=source.row_limit
+            source.source_id,
+            source.table,
+            source.column,
+            row_limit=source.row_limit,
+            database=source.database,
         )
 
     return resolve_from_source
+
+
+def _resolve_field_ref(
+    execution: RunExecutionRequest, pg_store: PostgresMetadataStore | None
+) -> str | None:
+    """M16: builds the real `field_ref` a profile's `field_configs` (and
+    a materialized column mapping) are keyed by —
+    `{connection_identity}.{database}.{table}.{column}` — for a
+    connection-based source. Returns `None` for pasted-values mode or a
+    file-config source, where `execute_run` falls back to the bare
+    `field_name` unchanged (no structured identity exists for either).
+    A connection id that no longer resolves is not an error here — the
+    run simply proceeds with no field_ref (falls back to field_name,
+    same as before M16), and the real "does this connection exist" check
+    still happens where it always has: inside the background execution
+    thread when it actually tries to read from the source."""
+    if execution.source is None or execution.source.database is None or pg_store is None:
+        return None
+    source = execution.source
+    record = pg_store.get_connection(source.source_id)
+    if record is None:
+        return None
+    return f"{record.identity}.{source.database}.{source.table}.{source.column}"
 
 
 @router.post("/runs", response_model=NormalizationRun, status_code=201)
@@ -591,6 +835,7 @@ def create_run(
     store: Annotated[InMemoryStore, Depends(get_store)],
     dispatcher: Annotated[Dispatcher, Depends(get_dispatcher)],
     sources: Annotated[SourceRegistry, Depends(get_source_registry)],
+    pg_store: Annotated[PostgresMetadataStore | None, Depends(get_postgres_store)],
     execution: Annotated[RunExecutionRequest | None, Body()] = None,
 ) -> NormalizationRun:
     """`execution` is optional (M6): when supplied, the run's field
@@ -608,7 +853,11 @@ def create_run(
     "does this source_id exist" check happens synchronously here (an
     immediate 404 for a typo'd source_id); the actual table/column read
     happens in the background, so a bad table/column now surfaces as a
-    polled FAILED status with `failure_reason`, not a synchronous 400."""
+    polled FAILED status with `failure_reason`, not a synchronous 400.
+
+    `execution.semantic_type` is now optional (M16) — see
+    `InMemoryStore.execute_run`'s docstring for the resolution order
+    against a matching profile field config."""
     try:
         run = store.create_run(
             profile_id=profile_id, env_id=dispatcher.env_id, source_snapshot=source_snapshot
@@ -625,6 +874,7 @@ def create_run(
             semantic_type=execution.semantic_type,
             resolve_values=resolve_values,
             error_policy=execution.error_policy,
+            field_ref=_resolve_field_ref(execution, pg_store),
         )
     return run
 

@@ -17,6 +17,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
+from normio.connector import SourceConnector
+
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
@@ -53,6 +55,18 @@ class CatalogConnector(Protocol):
         `sample_rows` + client-side dedup, so it stays fast on a
         multi-million-row table."""
         ...
+
+
+class CatalogSourceConnector(SourceConnector, CatalogConnector, Protocol):
+    """A connector known to satisfy both `SourceConnector` and
+    `CatalogConnector` — purely a typing convenience for callers (like
+    normapi's catalog routes, M16) that already did an `isinstance`
+    capability check and want the narrowed type back, so
+    `.list_tables()` (from `SourceConnector`) and `.list_databases()`
+    (from `CatalogConnector`) both type-check on the same object without
+    a `cast`. Not itself used at runtime for isinstance checks — the two
+    Protocols above stay separate for that (see this module's own
+    docstring for why)."""
 
 
 @runtime_checkable

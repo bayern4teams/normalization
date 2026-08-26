@@ -140,7 +140,13 @@ class SourceRegistry:
         self._connection_pool.clear()
 
     def read_column_values(
-        self, source_id: str, table: str, column: str, *, row_limit: int
+        self,
+        source_id: str,
+        table: str,
+        column: str,
+        *,
+        row_limit: int,
+        database: str | None = None,
     ) -> list[str | None]:
         """Reads up to `row_limit` values of one column from a real
         source table — the synchronous read path a run's execution uses
@@ -150,8 +156,16 @@ class SourceRegistry:
         `InMemoryStore.execute_run` normalizes `str | None`, the same
         contract pasted `values` already use — the raw source value is
         never silently dropped, just stringified the same way any other
-        text-ingestion boundary would."""
-        connector = self.get(source_id)
+        text-ingestion boundary would.
+
+        `database` (M16): when given, `source_id` is treated as a
+        connection id (M15) rather than a file-config source_id — see
+        `get_by_connection`'s own docstring."""
+        connector = (
+            self.get_by_connection(source_id, database)
+            if database is not None
+            else self.get(source_id)
+        )
         values: list[str | None] = []
         for batch in connector.read_table(table, columns=[column]):
             for value in batch.column(column).to_pylist():

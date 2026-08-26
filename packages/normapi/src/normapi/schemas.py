@@ -20,6 +20,7 @@ from normcore import (
     ErrorPolicy,
     FieldNormalizationConfig,
     FieldSemanticType,
+    SemanticSource,
 )
 
 
@@ -66,12 +67,19 @@ class RunSourceRequest(BaseModel):
     async/chunked execution path yet (that's M11's job); this cap keeps a
     request against an accidentally-huge table from blocking forever.
     100_000 mirrors SourceConnector.read_table's own default batch_size,
-    a reasonable per-request ceiling for a synchronous HTTP call."""
+    a reasonable per-request ceiling for a synchronous HTTP call.
+
+    `database` (M16): when given, `source_id` is a connection id from
+    M15's registry rather than a `NORM_SOURCES_CONFIG_PATH` file entry —
+    resolved via `SourceRegistry.get_by_connection`. When omitted, the
+    original M10 file-config `source_id` path is used unchanged (zero
+    behavior change for existing callers)."""
 
     source_id: str
     table: str
     column: str
     row_limit: int = Field(default=10_000, gt=0, le=100_000)
+    database: str | None = None
 
 
 class RunExecutionRequest(BaseModel):
@@ -80,10 +88,19 @@ class RunExecutionRequest(BaseModel):
     when omitted, the run is created PENDING with no field execution,
     exactly matching M1's original scaffold behavior. Exactly one of
     `values` (pasted, M6) or `source` (read from a real connector, M10)
-    must be supplied."""
+    must be supplied.
+
+    `semantic_type` (M16): now optional. Omitted means "resolve from a
+    matching profile field config" (a saved M16 column mapping,
+    materialized into the profile) — see `InMemoryStore.execute_run`'s
+    docstring for the real bug this fixes: before M16 this field was
+    required and always won unconditionally, so a profile's own saved
+    mapping was never even consulted. Given explicitly, it's still an
+    override that always wins, same precedent `error_policy` already
+    follows."""
 
     field_name: str
-    semantic_type: FieldSemanticType
+    semantic_type: FieldSemanticType | None = None
     values: list[str | None] | None = None
     source: RunSourceRequest | None = None
     # None (the default — omitted from the request body) means "defer to
@@ -266,6 +283,48 @@ class ConnectionKindInfo(BaseModel):
     default_port: int
 
 
+class ColumnSpecResponse(BaseModel):
+    """M16 — a table's column, as reported by `normio.catalog.ColumnSpec`
+    (a plain dataclass, not itself a pydantic model), wrapped for the
+    catalog API's response body."""
+
+    name: str
+    type: str
+    nullable: bool
+    is_primary_key: bool
+
+
+class TableSpecResponse(BaseModel):
+    name: str
+    engine: str | None
+    approx_rows: int | None
+    columns: list[ColumnSpecResponse]
+
+
+class ColumnMappingUpsertRequest(BaseModel):
+    """PUT .../columns/{column}/mapping body — M16. `profile_id`, when
+    given, additionally materializes this mapping into that profile as a
+    new version (see `normapi.mappings.materialize_field_config`); when
+    omitted, only the mapping itself is saved, editable again later
+    before ever touching a profile."""
+
+    semantic_type: FieldSemanticType
+    enabled: bool = True
+    updated_by: str
+    profile_id: str | None = None
+
+
+class ColumnMappingResponse(BaseModel):
+    database: str
+    table_name: str
+    column_name: str
+    semantic_type: FieldSemanticType
+    semantic_source: SemanticSource
+    enabled: bool
+    updated_at: str
+    updated_by: str
+
+
 class NotImplementedResponse(BaseModel):
     """Honest, schema-valid placeholder for §98 endpoints whose real
     implementation is still out of scope at the current milestone —
@@ -278,6 +337,9 @@ class NotImplementedResponse(BaseModel):
 
 __all__ = [
     "CollisionDecisionRequest",
+    "ColumnMappingResponse",
+    "ColumnMappingUpsertRequest",
+    "ColumnSpecResponse",
     "ConnectionCreateRequest",
     "ConnectionKindInfo",
     "ConnectionResponse",
@@ -298,5 +360,7 @@ __all__ = [
     "ProfileSuggestionResponse",
     "ProfileVersionRequest",
     "RunExecutionRequest",
+    "RunSourceRequest",
+    "TableSpecResponse",
     "TypeSuggestionResponse",
 ]

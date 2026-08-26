@@ -36,6 +36,7 @@ from psycopg.types.json import Jsonb
 
 from normanalysis import CollisionDecision
 from normapi.connections import ConnectionRecord
+from normapi.mappings import ColumnMapping
 from normapi.migrations import Migration, run_migrations
 from normcore import NormalizationProfile, NormalizationRun
 
@@ -64,11 +65,42 @@ def _create_connections_table(conn: psycopg.Connection) -> None:
         cur.execute("CREATE INDEX IF NOT EXISTS connections_identity_idx ON connections (identity)")
 
 
-_MIGRATIONS = [Migration(name="m15_create_connections", apply=_create_connections_table)]
+def _create_column_mappings_table(conn: psycopg.Connection) -> None:
+    """M16: keyed by real connection identity, never a connection's own
+    `id`/alias (decision 4) — deliberately no foreign key to
+    `connections.id`, so a mapping survives that connection row being
+    deleted and a new one created under a different alias for the same
+    real database."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "CREATE TABLE IF NOT EXISTS column_mappings ("
+            "  connection_identity VARCHAR NOT NULL,"
+            "  database VARCHAR NOT NULL,"
+            "  table_name VARCHAR NOT NULL,"
+            "  column_name VARCHAR NOT NULL,"
+            "  semantic_type VARCHAR NOT NULL,"
+            "  semantic_source VARCHAR NOT NULL,"
+            "  enabled BOOLEAN NOT NULL,"
+            "  updated_at TIMESTAMPTZ NOT NULL,"
+            "  updated_by VARCHAR NOT NULL,"
+            "  PRIMARY KEY (connection_identity, database, table_name, column_name)"
+            ")"
+        )
+
+
+_MIGRATIONS = [
+    Migration(name="m15_create_connections", apply=_create_connections_table),
+    Migration(name="m16_create_column_mappings", apply=_create_column_mappings_table),
+]
 
 _SELECT_CONNECTION_COLUMNS = (
     "SELECT id, alias, kind, host, port, username, encrypted_password, "
     "database, identity, created_at, updated_at FROM connections"
+)
+
+_SELECT_MAPPING_COLUMNS = (
+    "SELECT connection_identity, database, table_name, column_name, semantic_type, "
+    "semantic_source, enabled, updated_at, updated_by FROM column_mappings"
 )
 
 
@@ -98,6 +130,31 @@ def _row_to_connection_record(row: tuple[object, ...]) -> ConnectionRecord:
         identity=identity,
         created_at=created_at.isoformat() if hasattr(created_at, "isoformat") else created_at,
         updated_at=updated_at.isoformat() if hasattr(updated_at, "isoformat") else updated_at,
+    )
+
+
+def _row_to_mapping(row: tuple[object, ...]) -> ColumnMapping:
+    (
+        connection_identity,
+        database,
+        table_name,
+        column_name,
+        semantic_type,
+        semantic_source,
+        enabled,
+        updated_at,
+        updated_by,
+    ) = row
+    return ColumnMapping(
+        connection_identity=connection_identity,
+        database=database,
+        table_name=table_name,
+        column_name=column_name,
+        semantic_type=semantic_type,
+        semantic_source=semantic_source,
+        enabled=enabled,
+        updated_at=updated_at.isoformat() if hasattr(updated_at, "isoformat") else updated_at,
+        updated_by=updated_by,
     )
 
 
@@ -333,6 +390,59 @@ class PostgresMetadataStore:
         with self._conn.cursor() as cur:
             cur.execute("DELETE FROM connections WHERE id = %s", (connection_id,))
             return cur.rowcount > 0
+
+    # --- column mappings (M16) ------------------------------------------
+
+    def save_mapping(self, mapping: ColumnMapping) -> None:
+        with self._conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO column_mappings "
+                "  (connection_identity, database, table_name, column_name, "
+                "   semantic_type, semantic_source, enabled, updated_at, updated_by) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) "
+                "ON CONFLICT (connection_identity, database, table_name, column_name) "
+                "DO UPDATE SET "
+                "  semantic_type = EXCLUDED.semantic_type, "
+                "  semantic_source = EXCLUDED.semantic_source, "
+                "  enabled = EXCLUDED.enabled, "
+                "  updated_at = EXCLUDED.updated_at, "
+                "  updated_by = EXCLUDED.updated_by",
+                (
+                    mapping.connection_identity,
+                    mapping.database,
+                    mapping.table_name,
+                    mapping.column_name,
+                    mapping.semantic_type.value,
+                    mapping.semantic_source.value,
+                    mapping.enabled,
+                    mapping.updated_at,
+                    mapping.updated_by,
+                ),
+            )
+
+    def get_mapping(
+        self, connection_identity: str, database: str, table_name: str, column_name: str
+    ) -> ColumnMapping | None:
+        with self._conn.cursor() as cur:
+            cur.execute(
+                _SELECT_MAPPING_COLUMNS + " WHERE connection_identity = %s AND database = %s "
+                "AND table_name = %s AND column_name = %s",
+                (connection_identity, database, table_name, column_name),
+            )
+            row = cur.fetchone()
+        return _row_to_mapping(row) if row else None
+
+    def list_mappings_for_table(
+        self, connection_identity: str, database: str, table_name: str
+    ) -> list[ColumnMapping]:
+        with self._conn.cursor() as cur:
+            cur.execute(
+                _SELECT_MAPPING_COLUMNS + " WHERE connection_identity = %s AND database = %s "
+                "AND table_name = %s ORDER BY column_name",
+                (connection_identity, database, table_name),
+            )
+            rows = cur.fetchall()
+        return [_row_to_mapping(row) for row in rows]
 
     def close(self) -> None:
         self._conn.close()

@@ -405,9 +405,10 @@ class InMemoryStore:
         *,
         dispatcher: Dispatcher,
         field_name: str,
-        semantic_type: FieldSemanticType,
+        semantic_type: FieldSemanticType | None = None,
         resolve_values: Callable[[], Sequence[str | None]],
         error_policy: ErrorPolicy | None = None,
+        field_ref: str | None = None,
     ) -> NormalizationRun:
         """Starts a run's execution in a background thread and returns
         immediately (M11) — Source.txt §70's own `RunStatus` already
@@ -433,7 +434,13 @@ class InMemoryStore:
         directly-testable primitive every existing test already uses;
         this is a thin background-thread wrapper around it, used only by
         the live HTTP route.
-        """
+
+        `semantic_type`/`field_ref` (M16): both optional now — see
+        `execute_run`'s own docstring for the real bug this closes
+        (`execution.semantic_type` used to win unconditionally over a
+        matched profile field_config's semantic_type, and `field_name`
+        alone was never a real `field_ref` a profile's `field_configs`
+        could actually match against)."""
         run = self.get_run(run_id)
         if run.is_terminal():
             msg = f"Run {run_id!r} already reached terminal status {run.status!r}"
@@ -448,6 +455,7 @@ class InMemoryStore:
                 "semantic_type": semantic_type,
                 "resolve_values": resolve_values,
                 "error_policy": error_policy,
+                "field_ref": field_ref,
             },
             daemon=True,
         )
@@ -460,9 +468,10 @@ class InMemoryStore:
         run_id: str,
         dispatcher: Dispatcher,
         field_name: str,
-        semantic_type: FieldSemanticType,
+        semantic_type: FieldSemanticType | None,
         resolve_values: Callable[[], Sequence[str | None]],
         error_policy: ErrorPolicy | None,
+        field_ref: str | None = None,
     ) -> None:
         """A background thread with an uncaught exception just dies
         silently in Python — this `except Exception` is the mechanism by
@@ -479,6 +488,7 @@ class InMemoryStore:
                 semantic_type=semantic_type,
                 values=values,
                 error_policy=error_policy,
+                field_ref=field_ref,
             )
         except Exception as exc:
             failed = self.get_run(run_id).model_copy(
@@ -498,9 +508,10 @@ class InMemoryStore:
         *,
         dispatcher: Dispatcher,
         field_name: str,
-        semantic_type: FieldSemanticType,
+        semantic_type: FieldSemanticType | None = None,
         values: Sequence[str | None],
         error_policy: ErrorPolicy | None = None,
+        field_ref: str | None = None,
     ) -> NormalizationRun:
         """Actually normalizes `values` through the live Dispatcher and
         stores the original/result pairs against the run — real
@@ -509,14 +520,49 @@ class InMemoryStore:
         `error_policy=None` (the caller didn't explicitly override it)
         defers to the run's own profile per field — see
         `NormalizationProfile.build_context`'s docstring for the full
-        resolution order. An explicit value here always wins."""
+        resolution order. An explicit value here always wins.
+
+        `field_ref` (M16): the real key a profile's `field_configs` are
+        matched against — `{connection_identity}.{database}.{table}.
+        {column}` for a connection-based source (materialized by a saved
+        `normapi.mappings.ColumnMapping`), or just `field_name` for
+        pasted-values mode, where no such structured identity exists.
+        Before M16, this was always the bare `field_name`, so a profile's
+        real `field_ref`-keyed field_configs (e.g.
+        `"abc123....origin2.Person.fullName"`) could never match a bare
+        `"fullName"` — `error_policy`/`locale_overrides`/`dictionary_refs`
+        were silently unapplied even when a matching config existed.
+
+        `semantic_type` (M16): now optional. An explicit value here is an
+        override and always wins (matching `error_policy`'s own
+        precedent); when omitted, resolved from the matched field
+        config's own `semantic_type`. Before M16, the caller-supplied
+        value won *unconditionally* — there was no fallback at all, so a
+        profile's saved mapping was silently never consulted even when
+        the caller passed nothing meaningful. `ValueError` if neither is
+        available."""
         run = self.get_run(run_id)
         if run.is_terminal():
             msg = f"Run {run_id!r} already reached terminal status {run.status!r}"
             raise RunNotExecutableError(msg)
 
         profile = self.get_profile(run.profile_id, run.profile_version)
-        ctx = profile.build_context(field_name, semantic_type, error_policy=error_policy)
+        effective_field_ref = field_ref if field_ref is not None else field_name
+        field_config = profile.config_for(effective_field_ref)
+        effective_semantic_type = semantic_type
+        if effective_semantic_type is None:
+            effective_semantic_type = (
+                field_config.semantic_type if field_config is not None else None
+            )
+        if effective_semantic_type is None:
+            msg = (
+                f"No semantic_type given for {effective_field_ref!r} and no matching "
+                f"profile field config to fall back to"
+            )
+            raise ValueError(msg)
+        ctx = profile.build_context(
+            effective_field_ref, effective_semantic_type, error_policy=error_policy
+        )
 
         recorder = RunRecorder(run)
         recorder.start()
@@ -526,7 +572,7 @@ class InMemoryStore:
         results = self._normalize_deduped(
             originals,
             dispatcher=dispatcher,
-            semantic_type=semantic_type,
+            semantic_type=effective_semantic_type,
             ctx=ctx,
             profile=profile,
             recorder=recorder,
@@ -540,7 +586,7 @@ class InMemoryStore:
                 recorder.record_error()
 
         invariant_report = sample_and_check(
-            dispatcher, semantic_type, ctx, profile, originals=originals, results=results
+            dispatcher, effective_semantic_type, ctx, profile, originals=originals, results=results
         )
 
         finished = recorder.finish(RunStatus.COMPLETED)
@@ -549,7 +595,7 @@ class InMemoryStore:
             self._pg.save_run(finished)
         self._executions[run_id] = _RunExecution(
             field_name=field_name,
-            semantic_type=semantic_type,
+            semantic_type=effective_semantic_type,
             originals=originals,
             results=results,
             invariant_report=invariant_report,
@@ -563,7 +609,7 @@ class InMemoryStore:
                 telemetry_metrics,
                 finished.metrics,
                 field_name=field_name,
-                semantic_type=semantic_type,
+                semantic_type=effective_semantic_type,
             )
         return finished
 
