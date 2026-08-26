@@ -62,8 +62,8 @@ from normanalysis import (
     build_handoff_artifact,
     compare_runs,
     compute_impact,
-    compute_overview,
-    compute_quality_report,
+    compute_overview_from_stats,
+    compute_quality_from_stats,
     find_collisions,
     profile_field,
     suggest_profile,
@@ -892,7 +892,7 @@ def start_multi_column_run(
     *,
     store: Annotated[InMemoryStore, Depends(get_store)],
     dispatcher: Annotated[Dispatcher, Depends(get_dispatcher)],
-    sources: Annotated[SourceRegistry, Depends(get_source_registry)],
+    resolver: Annotated[ConnectionResolver | None, Depends(get_connection_resolver)],
     pg_store: Annotated[PostgresMetadataStore | None, Depends(get_postgres_store)],
     executor: Annotated[RunExecutor, Depends(get_run_executor)],
 ) -> NormalizationRun:
@@ -901,12 +901,39 @@ def start_multi_column_run(
     `execution` body) and a connection-based source. Returns 202: unlike
     `POST /runs`'s single-column path, this ALWAYS executes
     asynchronously — there is no synchronous pasted-values equivalent for
-    multi-column execution."""
+    multi-column execution.
+
+    M18 fix: builds a connector DEDICATED to this run (via `resolver` +
+    `build_connector_from_parts`, the same "never pooled" pattern
+    `_probe_connection` already uses) rather than `SourceRegistry.
+    get_by_connection`'s process-wide cached single instance. A real bug,
+    found via live verification: `clickhouse_connect`'s client is not
+    thread-safe for concurrent queries, and the cached instance is
+    process-wide — two multi-column runs started against the SAME
+    connection execute concurrently on `RunExecutor`'s worker pool, so
+    both were sharing one non-thread-safe client and failing with
+    "Please use a separate client instance per thread/process." A
+    catalog-browsing request (M16) is a single short-lived call, so
+    sharing was safe there; a chunked streaming run holds its connector
+    for the run's entire, potentially long, duration — safe only with a
+    connector no other request can ever be concurrently using."""
     record = _require_connection(pg_store, body.connection_id)
-    connector = sources.get_by_connection(body.connection_id, body.database)
+    if resolver is None:
+        raise _connection_registry_unavailable()
+    resolved = resolver.resolve(body.connection_id)
+    connector = build_connector_from_parts(
+        body.connection_id,
+        kind=resolved.kind,
+        host=resolved.host,
+        port=resolved.port,
+        username=resolved.username,
+        password=resolved.password,
+        database=body.database,
+    )
     if not isinstance(connector, CatalogConnector) or not isinstance(
         connector, StreamingSourceConnector
     ):
+        connector.close()
         raise HTTPException(
             status_code=501,
             detail=f"{record.kind!r} connections do not support multi-column streaming runs",
@@ -925,8 +952,10 @@ def start_multi_column_run(
             chunk_size=body.chunk_size,
         )
     except RunNotFoundError as exc:
+        connector.close()
         raise HTTPException(status_code=404, detail=f"No such run: {run_id}") from exc
     except RunNotExecutableError as exc:
+        connector.close()
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
@@ -935,6 +964,8 @@ def compare_run_pair(
     run_id_a: str,
     run_id_b: str,
     store: Annotated[InMemoryStore, Depends(get_store)],
+    table: str | None = None,
+    column: str | None = None,
 ) -> dict[str, object]:
     """§96 A/B normalization — compares two runs executed over the same
     aligned input values (typically the same field under two different
@@ -942,12 +973,16 @@ def compare_run_pair(
     matches path routes in registration order, so "compare" would
     otherwise be captured as a `run_id` path parameter by the more
     generic route below (a real bug caught by hitting the live server,
-    not by reasoning about route declarations)."""
+    not by reasoning about route declarations).
+
+    `table`/`column` (M18): selects which column to compare for a
+    multi-column run — the same selector on both sides, since comparison
+    only makes sense between aligned batches of the same field."""
     try:
         run_a = store.get_run(run_id_a)
         run_b = store.get_run(run_id_b)
-        execution_a = store.get_execution(run_id_a)
-        execution_b = store.get_execution(run_id_b)
+        execution_a = store.get_column_execution(run_id_a, table, column)
+        execution_b = store.get_column_execution(run_id_b, table, column)
     except RunNotFoundError as exc:
         raise HTTPException(status_code=404, detail=f"No such run: {exc}") from exc
 
@@ -986,10 +1021,15 @@ def get_run(run_id: str, store: Annotated[InMemoryStore, Depends(get_store)]) ->
 
 @router.get("/runs/{run_id}/errors", response_model=list[NormalizationError])
 def get_run_errors(
-    run_id: str, store: Annotated[InMemoryStore, Depends(get_store)]
+    run_id: str,
+    store: Annotated[InMemoryStore, Depends(get_store)],
+    table: str | None = None,
+    column: str | None = None,
 ) -> list[NormalizationError]:
+    """`table`/`column` (M18): selects one column of a multi-column run;
+    omitted, falls back to the original single-column lookup unchanged."""
     try:
-        execution = store.get_execution(run_id)
+        execution = store.get_column_execution(run_id, table, column)
     except RunNotFoundError as exc:
         raise HTTPException(status_code=404, detail=f"No such run: {run_id}") from exc
     if execution is None:
@@ -1019,33 +1059,47 @@ def get_run_errors(
 
 @router.get("/runs/{run_id}/values")
 def get_run_values(
-    run_id: str, store: Annotated[InMemoryStore, Depends(get_store)]
+    run_id: str,
+    store: Annotated[InMemoryStore, Depends(get_store)],
+    *,
+    table: str | None = None,
+    column: str | None = None,
+    offset: int = 0,
+    limit: int = 1000,
 ) -> list[dict[str, object]]:
     """The run's real aligned (original, normalized result) pairs — backs
     §121's per-value Normalization Comparison Workspace table (Value/v1/
     v2/Difference/Reason), which needs row-level data the aggregate
-    /runs/compare endpoint deliberately doesn't return."""
+    /runs/compare endpoint deliberately doesn't return.
+
+    M18: real pagination (`offset`/`limit`, default page size 1000,
+    capped at 10000) pushed down to DuckDB for a sidecar-backed
+    selection — never materializes a full multi-million-row column into
+    Python just to return one page of it. `table`/`column` select one
+    column of a multi-column run; omitted, the original single-column
+    (already-bounded) behavior is unchanged."""
+    limit = max(1, min(limit, 10_000))
+    offset = max(0, offset)
     try:
-        execution = store.get_execution(run_id)
+        page = store.get_column_values_page(run_id, table, column, offset=offset, limit=limit)
     except RunNotFoundError as exc:
         raise HTTPException(status_code=404, detail=f"No such run: {run_id}") from exc
-    if execution is None:
-        return []
-    return [
-        {"original": original, "result": result.model_dump(mode="json")}
-        for original, result in zip(execution.originals, execution.results, strict=True)
-    ]
+    return page if page is not None else []
 
 
 @router.get("/runs/{run_id}/collisions")
 def get_run_collisions(
-    run_id: str, store: Annotated[InMemoryStore, Depends(get_store)]
+    run_id: str,
+    store: Annotated[InMemoryStore, Depends(get_store)],
+    table: str | None = None,
+    column: str | None = None,
 ) -> list[dict[str, object]]:
     """§92 Collision Dashboard: each group's current real decision (if
     any human has recorded one — accept/reject/whitelist) is attached
-    under `decision`, `null` when no one has reviewed it yet."""
+    under `decision`, `null` when no one has reviewed it yet.
+    `table`/`column` (M18): selects one column of a multi-column run."""
     try:
-        execution = store.get_execution(run_id)
+        execution = store.get_column_execution(run_id, table, column)
     except RunNotFoundError as exc:
         raise HTTPException(status_code=404, detail=f"No such run: {run_id}") from exc
     if execution is None:
@@ -1074,7 +1128,8 @@ def record_collision_decision(
     store: Annotated[InMemoryStore, Depends(get_store)],
 ) -> CollisionDecision:
     """§92: Accept rule / Reject rule / Whitelist collision — the real
-    backend behind the Collision Dashboard's action buttons."""
+    backend behind the Collision Dashboard's action buttons. `body.table`/
+    `.column` (M18) select one column of a multi-column run."""
     try:
         return store.record_collision_decision(
             run_id,
@@ -1082,6 +1137,8 @@ def record_collision_decision(
             decision=body.decision,
             decided_by=body.decided_by,
             note=body.note,
+            table=body.table,
+            column=body.column,
         )
     except RunNotFoundError as exc:
         raise HTTPException(status_code=404, detail=f"No such run: {run_id}") from exc
@@ -1091,13 +1148,17 @@ def record_collision_decision(
 
 @router.get("/runs/{run_id}/profile")
 def get_run_profile(
-    run_id: str, store: Annotated[InMemoryStore, Depends(get_store)]
+    run_id: str,
+    store: Annotated[InMemoryStore, Depends(get_store)],
+    table: str | None = None,
+    column: str | None = None,
 ) -> dict[str, object]:
     """§77 normalization profiling — rows/changed/unchanged/warnings/
     errors/potentially-lossy counts plus top transformation patterns,
-    computed from the run's actual executed field batch."""
+    computed from the run's actual executed field batch. `table`/
+    `column` (M18): selects one column of a multi-column run."""
     try:
-        execution = store.get_execution(run_id)
+        execution = store.get_column_execution(run_id, table, column)
     except RunNotFoundError as exc:
         raise HTTPException(status_code=404, detail=f"No such run: {run_id}") from exc
     if execution is None:
@@ -1110,16 +1171,20 @@ def get_run_profile(
 
 @router.get("/runs/{run_id}/handoff", response_model=HandoffArtifact)
 def get_run_handoff(
-    run_id: str, store: Annotated[InMemoryStore, Depends(get_store)]
+    run_id: str,
+    store: Annotated[InMemoryStore, Depends(get_store)],
+    table: str | None = None,
+    column: str | None = None,
 ) -> HandoffArtifact:
     """§134 — the artifact this project hands off to the downstream Data
     Discovery & Entity Context Engine: normalized schema metadata,
     semantic type, normalized comparison values, parsed components,
     country/language metadata, validation flags, collision diagnostics,
-    and the stable versioned normalization profile that produced them."""
+    and the stable versioned normalization profile that produced them.
+    `table`/`column` (M18): selects one column of a multi-column run."""
     try:
         run = store.get_run(run_id)
-        execution = store.get_execution(run_id)
+        execution = store.get_column_execution(run_id, table, column)
     except RunNotFoundError as exc:
         raise HTTPException(status_code=404, detail=f"No such run: {run_id}") from exc
     if execution is None:
@@ -1314,10 +1379,13 @@ def delete_dictionary(
 def get_impact(
     run_id: str,
     store: Annotated[InMemoryStore, Depends(get_store)],
+    table: str | None = None,
+    column: str | None = None,
 ) -> dict[str, object]:
-    """§78/§97 impact analysis for a run's executed field batch."""
+    """§78/§97 impact analysis for a run's executed field batch.
+    `table`/`column` (M18): selects one column of a multi-column run."""
     try:
-        execution = store.get_execution(run_id)
+        execution = store.get_column_execution(run_id, table, column)
     except RunNotFoundError as exc:
         raise HTTPException(status_code=404, detail=f"No such run: {run_id}") from exc
     if execution is None:
@@ -1334,27 +1402,22 @@ def get_impact(
 @router.get("/overview")
 def get_overview(store: Annotated[InMemoryStore, Depends(get_store)]) -> dict[str, object]:
     """§90 normalization overview dashboard — aggregated from every known
-    profile's field_configs and every executed run's real metrics."""
+    profile's field_configs and every executed column's real, bounded
+    rollup stats (M18: NEVER a loop over `get_execution`/full per-value
+    results — see `normanalysis.column_stats`'s module docstring for why
+    that was a real, plan-flagged OOM risk once M17 made multi-million-
+    row multi-column runs a live possibility)."""
     profile_field_refs = [
         config.field_ref for profile in store.list_profiles() for config in profile.field_configs
     ]
-    executed_runs = []
-    for run in store.list_runs():
-        execution = store.get_execution(run.id)
-        if execution is not None:
-            executed_runs.append((run, execution.field_name, execution.results))
-    report = compute_overview(profile_field_refs, executed_runs)
+    report = compute_overview_from_stats(profile_field_refs, store.list_all_column_stats())
     return report.model_dump(mode="json")
 
 
 @router.get("/quality")
 def get_quality(store: Annotated[InMemoryStore, Depends(get_store)]) -> dict[str, object]:
     """§93 quality dashboard — per-semantic-type validation issue tallies
-    across every executed run currently known to the store."""
-    run_batches = []
-    for run in store.list_runs():
-        execution = store.get_execution(run.id)
-        if execution is not None:
-            run_batches.append((execution.semantic_type, execution.results))
-    report = compute_quality_report(run_batches)
+    across every executed column's real, bounded rollup stats (M18: same
+    rearchitecture as `/overview`, same reason)."""
+    report = compute_quality_from_stats(store.list_all_column_stats())
     return report.model_dump(mode="json")

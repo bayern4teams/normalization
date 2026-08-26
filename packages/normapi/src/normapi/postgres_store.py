@@ -58,6 +58,28 @@ class RunColumnStatus:
 
 
 @dataclass(frozen=True, slots=True)
+class ColumnStatsRow:
+    """M18 — one row of `run_column_stats`: the bounded per-(table,
+    column) rollup `GET /overview`/`GET /quality` read instead of ever
+    hydrating a run's full per-value results. See
+    `normanalysis.column_stats`'s module docstring for why."""
+
+    run_id: str
+    table_name: str
+    column_name: str
+    semantic_type: str
+    rows_processed: int
+    rows_changed: int
+    rows_ambiguous: int
+    warnings_total: int
+    errors_total: int
+    unique_before: int
+    unique_after: int
+    quality_metric_name: str | None
+    quality_issue_count: int | None
+
+
+@dataclass(frozen=True, slots=True)
 class ChunkProgressRow:
     """M17 — one row of `run_chunks`: real resumability state."""
 
@@ -161,11 +183,41 @@ def _create_run_chunks_table(conn: psycopg.Connection) -> None:
         )
 
 
+def _create_run_column_stats_table(conn: psycopg.Connection) -> None:
+    """M18: the bounded rollup `GET /overview`/`GET /quality` read
+    instead of ever hydrating a run's full per-value results. One row
+    per (run_id, table, column) — a fixed, small number of scalar
+    columns regardless of how many rows that column had, written once
+    when that column's execution finishes (`execute_run` for the
+    pasted-values path, `stream_column` completion for M17's chunked
+    path — see `normapi.store`)."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "CREATE TABLE IF NOT EXISTS run_column_stats ("
+            "  run_id VARCHAR NOT NULL,"
+            "  table_name VARCHAR NOT NULL,"
+            "  column_name VARCHAR NOT NULL,"
+            "  semantic_type VARCHAR NOT NULL,"
+            "  rows_processed BIGINT NOT NULL,"
+            "  rows_changed BIGINT NOT NULL,"
+            "  rows_ambiguous BIGINT NOT NULL,"
+            "  warnings_total BIGINT NOT NULL,"
+            "  errors_total BIGINT NOT NULL,"
+            "  unique_before BIGINT NOT NULL,"
+            "  unique_after BIGINT NOT NULL,"
+            "  quality_metric_name VARCHAR,"
+            "  quality_issue_count BIGINT,"
+            "  PRIMARY KEY (run_id, table_name, column_name)"
+            ")"
+        )
+
+
 _MIGRATIONS = [
     Migration(name="m15_create_connections", apply=_create_connections_table),
     Migration(name="m16_create_column_mappings", apply=_create_column_mappings_table),
     Migration(name="m17_create_run_columns", apply=_create_run_columns_table),
     Migration(name="m17_create_run_chunks", apply=_create_run_chunks_table),
+    Migration(name="m18_create_run_column_stats", apply=_create_run_column_stats_table),
 ]
 
 _SELECT_CONNECTION_COLUMNS = (
@@ -613,6 +665,60 @@ class PostgresMetadataStore:
             last_key=tuple(row[4]),
             rows_processed=row[5],
         )
+
+    # --- column stats (M18) ---------------------------------------------
+
+    def upsert_column_stats(self, stats: ColumnStatsRow) -> None:
+        with self._conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO run_column_stats "
+                "  (run_id, table_name, column_name, semantic_type, rows_processed, "
+                "   rows_changed, rows_ambiguous, warnings_total, errors_total, "
+                "   unique_before, unique_after, quality_metric_name, quality_issue_count) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
+                "ON CONFLICT (run_id, table_name, column_name) DO UPDATE SET "
+                "  semantic_type = EXCLUDED.semantic_type, "
+                "  rows_processed = EXCLUDED.rows_processed, "
+                "  rows_changed = EXCLUDED.rows_changed, "
+                "  rows_ambiguous = EXCLUDED.rows_ambiguous, "
+                "  warnings_total = EXCLUDED.warnings_total, "
+                "  errors_total = EXCLUDED.errors_total, "
+                "  unique_before = EXCLUDED.unique_before, "
+                "  unique_after = EXCLUDED.unique_after, "
+                "  quality_metric_name = EXCLUDED.quality_metric_name, "
+                "  quality_issue_count = EXCLUDED.quality_issue_count",
+                (
+                    stats.run_id,
+                    stats.table_name,
+                    stats.column_name,
+                    stats.semantic_type,
+                    stats.rows_processed,
+                    stats.rows_changed,
+                    stats.rows_ambiguous,
+                    stats.warnings_total,
+                    stats.errors_total,
+                    stats.unique_before,
+                    stats.unique_after,
+                    stats.quality_metric_name,
+                    stats.quality_issue_count,
+                ),
+            )
+
+    def list_all_column_stats(self) -> list[ColumnStatsRow]:
+        """Every (run, table, column) rollup ever recorded — the real
+        read path for `GET /overview`/`GET /quality`, and the startup
+        hydration source (mirroring `list_runs()`'s own "load everything"
+        approach) so these dashboards are correct immediately after a
+        restart too."""
+        with self._conn.cursor() as cur:
+            cur.execute(
+                "SELECT run_id, table_name, column_name, semantic_type, rows_processed, "
+                "  rows_changed, rows_ambiguous, warnings_total, errors_total, "
+                "  unique_before, unique_after, quality_metric_name, quality_issue_count "
+                "FROM run_column_stats"
+            )
+            rows = cur.fetchall()
+        return [ColumnStatsRow(*row) for row in rows]
 
     def list_running_run_ids(self) -> list[str]:
         """The real "was left RUNNING at boot" check a startup

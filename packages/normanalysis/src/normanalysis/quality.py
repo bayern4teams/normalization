@@ -9,6 +9,7 @@ correctly reports 0, never a fabricated or estimated number.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from normcore.enums import FieldSemanticType, NormalizationStatus, QualityFlag
@@ -18,6 +19,94 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
     from normcore.models import NormalizedValue
+
+
+@dataclass(frozen=True, slots=True)
+class QualityMetricDef:
+    """One quality-dashboard metric definition — the predicate expressed
+    twice, once as a real Python callable (used here, against a batch of
+    already-materialized `NormalizedValue` results) and once as an
+    equivalent DuckDB SQL fragment (`sql_predicate`, M18, used by
+    `normanalysis.column_stats` to compute the SAME count by pushing the
+    predicate down into a query over the sidecar's Parquet files, without
+    ever materializing per-value results for a multi-million-row column).
+    A golden test (`tests/golden/test_m18_quality_predicate_parity.py`)
+    proves both forms agree on the same synthetic dataset — the real
+    guard against the two definitions drifting apart."""
+
+    name: str
+    semantic_type: FieldSemanticType
+    predicate: Callable[[NormalizedValue], bool]
+    sql_predicate: str
+
+
+# `sql_predicate` operates over the sidecar Parquet schema
+# (`normcore.contract.NORMALIZED_VALUE_ARROW_SCHEMA`): `normalization_status`
+# is a plain string column, `flags` a LIST<VARCHAR>, `structured_json` a
+# JSON-encoded string column, `original_kind` a plain string column.
+QUALITY_METRIC_DEFS: tuple[QualityMetricDef, ...] = (
+    QualityMetricDef(
+        name="Invalid phone values",
+        semantic_type=FieldSemanticType.PHONE,
+        predicate=lambda r: (
+            r.normalization_status is NormalizationStatus.INVALID
+            or QualityFlag.PHONE_INVALID in r.flags
+        ),
+        sql_predicate=("normalization_status = 'INVALID' OR list_contains(flags, 'PHONE_INVALID')"),
+    ),
+    QualityMetricDef(
+        name="Ambiguous dates",
+        semantic_type=FieldSemanticType.DATE,
+        predicate=lambda r: (
+            r.normalization_status is NormalizationStatus.AMBIGUOUS
+            or QualityFlag.AMBIGUOUS_DATE in r.flags
+        ),
+        sql_predicate=(
+            "normalization_status = 'AMBIGUOUS' OR list_contains(flags, 'AMBIGUOUS_DATE')"
+        ),
+    ),
+    QualityMetricDef(
+        name="Failed addresses",
+        semantic_type=FieldSemanticType.ADDRESS,
+        predicate=lambda r: (
+            r.normalization_status in (NormalizationStatus.INVALID, NormalizationStatus.FAILED)
+            or QualityFlag.ADDRESS_PARSE_PARTIAL in r.flags
+        ),
+        sql_predicate=(
+            "normalization_status IN ('INVALID', 'FAILED') "
+            "OR list_contains(flags, 'ADDRESS_PARSE_PARTIAL')"
+        ),
+    ),
+    QualityMetricDef(
+        name="Malformed emails",
+        semantic_type=FieldSemanticType.EMAIL,
+        predicate=lambda r: (
+            r.normalization_status is NormalizationStatus.INVALID
+            or QualityFlag.EMAIL_INVALID in r.flags
+        ),
+        sql_predicate=("normalization_status = 'INVALID' OR list_contains(flags, 'EMAIL_INVALID')"),
+    ),
+    QualityMetricDef(
+        name="Unknown country codes",
+        semantic_type=FieldSemanticType.COUNTRY,
+        predicate=lambda r: r.normalization_status is NormalizationStatus.INVALID,
+        sql_predicate="normalization_status = 'INVALID'",
+    ),
+    QualityMetricDef(
+        name="Unrecognized units",
+        semantic_type=FieldSemanticType.QUANTITY,
+        predicate=lambda r: r.normalization_status is NormalizationStatus.INVALID,
+        sql_predicate="normalization_status = 'INVALID'",
+    ),
+    QualityMetricDef(
+        name="Unsupported scripts",
+        semantic_type=FieldSemanticType.SCRIPT,
+        predicate=lambda r: r.structured.get("script") is None and r.original_kind is None,
+        sql_predicate=(
+            "json_extract_string(structured_json, '$.script') IS NULL AND original_kind IS NULL"
+        ),
+    ),
+)
 
 
 class QualityMetric(BaseModel):
@@ -42,76 +131,15 @@ def compute_quality_report(
     for semantic_type, results in run_batches:
         by_type.setdefault(semantic_type, []).extend(results)
 
-    metrics: list[QualityMetric] = []
-
-    metrics.append(
+    metrics = [
         _metric(
-            "Invalid phone values",
-            FieldSemanticType.PHONE,
-            by_type.get(FieldSemanticType.PHONE, []),
-            lambda r: (
-                r.normalization_status is NormalizationStatus.INVALID
-                or QualityFlag.PHONE_INVALID in r.flags
-            ),
+            metric_def.name,
+            metric_def.semantic_type,
+            by_type.get(metric_def.semantic_type, []),
+            metric_def.predicate,
         )
-    )
-    metrics.append(
-        _metric(
-            "Ambiguous dates",
-            FieldSemanticType.DATE,
-            by_type.get(FieldSemanticType.DATE, []),
-            lambda r: (
-                r.normalization_status is NormalizationStatus.AMBIGUOUS
-                or QualityFlag.AMBIGUOUS_DATE in r.flags
-            ),
-        )
-    )
-    metrics.append(
-        _metric(
-            "Failed addresses",
-            FieldSemanticType.ADDRESS,
-            by_type.get(FieldSemanticType.ADDRESS, []),
-            lambda r: (
-                r.normalization_status in (NormalizationStatus.INVALID, NormalizationStatus.FAILED)
-                or QualityFlag.ADDRESS_PARSE_PARTIAL in r.flags
-            ),
-        )
-    )
-    metrics.append(
-        _metric(
-            "Malformed emails",
-            FieldSemanticType.EMAIL,
-            by_type.get(FieldSemanticType.EMAIL, []),
-            lambda r: (
-                r.normalization_status is NormalizationStatus.INVALID
-                or QualityFlag.EMAIL_INVALID in r.flags
-            ),
-        )
-    )
-    metrics.append(
-        _metric(
-            "Unknown country codes",
-            FieldSemanticType.COUNTRY,
-            by_type.get(FieldSemanticType.COUNTRY, []),
-            lambda r: r.normalization_status is NormalizationStatus.INVALID,
-        )
-    )
-    metrics.append(
-        _metric(
-            "Unrecognized units",
-            FieldSemanticType.QUANTITY,
-            by_type.get(FieldSemanticType.QUANTITY, []),
-            lambda r: r.normalization_status is NormalizationStatus.INVALID,
-        )
-    )
-    metrics.append(
-        _metric(
-            "Unsupported scripts",
-            FieldSemanticType.SCRIPT,
-            by_type.get(FieldSemanticType.SCRIPT, []),
-            lambda r: r.structured.get("script") is None and r.original_kind is None,
-        )
-    )
+        for metric_def in QUALITY_METRIC_DEFS
+    ]
 
     return QualityReport(metrics=metrics)
 

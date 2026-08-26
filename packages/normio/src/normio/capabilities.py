@@ -105,3 +105,15 @@ class StreamingSourceConnector(Protocol):
         depend on downstream).
         """
         ...
+
+
+class StreamingCatalogSourceConnector(
+    SourceConnector, CatalogConnector, StreamingSourceConnector, Protocol
+):
+    """M18: a connector known to satisfy `SourceConnector`,
+    `CatalogConnector`, AND `StreamingSourceConnector` — the same typing
+    convenience as `CatalogSourceConnector` above, for M17's multi-column
+    streaming worker, which needs `.close()` (from `SourceConnector`) on
+    the same object it calls `.read_chunk()`/`.table_spec()` on. Not
+    itself used for isinstance checks — the three Protocols stay separate
+    for that (see this module's own docstring for why)."""

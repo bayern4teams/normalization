@@ -10,6 +10,12 @@ from normanalysis.collisions import (
     CollisionGroup,
     find_collisions,
 )
+from normanalysis.column_stats import (
+    ColumnStats,
+    compute_column_stats_from_results,
+    compute_overview_from_stats,
+    compute_quality_from_stats,
+)
 from normanalysis.handoff import (
     HandoffArtifact,
     HandoffFieldSchema,
@@ -27,16 +33,24 @@ from normanalysis.invariant_sampler import (
 from normanalysis.overview import OverviewReport, compute_overview
 from normanalysis.profile_suggestion import ProfileSuggestion, suggest_profile
 from normanalysis.profiling import FieldProfile, TransformationPatternCount, profile_field
-from normanalysis.quality import QualityMetric, QualityReport, compute_quality_report
+from normanalysis.quality import (
+    QUALITY_METRIC_DEFS,
+    QualityMetric,
+    QualityMetricDef,
+    QualityReport,
+    compute_quality_report,
+)
 from normanalysis.run_recorder import InvalidRunTransitionError, RunRecorder
 from normanalysis.telemetry import NormalizationMetrics, TelemetryHandles, setup_telemetry
 from normanalysis.type_detection import TypeSuggestion, suggest_semantic_type
 
 __all__ = [
+    "QUALITY_METRIC_DEFS",
     "AbComparisonReport",
     "CollisionDecision",
     "CollisionDecisionType",
     "CollisionGroup",
+    "ColumnStats",
     "FieldProfile",
     "HandoffArtifact",
     "HandoffFieldSchema",
@@ -50,6 +64,7 @@ __all__ = [
     "OverviewReport",
     "ProfileSuggestion",
     "QualityMetric",
+    "QualityMetricDef",
     "QualityReport",
     "RunRecorder",
     "SideMetrics",
@@ -58,8 +73,11 @@ __all__ = [
     "TypeSuggestion",
     "build_handoff_artifact",
     "compare_runs",
+    "compute_column_stats_from_results",
     "compute_impact",
     "compute_overview",
+    "compute_overview_from_stats",
+    "compute_quality_from_stats",
     "compute_quality_report",
     "find_collisions",
     "instrumented_normalize",

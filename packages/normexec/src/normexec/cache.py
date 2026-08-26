@@ -10,11 +10,26 @@ semantic_type, context_hash, env_id) — the raw value itself never appears
 in a key, satisfying §103's "never leak sensitive raw values through cache
 keys" requirement. env_id's participation means any upstream library or
 dictionary change automatically invalidates stale entries (ADR-014).
+
+M18 (docs/plan/M13-M22-program-plan.md): every `self._conn` (DuckDB) and
+`self._lru` access is guarded by `self._lock`. A real bug, found via live
+verification (the same root cause and fix as `normio.sidecar_store.
+SidecarStore`'s M18 fix — see that module's docstring): this cache is one
+shared instance handed to every run (`normapi.app.create_app()` builds it
+once), and a single `duckdb.Connection` is not thread-safe for concurrent
+`execute()`/`fetchone()` calls from multiple threads. This has been a
+LATENT risk since M8 (this cache was first wired into live execution
+then), but M17's worker pool is what made genuinely concurrent runs
+sharing one cache instance routine rather than rare — surfaced here by a
+live M18 test running two multi-column executions concurrently, which
+failed with corrupted DuckDB result rows (e.g. `ValueError: not enough
+values to unpack`) traced back to this class, not the sidecar.
 """
 
 from __future__ import annotations
 
 import json
+import threading
 from collections import OrderedDict
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -99,6 +114,7 @@ class NormalizationCache:
 
     def __init__(self, duckdb_path: str | Path = ":memory:", *, lru_capacity: int = 50_000) -> None:
         self._lru = _LruCache(lru_capacity)
+        self._lock = threading.Lock()
         self._conn = duckdb.connect(str(duckdb_path))
         self._conn.execute(
             "CREATE TABLE IF NOT EXISTS normalization_cache ("
@@ -109,29 +125,31 @@ class NormalizationCache:
         self.stats = CacheStats()
 
     def get(self, key: str) -> NormalizedValue | None:
-        hit = self._lru.get(key)
-        if hit is not None:
+        with self._lock:
+            hit = self._lru.get(key)
+            if hit is not None:
+                self.stats.hits += 1
+                return hit
+
+            row = self._conn.execute(
+                "SELECT value_json FROM normalization_cache WHERE cache_key = ?", [key]
+            ).fetchone()
+            if row is None:
+                self.stats.misses += 1
+                return None
+
+            value = NormalizedValue.model_validate_json(row[0])
+            self._lru.put(key, value)  # promote to hot tier
             self.stats.hits += 1
-            return hit
-
-        row = self._conn.execute(
-            "SELECT value_json FROM normalization_cache WHERE cache_key = ?", [key]
-        ).fetchone()
-        if row is None:
-            self.stats.misses += 1
-            return None
-
-        value = NormalizedValue.model_validate_json(row[0])
-        self._lru.put(key, value)  # promote to hot tier
-        self.stats.hits += 1
-        return value
+            return value
 
     def put(self, key: str, value: NormalizedValue) -> None:
-        self._lru.put(key, value)
-        self._conn.execute(
-            "INSERT OR REPLACE INTO normalization_cache (cache_key, value_json) VALUES (?, ?)",
-            [key, value.model_dump_json()],
-        )
+        with self._lock:
+            self._lru.put(key, value)
+            self._conn.execute(
+                "INSERT OR REPLACE INTO normalization_cache (cache_key, value_json) VALUES (?, ?)",
+                [key, value.model_dump_json()],
+            )
 
     def get_many(self, keys: list[str]) -> dict[str, NormalizedValue]:
         """Bulk variant of `get()` — checks the in-process LRU tier per key
@@ -152,33 +170,34 @@ class NormalizationCache:
         if not keys:
             return {}
 
-        results: dict[str, NormalizedValue] = {}
-        duckdb_lookup_keys: list[str] = []
-        for key in keys:
-            if key in results:
-                continue
-            hit = self._lru.get(key)
-            if hit is not None:
-                results[key] = hit
-            elif key not in duckdb_lookup_keys:
-                duckdb_lookup_keys.append(key)
+        with self._lock:
+            results: dict[str, NormalizedValue] = {}
+            duckdb_lookup_keys: list[str] = []
+            for key in keys:
+                if key in results:
+                    continue
+                hit = self._lru.get(key)
+                if hit is not None:
+                    results[key] = hit
+                elif key not in duckdb_lookup_keys:
+                    duckdb_lookup_keys.append(key)
 
-        if duckdb_lookup_keys:
-            placeholders = ", ".join(["?"] * len(duckdb_lookup_keys))
-            rows = self._conn.execute(
-                f"SELECT cache_key, value_json FROM normalization_cache "
-                f"WHERE cache_key IN ({placeholders})",
-                duckdb_lookup_keys,
-            ).fetchall()
-            for cache_key, value_json in rows:
-                value = NormalizedValue.model_validate_json(value_json)
-                self._lru.put(cache_key, value)
-                results[cache_key] = value
+            if duckdb_lookup_keys:
+                placeholders = ", ".join(["?"] * len(duckdb_lookup_keys))
+                rows = self._conn.execute(
+                    f"SELECT cache_key, value_json FROM normalization_cache "
+                    f"WHERE cache_key IN ({placeholders})",
+                    duckdb_lookup_keys,
+                ).fetchall()
+                for cache_key, value_json in rows:
+                    value = NormalizedValue.model_validate_json(value_json)
+                    self._lru.put(cache_key, value)
+                    results[cache_key] = value
 
-        hits = sum(1 for key in keys if key in results)
-        self.stats.hits += hits
-        self.stats.misses += len(keys) - hits
-        return results
+            hits = sum(1 for key in keys if key in results)
+            self.stats.hits += hits
+            self.stats.misses += len(keys) - hits
+            return results
 
     def put_many(self, items: list[tuple[str, NormalizedValue]]) -> None:
         """Bulk variant of `put()` — one DuckDB statement for the whole
@@ -203,18 +222,19 @@ class NormalizationCache:
         if not items:
             return
         deduped = dict(items)  # last occurrence per key wins, like put()
-        for key, value in deduped.items():
-            self._lru.put(key, value)
-
         placeholders = ", ".join(["(?, ?)"] * len(deduped))
         flat_params: list[str] = []
         for key, value in deduped.items():
             flat_params.extend((key, value.model_dump_json()))
-        self._conn.execute(
-            f"INSERT OR REPLACE INTO normalization_cache (cache_key, value_json) "
-            f"VALUES {placeholders}",
-            flat_params,
-        )
+
+        with self._lock:
+            for key, value in deduped.items():
+                self._lru.put(key, value)
+            self._conn.execute(
+                f"INSERT OR REPLACE INTO normalization_cache (cache_key, value_json) "
+                f"VALUES {placeholders}",
+                flat_params,
+            )
 
     def close(self) -> None:
         self._conn.close()

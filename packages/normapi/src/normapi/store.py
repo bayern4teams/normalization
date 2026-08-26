@@ -63,15 +63,18 @@ from normio.capabilities import CatalogConnector
 from normio.sidecar_store import SidecarStore
 
 from normanalysis import (
+    QUALITY_METRIC_DEFS,
     CollisionDecision,
     CollisionDecisionType,
+    ColumnStats,
     InvariantSampleReport,
     RunRecorder,
+    compute_column_stats_from_results,
     find_collisions,
     record_run_metrics,
     sample_and_check,
 )
-from normapi.postgres_store import PostgresMetadataStore
+from normapi.postgres_store import ColumnStatsRow, PostgresMetadataStore
 from normcore import (
     FieldNormalizationConfig,
     FieldSemanticType,
@@ -93,7 +96,7 @@ if TYPE_CHECKING:
 
     from normexec.cache import NormalizationCache
     from normexec.stream import ChunkProgress
-    from normio.capabilities import StreamingSourceConnector
+    from normio.capabilities import StreamingCatalogSourceConnector, StreamingSourceConnector
 
     from normanalysis import NormalizationMetrics, TelemetryHandles
     from normapi.executor import RunExecutor
@@ -174,6 +177,24 @@ def _table_to_results(table: pa.Table) -> tuple[list[str | None], list[Normalize
     return originals, results
 
 
+def _chunk_table_to_results(table: pa.Table) -> tuple[list[str | None], list[NormalizedValue]]:
+    """Reads back a M17 multi-column run's real per-value results in
+    natural (part-file, then within-part) order. Unlike `_table_to_results`
+    (the pasted-values shape), M17's chunk schema
+    (`normexec.stream._CHUNK_SIDECAR_SCHEMA`) has no `row_ordinal`
+    column to sort by — none is needed: `SidecarStore.read_run` already
+    orders parts by `part_path` (zero-padded chunk index, so
+    lexicographic order is numeric order), and within one chunk,
+    `stream.py`'s `_results_to_batch` preserves the connector's own
+    keyset-paginated row order. No explicit sort key survives round-
+    tripping through this schema, so relying on read order here is the
+    only option, not a shortcut."""
+    rows = table.to_pylist()
+    results = [arrow_row_to_normalized_value(row) for row in rows]
+    originals: list[str | None] = [row["original"] for row in rows]
+    return originals, results
+
+
 def _resolve_key_columns(connector: StreamingSourceConnector, table: str) -> list[str]:
     """M17: real primary-key columns, via `CatalogConnector.table_spec`
     (per M14, never parsed out of a sorting-key expression) — `read_chunk`
@@ -188,6 +209,50 @@ def _resolve_key_columns(connector: StreamingSourceConnector, table: str) -> lis
         msg = f"Table {table!r} has no declared primary key; cannot be streamed chunk by chunk"
         raise ValueError(msg)
     return key_columns
+
+
+def _column_stats_row_to_model(row: ColumnStatsRow) -> ColumnStats:
+    return ColumnStats(
+        table=row.table_name,
+        column=row.column_name,
+        semantic_type=row.semantic_type,
+        rows_processed=row.rows_processed,
+        rows_changed=row.rows_changed,
+        rows_ambiguous=row.rows_ambiguous,
+        warnings_total=row.warnings_total,
+        errors_total=row.errors_total,
+        unique_before=row.unique_before,
+        unique_after=row.unique_after,
+        quality_metric_name=row.quality_metric_name,
+        quality_issue_count=row.quality_issue_count,
+    )
+
+
+def _column_stats_to_row(run_id: str, stats: ColumnStats) -> ColumnStatsRow:
+    return ColumnStatsRow(
+        run_id=run_id,
+        table_name=stats.table,
+        column_name=stats.column,
+        semantic_type=stats.semantic_type,
+        rows_processed=stats.rows_processed,
+        rows_changed=stats.rows_changed,
+        rows_ambiguous=stats.rows_ambiguous,
+        warnings_total=stats.warnings_total,
+        errors_total=stats.errors_total,
+        unique_before=stats.unique_before,
+        unique_after=stats.unique_after,
+        quality_metric_name=stats.quality_metric_name,
+        quality_issue_count=stats.quality_issue_count,
+    )
+
+
+def _quality_sql_predicate_for(semantic_type: FieldSemanticType) -> str | None:
+    """The fixed DuckDB predicate fragment (never user input — see
+    `SidecarStore.compute_column_stats`'s docstring) for the one quality
+    metric (if any) `semantic_type` feeds, or `None` for a semantic type
+    the quality dashboard doesn't track."""
+    metric_def = next((m for m in QUALITY_METRIC_DEFS if m.semantic_type is semantic_type), None)
+    return metric_def.sql_predicate if metric_def is not None else None
 
 
 def _estimate_total_rows(
@@ -257,6 +322,15 @@ class InMemoryStore:
         # (run_id, normalized_value) -> a human reviewer's real decision
         # on that collision group (§92, M11).
         self._collision_decisions: dict[tuple[str, str], CollisionDecision] = {}
+        # (run_id, table, column) -> that column's bounded rollup stats
+        # (M18) — what `GET /overview`/`GET /quality` read instead of
+        # ever hydrating a run's full per-value results. A dedicated lock
+        # (not `_runs_lock`) since this dict is written independently of
+        # `_runs`/`_executions` and read in one large sweep by the two
+        # dashboard routes; no need to share the coarser lock's blast
+        # radius with them.
+        self._column_stats: dict[tuple[str, str, str], ColumnStats] = {}
+        self._stats_lock = threading.Lock()
         # Optional (defaults to no caching, matching prior behavior for
         # any caller/test that constructs a bare InMemoryStore) — real
         # distinct-value dedup + cross-call caching only activates when a
@@ -309,6 +383,10 @@ class InMemoryStore:
             self._runs[run.id] = run
         for decision in pg.list_all_collision_decisions():
             self._collision_decisions[(decision.run_id, decision.normalized_value)] = decision
+        for row in pg.list_all_column_stats():
+            self._column_stats[(row.run_id, row.table_name, row.column_name)] = (
+                _column_stats_row_to_model(row)
+            )
 
     def create_profile(
         self,
@@ -666,6 +744,14 @@ class InMemoryStore:
             self._pg.save_run(finished)
         if self._sidecar is not None:
             self._write_execution_to_sidecar(run_id, field_name, results)
+        stats = compute_column_stats_from_results(
+            table=field_name,
+            column="",
+            semantic_type=effective_semantic_type,
+            originals=originals,
+            results=results,
+        )
+        self._record_column_stats(run_id, stats)
         if self._telemetry is not None:
             handles, telemetry_metrics = self._telemetry
             record_run_metrics(
@@ -682,7 +768,7 @@ class InMemoryStore:
         run_id: str,
         *,
         dispatcher: Dispatcher,
-        connector: StreamingSourceConnector,
+        connector: StreamingCatalogSourceConnector,
         connection_identity: str,
         database: str,
         columns: tuple[RunColumnSpec, ...],
@@ -738,7 +824,7 @@ class InMemoryStore:
         run_id: str,
         *,
         dispatcher: Dispatcher,
-        connector: StreamingSourceConnector,
+        connector: StreamingCatalogSourceConnector,
         connection_identity: str,
         database: str,
         columns: tuple[RunColumnSpec, ...],
@@ -748,7 +834,14 @@ class InMemoryStore:
     ) -> None:
         """Runs in a `RunExecutor` worker thread. Mirrors
         `_run_execution_worker`'s "an uncaught exception becomes a real
-        FAILED status, never a run stuck at RUNNING forever" contract."""
+        FAILED status, never a run stuck at RUNNING forever" contract.
+
+        `connector` (M18): a DEDICATED instance built by the route
+        specifically for this run (see `routes.start_multi_column_run`'s
+        docstring for the real thread-safety bug this replaced a shared,
+        pooled connector to fix) — this worker owns its whole lifecycle
+        and is responsible for closing it, whether the run succeeds or
+        fails, since nothing else will ever reuse it."""
         try:
             self._run_multi_column_worker_inner(
                 run_id,
@@ -772,13 +865,15 @@ class InMemoryStore:
             self.refresh_run(failed)
             if pg_store is not None:
                 pg_store.save_run(failed)
+        finally:
+            connector.close()
 
     def _run_multi_column_worker_inner(
         self,
         run_id: str,
         *,
         dispatcher: Dispatcher,
-        connector: StreamingSourceConnector,
+        connector: StreamingCatalogSourceConnector,
         connection_identity: str,
         database: str,
         columns: tuple[RunColumnSpec, ...],
@@ -894,6 +989,13 @@ class InMemoryStore:
                     status="COMPLETED",
                     rows_processed=column_rows_processed,
                 )
+            self._record_column_stats_from_sidecar(
+                run_id=run_id,
+                table=table,
+                column=column,
+                semantic_type=semantic_type,
+                sidecar_source_id=sidecar_source_id,
+            )
 
         final_status = RunStatus.PARTIAL if any_column_failed else RunStatus.COMPLETED
         finished = recorder.finish(final_status).model_copy(
@@ -1002,6 +1104,198 @@ class InMemoryStore:
             invariant_report=InvariantSampleReport(sampled=0, violations=()),
         )
 
+    def get_column_execution(
+        self, run_id: str, table: str | None, column: str | None
+    ) -> _RunExecution | None:
+        """M18: the per-column counterpart to `get_execution` — every
+        real per-value report route (`/errors`, `/values`, `/collisions`,
+        `/profile`, `/handoff`, `/impact`, `/runs/compare`) fans out per
+        (table, column) for a multi-column run rather than being
+        rearchitected to be bounded (a deliberate, disclosed M18 scope
+        decision: only `/overview`/`/quality`/`/values`' pagination are
+        bounded — see `normanalysis.column_stats`'s module docstring).
+
+        `table` falsy: delegates to `get_execution` unchanged — every
+        existing single-column caller (every pre-M17 test, every
+        pasted-values run) keeps working exactly as before.
+
+        `table` given: looks up that EXACT (table, column) in the
+        sidecar's catalog (`list_run_tables`, not `find_run_table`'s
+        "whichever matched first" — the real fix for a multi-column
+        run's reports silently returning data for the wrong column)."""
+        if not table:
+            return self.get_execution(run_id)
+        with self._runs_lock:
+            if run_id not in self._runs:
+                raise RunNotFoundError(run_id)
+        if self._sidecar is None:
+            return None
+        column_key = column or ""
+        match = next(
+            (
+                entry
+                for entry in self._sidecar.list_run_tables(run_id)
+                if entry[1] == table and entry[2] == column_key
+            ),
+            None,
+        )
+        if match is None:
+            return None
+        source_id, table_name, column_name = match
+        arrow_table = self._sidecar.read_run(
+            source_id=source_id, table=table_name, run_id=run_id, column=column_name
+        )
+        originals, results = _chunk_table_to_results(arrow_table)
+        semantic_type = results[0].semantic_type if results else FieldSemanticType.UNKNOWN
+        return _RunExecution(
+            field_name=column_name or table_name,
+            semantic_type=semantic_type,
+            originals=originals,
+            results=results,
+            invariant_report=InvariantSampleReport(sampled=0, violations=()),
+        )
+
+    def get_column_values_page(
+        self,
+        run_id: str,
+        table: str | None,
+        column: str | None,
+        *,
+        offset: int,
+        limit: int,
+    ) -> list[dict[str, object]] | None:
+        """M18: `GET /runs/{id}/values`'s real page — for a sidecar-backed
+        selection, pushed down to DuckDB (`SidecarStore.
+        read_run_paginated`) rather than ever reading the whole column
+        into Python first, the fix for the plan's own explicit callout
+        ("never `to_pylist()` on a 12M-row table"). For the legacy
+        no-selector/in-memory path (already bounded by M10's row cap),
+        slices the existing `_RunExecution` in Python — cheap at that
+        scale, no need for a DuckDB round-trip.
+
+        Returns `None` when the run/column has no execution at all
+        (distinct from an empty page at the end of real data)."""
+        if not table:
+            execution = self.get_execution(run_id)
+            if execution is None:
+                return None
+            pairs = list(zip(execution.originals, execution.results, strict=True))
+            page = pairs[offset : offset + limit]
+            return [
+                {"original": original, "result": result.model_dump(mode="json")}
+                for original, result in page
+            ]
+
+        with self._runs_lock:
+            if run_id not in self._runs:
+                raise RunNotFoundError(run_id)
+        if self._sidecar is None:
+            return None
+        column_key = column or ""
+        match = next(
+            (
+                entry
+                for entry in self._sidecar.list_run_tables(run_id)
+                if entry[1] == table and entry[2] == column_key
+            ),
+            None,
+        )
+        if match is None:
+            return None
+        source_id, table_name, column_name = match
+        arrow_table = self._sidecar.read_run_paginated(
+            source_id=source_id,
+            table=table_name,
+            run_id=run_id,
+            column=column_name,
+            offset=offset,
+            limit=limit,
+        )
+        originals, results = _chunk_table_to_results(arrow_table)
+        return [
+            {"original": original, "result": result.model_dump(mode="json")}
+            for original, result in zip(originals, results, strict=True)
+        ]
+
+    def _record_column_stats(self, run_id: str, stats: ColumnStats) -> None:
+        """Write-through, mirroring every other piece of state this store
+        persists: the in-memory `_column_stats` dict is the hot read path
+        for `/overview`/`/quality`; Postgres (when configured) is the
+        durable tier those two dashboards keep working from after a
+        restart."""
+        with self._stats_lock:
+            self._column_stats[(run_id, stats.table, stats.column)] = stats
+        if self._pg is not None:
+            self._pg.upsert_column_stats(_column_stats_to_row(run_id, stats))
+
+    def _record_column_stats_from_sidecar(
+        self,
+        *,
+        run_id: str,
+        table: str,
+        column: str,
+        semantic_type: FieldSemanticType,
+        sidecar_source_id: str,
+    ) -> None:
+        """The M17 chunked-streaming counterpart to `_record_column_stats`
+        — computes the SAME bounded rollup via one DuckDB aggregate query
+        over the sidecar's real Parquet files for this (table, column)
+        (`SidecarStore.compute_column_stats`), never materializing a
+        single per-value result in Python. Called once, after that
+        column's `stream_column()` call finishes."""
+        assert self._sidecar is not None  # narrows for mypy; caller already checked
+        try:
+            raw = self._sidecar.compute_column_stats(
+                source_id=sidecar_source_id,
+                table=table,
+                run_id=run_id,
+                column=column,
+                quality_sql_predicate=_quality_sql_predicate_for(semantic_type),
+            )
+        except FileNotFoundError:
+            # A column whose source table had zero matching rows never
+            # calls `sink.write_chunk` (stream_column's loop exits on the
+            # very first `read_chunk() is None`), so the sidecar catalog
+            # has no entry to query — a real, legitimate zero-row column,
+            # not an error; record it as all-zero stats rather than
+            # silently omitting it from /overview and /quality.
+            raw = {
+                "rows_processed": 0,
+                "rows_changed": 0,
+                "rows_ambiguous": 0,
+                "warnings_total": 0,
+                "errors_total": 0,
+                "unique_before": 0,
+                "unique_after": 0,
+                "quality_issue_count": 0 if _quality_sql_predicate_for(semantic_type) else None,
+            }
+        metric_def = next(
+            (m for m in QUALITY_METRIC_DEFS if m.semantic_type is semantic_type), None
+        )
+        stats = ColumnStats(
+            table=table,
+            column=column,
+            semantic_type=semantic_type.value,
+            rows_processed=raw["rows_processed"] or 0,
+            rows_changed=raw["rows_changed"] or 0,
+            rows_ambiguous=raw["rows_ambiguous"] or 0,
+            warnings_total=raw["warnings_total"] or 0,
+            errors_total=raw["errors_total"] or 0,
+            unique_before=raw["unique_before"] or 0,
+            unique_after=raw["unique_after"] or 0,
+            quality_metric_name=metric_def.name if metric_def is not None else None,
+            quality_issue_count=raw["quality_issue_count"],
+        )
+        self._record_column_stats(run_id, stats)
+
+    def list_all_column_stats(self) -> list[ColumnStats]:
+        """Every (run, table, column) rollup currently known — the real,
+        bounded read path for `GET /overview`/`GET /quality` (a fixed
+        number of scalar fields per row, regardless of how many source
+        rows that column had), never a loop over `get_execution`."""
+        with self._stats_lock:
+            return list(self._column_stats.values())
+
     def list_runs(self) -> list[NormalizationRun]:
         with self._runs_lock:
             return list(self._runs.values())
@@ -1025,13 +1319,19 @@ class InMemoryStore:
         decision: CollisionDecisionType,
         decided_by: str,
         note: str | None = None,
+        table: str | None = None,
+        column: str | None = None,
     ) -> CollisionDecision:
         """§92: a human reviewer's real, persisted disposition on one
         collision group. Rejects a `normalized_value` that isn't
         actually a real collision group for this run — recording a
         decision on something that was never flagged would be
-        meaningless, not just unhelpful."""
-        execution = self.get_execution(run_id)
+        meaningless, not just unhelpful.
+
+        `table`/`column` (M18): selects which column's collision groups
+        to check against, for a multi-column run — omitted, this is the
+        original single-column lookup, unchanged."""
+        execution = self.get_column_execution(run_id, table, column)
         if execution is None:
             msg = f"Run {run_id!r} has no execution to have collisions from"
             raise UnknownCollisionError(msg)

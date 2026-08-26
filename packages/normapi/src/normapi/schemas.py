@@ -153,6 +153,8 @@ class CollisionDecisionRequest(BaseModel):
     decision: CollisionDecisionType
     decided_by: str
     note: str | None = None
+    table: str | None = None
+    column: str | None = None
 
 
 class ProfileRollbackRequest(BaseModel):
