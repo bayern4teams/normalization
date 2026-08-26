@@ -2,8 +2,10 @@
 
 Status: living document — every row must remain accurate as implementation
 proceeds; update in the same PR that touches the corresponding module or
-test. Last updated: M13 ledger catch-up (2026-08-26) — added the
-"M13–M22 program" section below mapping the new product-pipeline milestones
+test. Last updated: M14 connector catalog + real streaming (2026-08-26) —
+M14 row marked Done with its real commit and pack link. Prior update: M13
+ledger catch-up (2026-08-26) — added the "M13–M22 program" section below
+mapping the new product-pipeline milestones
 (`docs/plan/M13-M22-program-plan.md`), none of Source.txt's original 138
 sections. Prior update: M7 follow-up self-audit (2026-08-19) — the user
 asked for an unbiased, from-scratch audit of M1–M7 before M8 began. That
@@ -221,7 +223,7 @@ matching the discipline every M0–M12 row above already follows.
 | Item | Milestone | Module (planned) | Test location (planned) | Status |
 |---|---|---|---|---|
 | Ledger catch-up (retrospective plan, M12 pack, `check_signoff.py` fix) | M13 | `docs/plan/*`, `docs/verification/M12-verification-pack.md`, `scripts/check_signoff.py` | — (docs + a small script fix, no new test surface) | Done, this session |
-| Connector catalog (databases/tables/columns/samples) + real streaming reads | M14 | `normio.catalog`, `normio.capabilities`, `normio.connectors.clickhouse`/`_sql_base` | `tests/unit/test_catalog.py`, `tests/integration/test_streaming_reads.py` (live against real ClickHouse) | Planned |
+| Connector catalog (databases/tables/columns/samples) + real streaming reads | M14 | `normio.catalog`, `normio.capabilities`, `normio.connectors.clickhouse`/`_sql_base`, `normapi.store` (`row_ordinal` fix) | `tests/unit/test_catalog.py`, `tests/integration/test_catalog_and_streaming.py` (live against real ClickHouse origin1/origin2 + demo-postgres/demo-mysql) | Done, `023b11d` — [pack](verification/M14-verification-pack.md) |
 | Connection registry with encrypted credentials | M15 | `normapi.secrets`, `normapi.connections`, `normapi.migrations` | `tests/unit/test_connections.py`, `tests/integration/test_connection_registry.py` | Planned |
 | Catalog API + connection-keyed column mappings; semantic-type-not-read-from-profile bug fix | M16 | `normapi.mappings`, `normapi.routes` (catalog endpoints), `normapi.store.execute_run` | `tests/golden/test_m16_mappings.py`, regression test for the `build_context`/`field_ref` bug | Planned |
 | Multi-column, chunked, resumable runs | M17 | `normcore.run` (`RunColumnSpec`, `RunProgress`), `normexec.stream`, `normexec.sinks`, `normapi.executor` | `tests/integration/test_multicolumn_runs.py` (live, includes a real kill-and-resume test) | Planned |

@@ -1,0 +1,36 @@
+{
+  "milestone": "M14",
+  "captured_against": "real ClickHouse at localhost:8190, database origin2 (Sample_Database container)",
+  "captured_at_utc_approx": "2026-08-26T00:00:00Z",
+  "list_databases": {
+    "result": ["default", "origin1", "origin2"],
+    "note": "Differs from the M13-M22 program plan's illustrative expectation of ['origin1','origin2'] by including 'default'. 'default' is confirmed real (engine=Atomic, not a system catalog) but currently holds zero tables in this deployment. list_databases() excludes only ClickHouse's own built-in system catalogs (system, information_schema, INFORMATION_SCHEMA) by design (see connectors/clickhouse.py's _SYSTEM_DATABASES) rather than special-casing 'default' by name, since a real deployment could legitimately use a database literally named 'default'. Disclosed here rather than silently matched to the plan's example."
+  },
+  "table_spec_Experience": {
+    "engine": "ReplacingMergeTree",
+    "approx_rows": 12234811,
+    "primary_key": ["experienceID", "companyID"],
+    "elapsed_s": 0.104,
+    "note": "primary_key order is catalog position order (system.columns.position), not the order written in the plan's illustrative '(companyID, experienceID)' — both columns are correctly identified as real key columns via is_in_primary_key, order is not semantically significant for ORDER BY equality but is disclosed for exactness."
+  },
+  "sample_values_Person_fullName": {
+    "elapsed_s": 0.139,
+    "under_1s": true,
+    "note": "Proves LIMIT pushdown at the source rather than a full-column fetch + client-side dedup/truncate; sub-150ms on a table with ~11.8M rows."
+  },
+  "read_chunk_person_x3_keyset_pagination": {
+    "rows_per_chunk": [1000, 1000, 1000],
+    "cross_chunk_overlap_found": false,
+    "distinct_person_ids_across_3_chunks": 2999,
+    "note": "2999, not the naively expected 3000, because Person currently has 3797 personIDs with unmerged duplicate rows pre-ReplacingMergeTree-merge (verified live: SELECT personID, count() FROM Person GROUP BY personID HAVING count()>1 returns 3797 rows). This is a genuine, disclosed ClickHouse characteristic — not a defect in read_chunk's keyset logic, which is proven correct by cross_chunk_overlap_found=false (zero personIDs repeated ACROSS chunk boundaries; the one duplicate landed within a single chunk's raw fetch). M17's chunked runs and M19's destination writer (via OPTIMIZE ... FINAL) are the milestones that actually need to reconcile this, per the plan's own M19 verify-live step."
+  },
+  "read_table_streaming_proof": {
+    "table": "Person",
+    "batch_size": 50000,
+    "first_batch_arrival_s": 0.39,
+    "first_batch_rows": 8192,
+    "rows_read_before_stop": 303104,
+    "elapsed_s_at_stop": 3.65,
+    "note": "First batch (8192 rows, the ClickHouse server's own network block size) arrived in 0.39s against an 11.8M-row table — proves query_arrow_stream() genuinely streams rather than materializing the full table before yielding the first row, which is what the old query_arrow()-based implementation did. Precise peak-RSS measurement via psutil was not available in this venv (psutil not installed); the timing evidence (first batch fast, well before a full-table read could plausibly complete) is the live proof used instead, honestly disclosed as a substitute for an RSS graph rather than presented as one."
+  }
+}
