@@ -1,9 +1,21 @@
 """Sidecar store — Parquet + DuckDB catalog, Source.txt §8, §105, §106;
 design in docs/adr/ADR-013-normalization-storage.md.
 
-Output is partitioned Parquet (`{source_id}/{table}/{run_id}/part-N.parquet`)
-cataloged in a DuckDB table, never a write back to the source system. This
-is the ONLY place in the codebase that writes normalized data to disk.
+Output is partitioned Parquet cataloged in a DuckDB table, never a write
+back to the source system. This is the ONLY place in the codebase that
+writes normalized data to disk.
+
+M17 (docs/plan/M13-M22-program-plan.md) adds a real `column_name`
+dimension: M9-M16's single-column execution smuggled the column in as
+`table_name` (one run always normalized exactly one field, so it doubled
+as the lookup key), which cannot express M17's real multi-column runs —
+`(table, column)` pairs sharing a run_id are now genuinely distinct
+partitions, not the same one reused. Partition paths become
+`{source_id}/{table}/{column}/{run_id}/part-N.parquet` when `column` is
+given; the legacy single-column shape
+`{source_id}/{table}/{run_id}/part-N.parquet` (`column=""`) is preserved
+byte-for-byte for the existing pasted-values execution path, so nothing
+written before this milestone needs migrating.
 """
 
 from __future__ import annotations
@@ -24,12 +36,23 @@ class SidecarStore:
             "CREATE TABLE IF NOT EXISTS sidecar_catalog ("
             "  source_id VARCHAR,"
             "  table_name VARCHAR,"
+            "  column_name VARCHAR NOT NULL DEFAULT '',"
             "  run_id VARCHAR,"
             "  part_path VARCHAR,"
             "  row_count BIGINT,"
             "  written_at TIMESTAMP DEFAULT current_timestamp,"
-            "  PRIMARY KEY (source_id, table_name, run_id, part_path)"
+            "  PRIMARY KEY (source_id, table_name, column_name, run_id, part_path)"
             ")"
+        )
+        # `CREATE TABLE IF NOT EXISTS` above only creates the up-to-date
+        # schema on a BRAND NEW catalog.duckdb file — an existing one
+        # (from a deployment running M9-M16's code) keeps its old
+        # 4-column schema forever unless something actually alters it.
+        # Real, idempotent (verified live: a second call is a no-op, not
+        # an error) — this is the actual migration, not just a comment
+        # promising one.
+        self._conn.execute(
+            "ALTER TABLE sidecar_catalog ADD COLUMN IF NOT EXISTS column_name VARCHAR DEFAULT ''"
         )
 
     def write_batch(
@@ -40,8 +63,13 @@ class SidecarStore:
         run_id: str,
         batch: pa.RecordBatch,
         part_index: int,
+        column: str = "",
     ) -> Path:
-        partition_dir = self._parquet_root / source_id / table / run_id
+        partition_dir = (
+            self._parquet_root / source_id / table / column / run_id
+            if column
+            else self._parquet_root / source_id / table / run_id
+        )
         partition_dir.mkdir(parents=True, exist_ok=True)
         part_path = partition_dir / f"part-{part_index:06d}.parquet"
 
@@ -49,31 +77,48 @@ class SidecarStore:
 
         self._conn.execute(
             "INSERT OR REPLACE INTO sidecar_catalog "
-            "(source_id, table_name, run_id, part_path, row_count) VALUES (?, ?, ?, ?, ?)",
-            [source_id, table, run_id, str(part_path), batch.num_rows],
+            "(source_id, table_name, column_name, run_id, part_path, row_count) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            [source_id, table, column, run_id, str(part_path), batch.num_rows],
         )
         return part_path
 
     def find_run_table(self, run_id: str) -> tuple[str, str] | None:
         """(source_id, table) for a given run_id, or None if nothing was
-        ever written for it — the lookup a caller needs before calling
-        `read_run()` when it doesn't already know which source/table a
-        run belongs to (e.g. reconstructing state after a restart, where
-        only the run_id is known)."""
+        ever written for it. Unchanged single-pair legacy contract for
+        the pasted-values execution path (M9-M16), which only ever
+        normalizes one column per run — for a real multi-column run, use
+        `list_run_tables` instead, which doesn't collapse distinct
+        columns into "whichever matched first"."""
         row = self._conn.execute(
             "SELECT source_id, table_name FROM sidecar_catalog WHERE run_id = ? LIMIT 1",
             [run_id],
         ).fetchone()
         return (row[0], row[1]) if row else None
 
-    def read_run(self, *, source_id: str, table: str, run_id: str) -> pa.Table:
+    def list_run_tables(self, run_id: str) -> list[tuple[str, str, str]]:
+        """Every (source_id, table, column) combination written for a
+        run — the real lookup M17's multi-column runs need for restart
+        recovery, since `find_run_table`'s "exactly one pair" contract
+        can't represent more than one column sharing a run_id."""
+        rows = self._conn.execute(
+            "SELECT DISTINCT source_id, table_name, column_name FROM sidecar_catalog "
+            "WHERE run_id = ? ORDER BY table_name, column_name",
+            [run_id],
+        ).fetchall()
+        return [(row[0], row[1], row[2]) for row in rows]
+
+    def read_run(self, *, source_id: str, table: str, run_id: str, column: str = "") -> pa.Table:
         parts = self._conn.execute(
-            "SELECT part_path FROM sidecar_catalog "
-            "WHERE source_id = ? AND table_name = ? AND run_id = ? ORDER BY part_path",
-            [source_id, table, run_id],
+            "SELECT part_path FROM sidecar_catalog WHERE source_id = ? AND table_name = ? "
+            "AND column_name = ? AND run_id = ? ORDER BY part_path",
+            [source_id, table, column, run_id],
         ).fetchall()
         if not parts:
-            msg = f"No sidecar data for source_id={source_id!r} table={table!r} run_id={run_id!r}"
+            msg = (
+                f"No sidecar data for source_id={source_id!r} table={table!r} "
+                f"column={column!r} run_id={run_id!r}"
+            )
             raise FileNotFoundError(msg)
         return pa_parquet.read_table([row[0] for row in parts])
 

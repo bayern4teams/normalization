@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from normexec.cache import NormalizationCache
 
     from normapi.connections import ConnectionResolver
+    from normapi.executor import RunExecutor
     from normapi.postgres_store import PostgresMetadataStore
     from normapi.sources import SourceRegistry
     from normapi.store import InMemoryStore
@@ -54,3 +55,7 @@ def get_postgres_store(request: Request) -> PostgresMetadataStore | None:
 
 def get_connection_resolver(request: Request) -> ConnectionResolver | None:
     return request.app.state.connection_resolver  # type: ignore[no-any-return]
+
+
+def get_run_executor(request: Request) -> RunExecutor:
+    return request.app.state.run_executor  # type: ignore[no-any-return]

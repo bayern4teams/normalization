@@ -51,7 +51,7 @@ from typing import TYPE_CHECKING, Annotated, cast
 
 from fastapi import APIRouter, Body, Depends, HTTPException
 from normcore.pii import safe_preview
-from normio.capabilities import CatalogConnector, CatalogSourceConnector
+from normio.capabilities import CatalogConnector, CatalogSourceConnector, StreamingSourceConnector
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -82,9 +82,11 @@ from normapi.dependencies import (
     get_dictionary_loader,
     get_dispatcher,
     get_postgres_store,
+    get_run_executor,
     get_source_registry,
     get_store,
 )
+from normapi.executor import RunExecutor
 from normapi.mappings import ColumnMapping, materialize_field_config
 from normapi.postgres_store import PostgresMetadataStore
 from normapi.scaffold_profile import SCAFFOLD_PROFILE
@@ -106,6 +108,7 @@ from normapi.schemas import (
     DictionaryVersionRequest,
     FieldSummary,
     FieldTestRequest,
+    MultiColumnRunRequest,
     PreviewRequest,
     ProfileCreateRequest,
     ProfileRollbackRequest,
@@ -119,6 +122,7 @@ from normapi.sources import SourceRegistry, UnknownSourceError, build_connector_
 from normapi.store import (
     InMemoryStore,
     ProfileNotFoundError,
+    RunNotExecutableError,
     RunNotFoundError,
     UnknownCollisionError,
 )
@@ -836,6 +840,7 @@ def create_run(
     dispatcher: Annotated[Dispatcher, Depends(get_dispatcher)],
     sources: Annotated[SourceRegistry, Depends(get_source_registry)],
     pg_store: Annotated[PostgresMetadataStore | None, Depends(get_postgres_store)],
+    executor: Annotated[RunExecutor, Depends(get_run_executor)],
     execution: Annotated[RunExecutionRequest | None, Body()] = None,
 ) -> NormalizationRun:
     """`execution` is optional (M6): when supplied, the run's field
@@ -875,8 +880,54 @@ def create_run(
             resolve_values=resolve_values,
             error_policy=execution.error_policy,
             field_ref=_resolve_field_ref(execution, pg_store),
+            executor=executor,
         )
     return run
+
+
+@router.post("/runs/{run_id}/columns", response_model=NormalizationRun, status_code=202)
+def start_multi_column_run(
+    run_id: str,
+    body: MultiColumnRunRequest,
+    *,
+    store: Annotated[InMemoryStore, Depends(get_store)],
+    dispatcher: Annotated[Dispatcher, Depends(get_dispatcher)],
+    sources: Annotated[SourceRegistry, Depends(get_source_registry)],
+    pg_store: Annotated[PostgresMetadataStore | None, Depends(get_postgres_store)],
+    executor: Annotated[RunExecutor, Depends(get_run_executor)],
+) -> NormalizationRun:
+    """M17 — starts a real multi-column, chunked, resumable run against
+    an existing PENDING run (created via `POST /runs` with no
+    `execution` body) and a connection-based source. Returns 202: unlike
+    `POST /runs`'s single-column path, this ALWAYS executes
+    asynchronously — there is no synchronous pasted-values equivalent for
+    multi-column execution."""
+    record = _require_connection(pg_store, body.connection_id)
+    connector = sources.get_by_connection(body.connection_id, body.database)
+    if not isinstance(connector, CatalogConnector) or not isinstance(
+        connector, StreamingSourceConnector
+    ):
+        raise HTTPException(
+            status_code=501,
+            detail=f"{record.kind!r} connections do not support multi-column streaming runs",
+        )
+    try:
+        return store.start_multi_column_execution(
+            run_id,
+            dispatcher=dispatcher,
+            connector=connector,
+            connection_identity=record.identity,
+            database=body.database,
+            columns=body.columns,
+            sidecar_source_id=body.connection_id,
+            executor=executor,
+            pg_store=pg_store,
+            chunk_size=body.chunk_size,
+        )
+    except RunNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=f"No such run: {run_id}") from exc
+    except RunNotExecutableError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.get("/runs/compare")

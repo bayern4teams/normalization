@@ -35,6 +35,7 @@ from normexec.env_fingerprint import compute_env_id, gather
 
 from normanalysis import NormalizationMetrics, setup_telemetry
 from normapi.connections import ConnectionResolver
+from normapi.executor import RunExecutor, reconcile_running_runs
 from normapi.postgres_store import PostgresMetadataStore
 from normapi.routes import router
 from normapi.secrets import CredentialCipher, SecretKeyError, load_secret_key
@@ -152,6 +153,11 @@ _DEFAULT_OTLP_ENDPOINT = os.environ.get("NORM_OTLP_ENDPOINT")
 # which is a hard rule of this project, not a configurable trade-off.
 _DEFAULT_SECRET_KEY = os.environ.get("NORM_SECRET_KEY")
 
+# Bounded run-execution worker pool (M17) — 4 is a modest default for a
+# single-process deployment; real tuning is a deployment-time concern,
+# not something this program has load-tested a "right" number for yet.
+_DEFAULT_RUN_EXECUTOR_WORKERS = int(os.environ.get("NORM_RUN_EXECUTOR_WORKERS", "4"))
+
 
 def _build_connection_resolver(
     pg_store: PostgresMetadataStore | None, resolved_secret_key: str | None
@@ -192,6 +198,7 @@ def create_app(
     api_key: str | None = None,
     otlp_endpoint: str | None = None,
     secret_key: str | None = None,
+    run_executor_workers: int | None = None,
 ) -> FastAPI:
     app = FastAPI(
         title="Normalization Engine API",
@@ -297,6 +304,20 @@ def create_app(
         else SourceRegistry({}, connection_resolver=app.state.connection_resolver)
     )
     app.state.api_key = api_key or _DEFAULT_API_KEY
+
+    # Bounded worker pool for run execution (M17) — replaces one raw
+    # threading.Thread per in-flight run with a real concurrency ceiling.
+    app.state.run_executor = RunExecutor(
+        max_workers=run_executor_workers or _DEFAULT_RUN_EXECUTOR_WORKERS
+    )
+
+    # Real fix for "a run left RUNNING forever" (M17): any run Postgres
+    # still shows RUNNING at boot necessarily means the PREVIOUS process
+    # died mid-execution — no live process could still be running it.
+    # Only possible (and only needed) when Postgres persistence is on;
+    # a bare in-memory store has no runs to reconcile after a restart.
+    if app.state.store.postgres_store is not None:
+        reconcile_running_runs(app.state.store, app.state.store.postgres_store)
 
     app.include_router(router)
 

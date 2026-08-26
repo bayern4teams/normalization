@@ -44,7 +44,13 @@ from normcore.rules import (
     NormalizationStep,
     ValidationOutcome,
 )
-from normcore.run import NormalizationRun, NormalizationRunMetrics, NormalizationVersion
+from normcore.run import (
+    NormalizationRun,
+    NormalizationRunMetrics,
+    NormalizationVersion,
+    RunColumnSpec,
+    RunProgress,
+)
 from normcore.trace import TraceStep
 from normcore.unicode_policy import (
     DEFAULT_FORM,
@@ -83,6 +89,8 @@ __all__ = [
     "ProfileStatus",
     "QualityFlag",
     "Reversibility",
+    "RunColumnSpec",
+    "RunProgress",
     "RunStatus",
     "SemanticSource",
     "TraceStep",

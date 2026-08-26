@@ -20,6 +20,7 @@ from normcore import (
     ErrorPolicy,
     FieldNormalizationConfig,
     FieldSemanticType,
+    RunColumnSpec,
     SemanticSource,
 )
 
@@ -113,6 +114,30 @@ class RunExecutionRequest(BaseModel):
     def _exactly_one_of_values_or_source(self) -> Self:
         if (self.values is None) == (self.source is None):
             msg = "Exactly one of `values` or `source` must be supplied"
+            raise ValueError(msg)
+        return self
+
+
+class MultiColumnRunRequest(BaseModel):
+    """POST /normalization/runs/{run_id}/columns body — M17. A real
+    multi-column, chunked, resumable run against a connection-based
+    source (M15) — decision 5 of the M13-M22 program, "one run holds
+    many columns." `columns[].semantic_type` must be given explicitly;
+    unlike the single-column path (M16), this endpoint does not itself
+    re-resolve semantic types from saved column mappings — a caller
+    building this request from saved mappings (e.g. the future M21 UI)
+    reads them via M16's `GET .../mappings` routes and fills
+    `semantic_type` in directly."""
+
+    connection_id: str
+    database: str
+    columns: tuple[RunColumnSpec, ...]
+    chunk_size: int = Field(default=100_000, gt=0, le=1_000_000)
+
+    @model_validator(mode="after")
+    def _at_least_one_column(self) -> Self:
+        if not self.columns:
+            msg = "columns must be non-empty"
             raise ValueError(msg)
         return self
 
@@ -353,6 +378,7 @@ __all__ = [
     "DictionaryVersionRequest",
     "FieldSummary",
     "FieldTestRequest",
+    "MultiColumnRunRequest",
     "NotImplementedResponse",
     "PreviewRequest",
     "ProfileCreateRequest",

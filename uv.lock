@@ -1417,6 +1417,7 @@ dependencies = [
     { name = "blake3" },
     { name = "duckdb" },
     { name = "normcore" },
+    { name = "normio" },
     { name = "polars" },
     { name = "pyarrow" },
 ]
@@ -1426,6 +1427,7 @@ requires-dist = [
     { name = "blake3", specifier = ">=0.4,<1" },
     { name = "duckdb", specifier = ">=1.1,<2" },
     { name = "normcore", editable = "packages/normcore" },
+    { name = "normio", editable = "packages/normio" },
     { name = "polars", specifier = ">=1.9,<2" },
     { name = "pyarrow", specifier = ">=17.0,<18" },
 ]

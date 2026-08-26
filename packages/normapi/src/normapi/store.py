@@ -57,6 +57,9 @@ from normcore.contract import (
     normalized_value_to_arrow_row,
 )
 from normexec.planner import DistinctValuePlanner
+from normexec.sinks import SidecarRunSink
+from normexec.stream import stream_column
+from normio.capabilities import CatalogConnector
 from normio.sidecar_store import SidecarStore
 
 from normanalysis import (
@@ -79,6 +82,8 @@ from normcore import (
     NormalizationStatus,
     NormalizedValue,
     ProfileStatus,
+    RunColumnSpec,
+    RunProgress,
     RunStatus,
 )
 
@@ -87,8 +92,11 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from normexec.cache import NormalizationCache
+    from normexec.stream import ChunkProgress
+    from normio.capabilities import StreamingSourceConnector
 
     from normanalysis import NormalizationMetrics, TelemetryHandles
+    from normapi.executor import RunExecutor
     from normcore import Dispatcher, ErrorPolicy
 
 
@@ -166,6 +174,38 @@ def _table_to_results(table: pa.Table) -> tuple[list[str | None], list[Normalize
     return originals, results
 
 
+def _resolve_key_columns(connector: StreamingSourceConnector, table: str) -> list[str]:
+    """M17: real primary-key columns, via `CatalogConnector.table_spec`
+    (per M14, never parsed out of a sorting-key expression) — `read_chunk`
+    requires at least one key column, so a table with no declared primary
+    key cannot be streamed this way (unlike `read_table`'s positional-key
+    fallback, which has no meaning for keyset pagination)."""
+    if not isinstance(connector, CatalogConnector):
+        msg = "Streaming a column requires a connector with catalog support to resolve its key"
+        raise ValueError(msg)
+    key_columns = list(connector.table_spec(table).primary_key)
+    if not key_columns:
+        msg = f"Table {table!r} has no declared primary key; cannot be streamed chunk by chunk"
+        raise ValueError(msg)
+    return key_columns
+
+
+def _estimate_total_rows(
+    connector: StreamingSourceConnector, columns: tuple[RunColumnSpec, ...]
+) -> int | None:
+    """Best-effort progress-bar denominator — sums each DISTINCT table's
+    `approx_rows` (per M14, never an exact bound) across the run's
+    columns. `None` if the connector has no catalog support or any
+    lookup fails, rather than a guessed number."""
+    if not isinstance(connector, CatalogConnector):
+        return None
+    tables = {column_spec.table for column_spec in columns}
+    try:
+        return sum(connector.table_spec(table).approx_rows or 0 for table in tables)
+    except ValueError:
+        return None
+
+
 class _RunExecution:
     __slots__ = ("field_name", "invariant_report", "originals", "results", "semantic_type")
 
@@ -202,6 +242,18 @@ class InMemoryStore:
         self._active_version: dict[str, str] = {}
         self._runs: dict[str, NormalizationRun] = {}
         self._executions: dict[str, _RunExecution] = {}
+        # M17: `_runs`/`_executions` are mutated from background threads
+        # (M11's single execution thread, now M17's bounded worker pool —
+        # several chunk-writers can be live at once, not just one
+        # background thread, making the pre-M17 unguarded-dict race a
+        # routine occurrence instead of a rare one). One coarse lock
+        # around every read/write of these two dicts, not a per-run lock
+        # — simple and correct; a real, disclosed trade-off is that
+        # `_hydrate_execution_from_sidecar`'s disk I/O runs while this
+        # lock is held (see `get_execution`), so a slow sidecar read
+        # briefly blocks other runs' access too. Not a bottleneck at this
+        # program's scale, but not free either.
+        self._runs_lock = threading.Lock()
         # (run_id, normalized_value) -> a human reviewer's real decision
         # on that collision group (§92, M11).
         self._collision_decisions: dict[tuple[str, str], CollisionDecision] = {}
@@ -394,7 +446,8 @@ class InMemoryStore:
             status=RunStatus.PENDING,
             metrics=NormalizationRunMetrics(),
         )
-        self._runs[run_id] = run
+        with self._runs_lock:
+            self._runs[run_id] = run
         if self._pg is not None:
             self._pg.save_run(run)
         return run
@@ -409,21 +462,22 @@ class InMemoryStore:
         resolve_values: Callable[[], Sequence[str | None]],
         error_policy: ErrorPolicy | None = None,
         field_ref: str | None = None,
+        executor: RunExecutor | None = None,
     ) -> NormalizationRun:
-        """Starts a run's execution in a background thread and returns
+        """Starts a run's execution in the background and returns
         immediately (M11) — Source.txt §70's own `RunStatus` already
         modeled RUNNING/FAILED as real lifecycle states; M6-M10's
         `execute_run()` always finished synchronously within the same
         request, so no caller could ever actually observe them. Poll
         `GET /runs/{id}`: the run stays PENDING until the background
-        thread's `RunRecorder.start()` transitions it to RUNNING (the
+        work's `RunRecorder.start()` transitions it to RUNNING (the
         recorder itself owns that PENDING->RUNNING transition and
         rejects being constructed on anything but a PENDING run — this
         method deliberately does NOT also set RUNNING itself, to avoid
         two different places racing to make the same transition), then
         COMPLETED/FAILED when done.
 
-        `resolve_values` is called INSIDE the background thread, not
+        `resolve_values` is called INSIDE the background work, not
         before returning — for a source-mode run this is where the real,
         potentially slow connector read happens, off the request/
         response path (M10's row cap existed specifically because that
@@ -432,8 +486,15 @@ class InMemoryStore:
 
         `execute_run` itself is untouched and remains the synchronous,
         directly-testable primitive every existing test already uses;
-        this is a thin background-thread wrapper around it, used only by
-        the live HTTP route.
+        this is a thin background wrapper around it, used only by the
+        live HTTP route.
+
+        `executor` (M17): when given, the work runs on `RunExecutor`'s
+        bounded worker pool instead of a raw `threading.Thread` — the
+        live HTTP route (`normapi.routes.create_run`) always passes one;
+        direct test calls that construct an `InMemoryStore` and call this
+        method without one keep the original raw-thread behavior
+        unchanged, so no existing test needed rewriting for this.
 
         `semantic_type`/`field_ref` (M16): both optional now — see
         `execute_run`'s own docstring for the real bug this closes
@@ -446,20 +507,21 @@ class InMemoryStore:
             msg = f"Run {run_id!r} already reached terminal status {run.status!r}"
             raise RunNotExecutableError(msg)
 
-        thread = threading.Thread(
-            target=self._run_execution_worker,
-            kwargs={
-                "run_id": run_id,
-                "dispatcher": dispatcher,
-                "field_name": field_name,
-                "semantic_type": semantic_type,
-                "resolve_values": resolve_values,
-                "error_policy": error_policy,
-                "field_ref": field_ref,
-            },
-            daemon=True,
-        )
-        thread.start()
+        def task() -> None:
+            self._run_execution_worker(
+                run_id=run_id,
+                dispatcher=dispatcher,
+                field_name=field_name,
+                semantic_type=semantic_type,
+                resolve_values=resolve_values,
+                error_policy=error_policy,
+                field_ref=field_ref,
+            )
+
+        if executor is not None:
+            executor.submit(task)
+        else:
+            threading.Thread(target=task, daemon=True).start()
         return run
 
     def _run_execution_worker(
@@ -498,7 +560,8 @@ class InMemoryStore:
                     "failure_reason": str(exc),
                 }
             )
-            self._runs[run_id] = failed
+            with self._runs_lock:
+                self._runs[run_id] = failed
             if self._pg is not None:
                 self._pg.save_run(failed)
 
@@ -590,16 +653,17 @@ class InMemoryStore:
         )
 
         finished = recorder.finish(RunStatus.COMPLETED)
-        self._runs[run_id] = finished
+        with self._runs_lock:
+            self._runs[run_id] = finished
+            self._executions[run_id] = _RunExecution(
+                field_name=field_name,
+                semantic_type=effective_semantic_type,
+                originals=originals,
+                results=results,
+                invariant_report=invariant_report,
+            )
         if self._pg is not None:
             self._pg.save_run(finished)
-        self._executions[run_id] = _RunExecution(
-            field_name=field_name,
-            semantic_type=effective_semantic_type,
-            originals=originals,
-            results=results,
-            invariant_report=invariant_report,
-        )
         if self._sidecar is not None:
             self._write_execution_to_sidecar(run_id, field_name, results)
         if self._telemetry is not None:
@@ -612,6 +676,232 @@ class InMemoryStore:
                 semantic_type=effective_semantic_type,
             )
         return finished
+
+    def start_multi_column_execution(
+        self,
+        run_id: str,
+        *,
+        dispatcher: Dispatcher,
+        connector: StreamingSourceConnector,
+        connection_identity: str,
+        database: str,
+        columns: tuple[RunColumnSpec, ...],
+        sidecar_source_id: str,
+        executor: RunExecutor,
+        pg_store: PostgresMetadataStore | None,
+        chunk_size: int = 100_000,
+    ) -> NormalizationRun:
+        """M17 (docs/plan/M13-M22-program-plan.md): a real multi-column,
+        chunked, resumable run — decision 5's "one run holds many
+        columns," built on `normexec.stream.stream_column` (real keyset-
+        paginated streaming, never sample-capped) and `RunExecutor`'s
+        bounded worker pool (replacing the M11 raw-thread-per-run model).
+
+        Columns within ONE run are processed SEQUENTIALLY, not fanned out
+        across the pool — a deliberate, disclosed scope decision for this
+        milestone (see the M17 verification pack): true per-column
+        parallelism is a real possible future enhancement, not attempted
+        here, since it would need per-column progress/failure isolation
+        this milestone's `run_columns` table already tracks but the
+        recorder/progress-snapshot plumbing does not yet coordinate
+        across concurrent writers.
+
+        Requires a sidecar (`self._sidecar is not None`) — there is no
+        pasted-values equivalent for multi-column execution; results
+        always go to real Parquet, never held only in `_executions`.
+        """
+        run = self.get_run(run_id)
+        if run.is_terminal():
+            msg = f"Run {run_id!r} already reached terminal status {run.status!r}"
+            raise RunNotExecutableError(msg)
+        if self._sidecar is None:
+            msg = "Multi-column execution requires a configured sidecar store"
+            raise RunNotExecutableError(msg)
+
+        executor.submit(
+            lambda: self._run_multi_column_worker(
+                run_id,
+                dispatcher=dispatcher,
+                connector=connector,
+                connection_identity=connection_identity,
+                database=database,
+                columns=columns,
+                sidecar_source_id=sidecar_source_id,
+                pg_store=pg_store,
+                chunk_size=chunk_size,
+            )
+        )
+        return run
+
+    def _run_multi_column_worker(
+        self,
+        run_id: str,
+        *,
+        dispatcher: Dispatcher,
+        connector: StreamingSourceConnector,
+        connection_identity: str,
+        database: str,
+        columns: tuple[RunColumnSpec, ...],
+        sidecar_source_id: str,
+        pg_store: PostgresMetadataStore | None,
+        chunk_size: int,
+    ) -> None:
+        """Runs in a `RunExecutor` worker thread. Mirrors
+        `_run_execution_worker`'s "an uncaught exception becomes a real
+        FAILED status, never a run stuck at RUNNING forever" contract."""
+        try:
+            self._run_multi_column_worker_inner(
+                run_id,
+                dispatcher=dispatcher,
+                connector=connector,
+                connection_identity=connection_identity,
+                database=database,
+                columns=columns,
+                sidecar_source_id=sidecar_source_id,
+                pg_store=pg_store,
+                chunk_size=chunk_size,
+            )
+        except Exception as exc:
+            failed = self.get_run(run_id).model_copy(
+                update={
+                    "status": RunStatus.FAILED,
+                    "finished_at": datetime.now(UTC).isoformat(),
+                    "failure_reason": str(exc),
+                }
+            )
+            self.refresh_run(failed)
+            if pg_store is not None:
+                pg_store.save_run(failed)
+
+    def _run_multi_column_worker_inner(
+        self,
+        run_id: str,
+        *,
+        dispatcher: Dispatcher,
+        connector: StreamingSourceConnector,
+        connection_identity: str,
+        database: str,
+        columns: tuple[RunColumnSpec, ...],
+        sidecar_source_id: str,
+        pg_store: PostgresMetadataStore | None,
+        chunk_size: int,
+    ) -> None:
+        assert self._sidecar is not None  # checked by the caller
+        run = self.get_run(run_id)
+        recorder = RunRecorder(run)
+        started = recorder.start().model_copy(
+            update={"columns": columns, "progress": RunProgress()}
+        )
+        self.refresh_run(started)
+        if pg_store is not None:
+            pg_store.save_run(started)
+
+        profile = self.get_profile(run.profile_id, run.profile_version)
+        sink = SidecarRunSink(self._sidecar, source_id=sidecar_source_id)
+
+        total_rows_estimate = _estimate_total_rows(connector, columns)
+        chunks_done = 0
+        any_column_failed = False
+        last_progress = RunProgress(total_rows_estimate=total_rows_estimate)
+
+        for column_spec in columns:
+            table, column, semantic_type = (
+                column_spec.table,
+                column_spec.column,
+                column_spec.semantic_type,
+            )
+            if pg_store is not None:
+                pg_store.upsert_run_column(
+                    run_id=run_id,
+                    table_name=table,
+                    column_name=column,
+                    semantic_type=semantic_type.value,
+                    status="RUNNING",
+                )
+
+            key_columns = _resolve_key_columns(connector, table)
+            field_ref = f"{connection_identity}.{database}.{table}.{column}"
+            ctx = profile.build_context(field_ref, semantic_type, error_policy=None)
+
+            resume_row = (
+                pg_store.get_last_chunk(run_id=run_id, table_name=table, column_name=column)
+                if pg_store is not None
+                else None
+            )
+            resume_after_key = resume_row.last_key if resume_row is not None else None
+
+            def on_chunk_committed(progress: ChunkProgress) -> None:
+                nonlocal chunks_done, last_progress
+                chunks_done += 1
+                if pg_store is not None:
+                    pg_store.record_chunk(
+                        run_id=progress.run_id,
+                        table_name=progress.table,
+                        column_name=progress.column,
+                        chunk_index=progress.chunk_index,
+                        last_key=progress.last_key,
+                        rows_processed=progress.rows_processed,
+                    )
+                last_progress = RunProgress(
+                    total_rows_estimate=total_rows_estimate,
+                    rows_done=recorder.snapshot().metrics.records_processed,
+                    chunks_done=chunks_done,
+                    current_table=progress.table,
+                    current_column=progress.column,
+                )
+                snapshot = recorder.snapshot().model_copy(
+                    update={"columns": columns, "progress": last_progress}
+                )
+                self.refresh_run(snapshot)
+
+            column_rows_processed = 0
+            try:
+                column_rows_processed = stream_column(
+                    connector,
+                    run_id=run_id,
+                    table=table,
+                    column=column,
+                    key_columns=key_columns,
+                    semantic_type=semantic_type,
+                    context=ctx,
+                    profile=profile,
+                    dispatcher=dispatcher,
+                    cache=self._cache,
+                    recorder=recorder,
+                    sink=sink,
+                    chunk_size=chunk_size,
+                    resume_after_key=resume_after_key,
+                    on_chunk_committed=on_chunk_committed,
+                )
+            except Exception as exc:
+                any_column_failed = True
+                if pg_store is not None:
+                    pg_store.upsert_run_column(
+                        run_id=run_id,
+                        table_name=table,
+                        column_name=column,
+                        semantic_type=semantic_type.value,
+                        status="FAILED",
+                        failure_reason=str(exc),
+                    )
+                continue
+            if pg_store is not None:
+                pg_store.upsert_run_column(
+                    run_id=run_id,
+                    table_name=table,
+                    column_name=column,
+                    semantic_type=semantic_type.value,
+                    status="COMPLETED",
+                    rows_processed=column_rows_processed,
+                )
+
+        final_status = RunStatus.PARTIAL if any_column_failed else RunStatus.COMPLETED
+        finished = recorder.finish(final_status).model_copy(
+            update={"columns": columns, "progress": last_progress}
+        )
+        self.refresh_run(finished)
+        if pg_store is not None:
+            pg_store.save_run(finished)
 
     def _write_execution_to_sidecar(
         self,
@@ -647,73 +937,42 @@ class InMemoryStore:
         recorder: RunRecorder,
     ) -> list[NormalizedValue]:
         """§102: "Repeated values should be normalized once per profile/
-        version." Distinct non-null values go through the real
-        `DistinctValuePlanner` (cache-aware, M1-built but never wired to
-        this execution path until this M8 fix); `None` is computed once
-        outside the planner since it isn't a valid `list[str]` element
-        but is just as legitimately repeatable within one run."""
-        distinct_non_null = list(dict.fromkeys(v for v in originals if v is not None))
-
-        # Attribute hits/misses from LOCAL, per-request state (which
-        # distinct values `on_computed` actually fired for — a miss —
-        # not the rest, a hit) rather than diffing the shared
-        # `NormalizationCache.stats` counter before/after. `create_run`'s
-        # route handler is synchronous, so Starlette dispatches concurrent
-        # requests to a thread pool sharing this same store/cache
-        # instance; a before/after delta on a globally-shared mutable
-        # counter can be corrupted by another request's cache activity
-        # landing in between the two reads, misattributing hits/misses
-        # across unrelated runs. Tracking locally makes this race-free.
-        computed_values: set[str] = set()
-
-        def on_computed(value: str, result: NormalizedValue, duration: float) -> None:
-            computed_values.add(value)
-            recorder.record_computation(value, result, duration)
-
+        version." Thin wrapper around `DistinctValuePlanner.
+        normalize_values` (M17) — the actual distinct-value dedup,
+        cache-hit attribution, and None-handling logic now lives there,
+        shared with `normexec.stream`'s M17 chunked-execution path,
+        rather than duplicated here."""
         planner = DistinctValuePlanner(dispatcher, self._cache)
-        by_value = planner.distinct_value_results(
-            distinct_non_null, semantic_type, ctx, profile, on_computed=on_computed
+        return planner.normalize_values(
+            originals,
+            semantic_type,
+            ctx,
+            profile,
+            on_computed=recorder.record_computation,
+            on_cache_stat=lambda hit: recorder.record_cache(hit=hit),
         )
-
-        if self._cache is not None:
-            for value in distinct_non_null:
-                recorder.record_cache(hit=value not in computed_values)
-
-        none_result = (
-            dispatcher.normalize(None, semantic_type, ctx, profile)
-            if any(v is None for v in originals)
-            else None
-        )
-
-        def resolve(value: str | None) -> NormalizedValue:
-            if value is None:
-                if none_result is None:  # pragma: no cover - unreachable, see none_result above
-                    msg = "internal error: encountered a None value without a precomputed result"
-                    raise AssertionError(msg)
-                return none_result
-            return by_value[value]
-
-        return [resolve(value) for value in originals]
 
     def get_run(self, run_id: str) -> NormalizationRun:
-        if run_id not in self._runs:
-            raise RunNotFoundError(run_id)
-        return self._runs[run_id]
+        with self._runs_lock:
+            if run_id not in self._runs:
+                raise RunNotFoundError(run_id)
+            return self._runs[run_id]
 
     def get_execution(self, run_id: str) -> _RunExecution | None:
         """None if the run was never executed (a real, valid state — a
         PENDING run created but not yet fed values), not an error."""
-        if run_id not in self._runs:
-            raise RunNotFoundError(run_id)
-        cached = self._executions.get(run_id)
-        if cached is not None:
-            return cached
-        if self._sidecar is not None:
-            hydrated = self._hydrate_execution_from_sidecar(run_id)
-            if hydrated is not None:
-                self._executions[run_id] = hydrated
-                return hydrated
-        return None
+        with self._runs_lock:
+            if run_id not in self._runs:
+                raise RunNotFoundError(run_id)
+            cached = self._executions.get(run_id)
+            if cached is not None:
+                return cached
+            if self._sidecar is not None:
+                hydrated = self._hydrate_execution_from_sidecar(run_id)
+                if hydrated is not None:
+                    self._executions[run_id] = hydrated
+                    return hydrated
+            return None
 
     def _hydrate_execution_from_sidecar(self, run_id: str) -> _RunExecution | None:
         """Reconstructs a run's real per-value results from Parquet —
@@ -744,7 +1003,19 @@ class InMemoryStore:
         )
 
     def list_runs(self) -> list[NormalizationRun]:
-        return list(self._runs.values())
+        with self._runs_lock:
+            return list(self._runs.values())
+
+    def refresh_run(self, run: NormalizationRun) -> None:
+        """Overwrites the in-memory copy of `run` with a caller-supplied
+        one — used by `normapi.executor.reconcile_running_runs` (M17) to
+        sync the in-memory `_runs` dict after writing a reconciled
+        FAILED status straight to Postgres, and by M17's multi-column
+        chunk loop to publish incremental progress snapshots as chunks
+        complete (`GET /runs/{id}` needs to see `rows_done` increase
+        while a run is still RUNNING, not just at completion)."""
+        with self._runs_lock:
+            self._runs[run.id] = run
 
     def record_collision_decision(
         self,

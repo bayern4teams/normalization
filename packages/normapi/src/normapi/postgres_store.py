@@ -31,6 +31,8 @@ already treats its other JSON-shaped persistent storage.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import psycopg
 from psycopg.types.json import Jsonb
 
@@ -39,6 +41,32 @@ from normapi.connections import ConnectionRecord
 from normapi.mappings import ColumnMapping
 from normapi.migrations import Migration, run_migrations
 from normcore import NormalizationProfile, NormalizationRun
+
+
+@dataclass(frozen=True, slots=True)
+class RunColumnStatus:
+    """M17 — one row of `run_columns`: a single (table, column)'s own
+    status within a multi-column run."""
+
+    run_id: str
+    table_name: str
+    column_name: str
+    semantic_type: str
+    status: str
+    rows_processed: int
+    failure_reason: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class ChunkProgressRow:
+    """M17 — one row of `run_chunks`: real resumability state."""
+
+    run_id: str
+    table_name: str
+    column_name: str
+    chunk_index: int
+    last_key: tuple[object, ...]
+    rows_processed: int
 
 
 def _create_connections_table(conn: psycopg.Connection) -> None:
@@ -88,9 +116,56 @@ def _create_column_mappings_table(conn: psycopg.Connection) -> None:
         )
 
 
+def _create_run_columns_table(conn: psycopg.Connection) -> None:
+    """M17: per-(table, column) status within a multi-column run — a
+    run's own top-level `status` (COMPLETED/FAILED/PARTIAL) can't
+    represent "Person.firstName finished, Company.name failed" on its
+    own; this table is what makes that real and queryable, and what a
+    resume pass reads to know which columns still need work."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "CREATE TABLE IF NOT EXISTS run_columns ("
+            "  run_id VARCHAR NOT NULL,"
+            "  table_name VARCHAR NOT NULL,"
+            "  column_name VARCHAR NOT NULL,"
+            "  semantic_type VARCHAR NOT NULL,"
+            "  status VARCHAR NOT NULL,"
+            "  rows_processed BIGINT NOT NULL DEFAULT 0,"
+            "  failure_reason TEXT,"
+            "  PRIMARY KEY (run_id, table_name, column_name)"
+            ")"
+        )
+
+
+def _create_run_chunks_table(conn: psycopg.Connection) -> None:
+    """M17: one row per committed chunk — `last_key` is JSON-encoded
+    (a tuple of real primary-key values, positionally matching the
+    connector's own key_columns, per M14 — never a positional index) so
+    it round-trips through a JSONB column regardless of the key's real
+    type (string, int, composite). A resume reads the MAX(chunk_index)
+    row for a (run_id, table, column) to get the real last committed
+    key, not the whole history — the history itself is real observability
+    data, not overhead worth avoiding."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "CREATE TABLE IF NOT EXISTS run_chunks ("
+            "  run_id VARCHAR NOT NULL,"
+            "  table_name VARCHAR NOT NULL,"
+            "  column_name VARCHAR NOT NULL,"
+            "  chunk_index INTEGER NOT NULL,"
+            "  last_key JSONB NOT NULL,"
+            "  rows_processed BIGINT NOT NULL,"
+            "  committed_at TIMESTAMPTZ NOT NULL DEFAULT now(),"
+            "  PRIMARY KEY (run_id, table_name, column_name, chunk_index)"
+            ")"
+        )
+
+
 _MIGRATIONS = [
     Migration(name="m15_create_connections", apply=_create_connections_table),
     Migration(name="m16_create_column_mappings", apply=_create_column_mappings_table),
+    Migration(name="m17_create_run_columns", apply=_create_run_columns_table),
+    Migration(name="m17_create_run_chunks", apply=_create_run_chunks_table),
 ]
 
 _SELECT_CONNECTION_COLUMNS = (
@@ -443,6 +518,111 @@ class PostgresMetadataStore:
             )
             rows = cur.fetchall()
         return [_row_to_mapping(row) for row in rows]
+
+    # --- run columns + chunk resumability (M17) -------------------------
+
+    def upsert_run_column(
+        self,
+        *,
+        run_id: str,
+        table_name: str,
+        column_name: str,
+        semantic_type: str,
+        status: str,
+        rows_processed: int = 0,
+        failure_reason: str | None = None,
+    ) -> None:
+        with self._conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO run_columns "
+                "  (run_id, table_name, column_name, semantic_type, status, "
+                "   rows_processed, failure_reason) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s) "
+                "ON CONFLICT (run_id, table_name, column_name) DO UPDATE SET "
+                "  status = EXCLUDED.status, rows_processed = EXCLUDED.rows_processed, "
+                "  failure_reason = EXCLUDED.failure_reason",
+                (
+                    run_id,
+                    table_name,
+                    column_name,
+                    semantic_type,
+                    status,
+                    rows_processed,
+                    failure_reason,
+                ),
+            )
+
+    def list_run_columns(self, run_id: str) -> list[RunColumnStatus]:
+        with self._conn.cursor() as cur:
+            cur.execute(
+                "SELECT run_id, table_name, column_name, semantic_type, status, "
+                "rows_processed, failure_reason FROM run_columns WHERE run_id = %s "
+                "ORDER BY table_name, column_name",
+                (run_id,),
+            )
+            rows = cur.fetchall()
+        return [RunColumnStatus(*row) for row in rows]
+
+    def record_chunk(
+        self,
+        *,
+        run_id: str,
+        table_name: str,
+        column_name: str,
+        chunk_index: int,
+        last_key: tuple[object, ...],
+        rows_processed: int,
+    ) -> None:
+        with self._conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO run_chunks "
+                "  (run_id, table_name, column_name, chunk_index, last_key, rows_processed) "
+                "VALUES (%s, %s, %s, %s, %s, %s) "
+                "ON CONFLICT (run_id, table_name, column_name, chunk_index) DO NOTHING",
+                (
+                    run_id,
+                    table_name,
+                    column_name,
+                    chunk_index,
+                    Jsonb(list(last_key)),
+                    rows_processed,
+                ),
+            )
+
+    def get_last_chunk(
+        self, *, run_id: str, table_name: str, column_name: str
+    ) -> ChunkProgressRow | None:
+        """The real resume point for a (run_id, table, column) — the
+        highest `chunk_index` committed so far, or `None` if this column
+        never started (a fresh run, not a resume)."""
+        with self._conn.cursor() as cur:
+            cur.execute(
+                "SELECT run_id, table_name, column_name, chunk_index, last_key, rows_processed "
+                "FROM run_chunks WHERE run_id = %s AND table_name = %s AND column_name = %s "
+                "ORDER BY chunk_index DESC LIMIT 1",
+                (run_id, table_name, column_name),
+            )
+            row = cur.fetchone()
+        if row is None:
+            return None
+        return ChunkProgressRow(
+            run_id=row[0],
+            table_name=row[1],
+            column_name=row[2],
+            chunk_index=row[3],
+            last_key=tuple(row[4]),
+            rows_processed=row[5],
+        )
+
+    def list_running_run_ids(self) -> list[str]:
+        """The real "was left RUNNING at boot" check a startup
+        reconciliation pass needs — reads the `runs` table's own `data`
+        JSONB blob rather than a separate status column, since `status`
+        already lives there (no schema change needed for this)."""
+        with self._conn.cursor() as cur:
+            cur.execute("SELECT id FROM runs WHERE data->>'status' = 'RUNNING'")
+            rows = cur.fetchall()
+        return [row[0] for row in rows]
 
     def close(self) -> None:
         self._conn.close()

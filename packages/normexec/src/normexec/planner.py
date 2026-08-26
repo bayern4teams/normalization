@@ -117,6 +117,64 @@ class DistinctValuePlanner:
 
         return results
 
+    def normalize_values(
+        self,
+        values: list[str | None],
+        semantic_type: FieldSemanticType,
+        context: NormalizationContext,
+        profile: NormalizationProfile,
+        *,
+        on_computed: Callable[[str, NormalizedValue, float], None] | None = None,
+        on_cache_stat: Callable[[bool], None] | None = None,
+    ) -> list[NormalizedValue]:
+        """Normalizes a full ordered list of raw values (repeats and
+        `None`s allowed) via `distinct_value_results`, resolving each
+        position back to its real result. `None` is computed once,
+        outside the planner (it isn't a valid `list[str]` distinct-value
+        element, but is just as legitimately repeatable within a run) —
+        `on_cache_stat`, if given, fires once per distinct non-null value
+        with whether it was a real cache hit (attributed from LOCAL
+        per-call state, since a globally-shared cache's before/after
+        counters can be corrupted by concurrent unrelated activity).
+
+        The one shared entry point for "normalize this run's worth of
+        values" — both the pasted-values/single-column path
+        (`normapi.store.InMemoryStore._normalize_deduped`, M8) and the
+        M17 chunked-streaming path (`normexec.stream`) call this instead
+        of each re-implementing the same None-handling and cache-hit
+        attribution logic."""
+        distinct_non_null = list(dict.fromkeys(v for v in values if v is not None))
+        computed_values: set[str] = set()
+
+        def _on_computed(value: str, result: NormalizedValue, duration: float) -> None:
+            computed_values.add(value)
+            if on_computed is not None:
+                on_computed(value, result, duration)
+
+        by_value = self.distinct_value_results(
+            distinct_non_null, semantic_type, context, profile, on_computed=_on_computed
+        )
+
+        if self._cache is not None and on_cache_stat is not None:
+            for value in distinct_non_null:
+                on_cache_stat(value not in computed_values)
+
+        none_result = (
+            self._dispatcher.normalize(None, semantic_type, context, profile)
+            if any(v is None for v in values)
+            else None
+        )
+
+        def resolve(value: str | None) -> NormalizedValue:
+            if value is None:
+                if none_result is None:  # pragma: no cover - unreachable, see none_result above
+                    msg = "internal error: encountered a None value without a precomputed result"
+                    raise AssertionError(msg)
+                return none_result
+            return by_value[value]
+
+        return [resolve(value) for value in values]
+
     def normalize_column(
         self,
         df: pl.DataFrame,

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field
 
-from normcore.enums import RunStatus
+from normcore.enums import FieldSemanticType, RunStatus
 
 
 class NormalizationVersion(BaseModel):
@@ -67,6 +67,40 @@ class NormalizationRunMetrics(BaseModel):
         return self.cache_hits / total if total else 0.0
 
 
+class RunColumnSpec(BaseModel):
+    """M17 (docs/plan/M13-M22-program-plan.md) — one column a multi-
+    column run normalizes: decision 5 of the program, "one run holds
+    many columns" as a core run-model extension rather than fan-out into
+    several single-column runs. `table`/`column` identify the source
+    location; `semantic_type` is resolved the same way a single-column
+    run already resolves it (an explicit override here, or a matching
+    profile field config — see `normapi.store.InMemoryStore.execute_run`
+    for the real resolution order, fixed in M16)."""
+
+    model_config = ConfigDict(frozen=True)
+
+    table: str
+    column: str
+    semantic_type: FieldSemanticType
+
+
+class RunProgress(BaseModel):
+    """M17 — mid-run progress for a multi-column chunked execution,
+    updated incrementally as chunks complete (unlike `metrics`, which is
+    the run's cumulative roll-up and stays meaningful for both single-
+    and multi-column runs alike). `total_rows_estimate` comes from a
+    connector's `TableSpec.approx_rows` (best-effort, per M14) — never
+    trusted as an exact bound, only as a progress-bar denominator."""
+
+    model_config = ConfigDict(frozen=True)
+
+    total_rows_estimate: int | None = None
+    rows_done: int = 0
+    chunks_done: int = 0
+    current_table: str | None = None
+    current_column: str | None = None
+
+
 class NormalizationRun(BaseModel):
     """Source.txt §70 — one execution of a profile against a source
     snapshot. Immutable once `status` reaches a terminal state
@@ -92,6 +126,14 @@ class NormalizationRun(BaseModel):
     # connector outage, ...) is captured here rather than silently
     # leaving the run stuck at RUNNING forever.
     failure_reason: str | None = None
+    # M17: empty for the pre-M17 single-field execution path (pasted
+    # values, or a single-column source-mode run) — real content only
+    # for a multi-column chunked run started via the new columns-based
+    # execution path. `progress` stays None until the first chunk
+    # commits, matching `metrics`' own "zero counters until something
+    # actually happened" default.
+    columns: tuple[RunColumnSpec, ...] = ()
+    progress: RunProgress | None = None
 
     def is_terminal(self) -> bool:
         return self.status in (RunStatus.COMPLETED, RunStatus.FAILED, RunStatus.PARTIAL)
