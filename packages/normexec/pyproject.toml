@@ -6,6 +6,7 @@ requires-python = ">=3.12,<3.14"
 dependencies = [
     "normcore",
     "normio",
+    "normsink",
     "polars>=1.9,<2",
     "duckdb>=1.1,<2",
     "pyarrow>=17.0,<18",
@@ -15,6 +16,7 @@ dependencies = [
 [tool.uv.sources]
 normcore = { workspace = true }
 normio = { workspace = true }
+normsink = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

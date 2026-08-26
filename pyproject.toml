@@ -84,6 +84,7 @@ dependencies = [
     "normanalysis",
     "normapi",
     "normcli",
+    "normsink",
 ]
 
 [tool.uv.sources]
@@ -105,6 +106,7 @@ normio = { workspace = true }
 normanalysis = { workspace = true }
 normapi = { workspace = true }
 normcli = { workspace = true }
+normsink = { workspace = true }
 
 [project.optional-dependencies]
 dev = [
@@ -157,7 +159,7 @@ python_version = "3.12"
 strict = true
 namespace_packages = true
 explicit_package_bases = true
-mypy_path = "packages/normcore/src:packages/normalizers/src:packages/normdict/src:packages/normexec/src:packages/normio/src:packages/normanalysis/src:packages/normapi/src:packages/normcli/src"
+mypy_path = "packages/normcore/src:packages/normalizers/src:packages/normdict/src:packages/normexec/src:packages/normio/src:packages/normanalysis/src:packages/normapi/src:packages/normcli/src:packages/normsink/src"
 plugins = ["pydantic.mypy"]
 
 # Third-party libraries with no type stubs / py.typed marker as of M0.

@@ -19,6 +19,7 @@ members = [
     "normdict",
     "normexec",
     "normio",
+    "normsink",
 ]
 
 [[package]]
@@ -1163,6 +1164,7 @@ dependencies = [
     { name = "normdict" },
     { name = "normexec" },
     { name = "normio" },
+    { name = "normsink" },
     { name = "opentelemetry-api" },
     { name = "opentelemetry-sdk" },
     { name = "phonenumbers" },
@@ -1235,6 +1237,7 @@ requires-dist = [
     { name = "normdict", editable = "packages/normdict" },
     { name = "normexec", editable = "packages/normexec" },
     { name = "normio", editable = "packages/normio" },
+    { name = "normsink", editable = "packages/normsink" },
     { name = "opentelemetry-api", specifier = ">=1.27,<2" },
     { name = "opentelemetry-sdk", specifier = ">=1.27,<2" },
     { name = "phonenumbers", specifier = ">=8.13,<9" },
@@ -1365,6 +1368,7 @@ dependencies = [
     { name = "normdict" },
     { name = "normexec" },
     { name = "normio" },
+    { name = "normsink" },
     { name = "psycopg", extra = ["binary"] },
     { name = "uvicorn", extra = ["standard"] },
 ]
@@ -1380,6 +1384,7 @@ requires-dist = [
     { name = "normdict", editable = "packages/normdict" },
     { name = "normexec", editable = "packages/normexec" },
     { name = "normio", editable = "packages/normio" },
+    { name = "normsink", editable = "packages/normsink" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.2,<4" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.31,<1" },
 ]
@@ -1418,6 +1423,7 @@ dependencies = [
     { name = "duckdb" },
     { name = "normcore" },
     { name = "normio" },
+    { name = "normsink" },
     { name = "polars" },
     { name = "pyarrow" },
 ]
@@ -1428,6 +1434,7 @@ requires-dist = [
     { name = "duckdb", specifier = ">=1.1,<2" },
     { name = "normcore", editable = "packages/normcore" },
     { name = "normio", editable = "packages/normio" },
+    { name = "normsink", editable = "packages/normsink" },
     { name = "polars", specifier = ">=1.9,<2" },
     { name = "pyarrow", specifier = ">=17.0,<18" },
 ]
@@ -1459,6 +1466,25 @@ requires-dist = [
     { name = "pymongo", specifier = ">=4.9,<5" },
     { name = "pymysql", specifier = ">=1.1,<2" },
     { name = "sqlalchemy", specifier = ">=2.0,<3" },
+]
+
+[[package]]
+name = "normsink"
+version = "0.1.0"
+source = { editable = "packages/normsink" }
+dependencies = [
+    { name = "clickhouse-connect" },
+    { name = "normcore" },
+    { name = "normio" },
+    { name = "pyarrow" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "clickhouse-connect", specifier = ">=0.8,<1" },
+    { name = "normcore", editable = "packages/normcore" },
+    { name = "normio", editable = "packages/normio" },
+    { name = "pyarrow", specifier = ">=17.0,<18" },
 ]
 
 [[package]]

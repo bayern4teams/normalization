@@ -56,11 +56,14 @@ from normcore.contract import (
     arrow_row_to_normalized_value,
     normalized_value_to_arrow_row,
 )
+from normexec.destination_stream import stream_table_to_destination
 from normexec.planner import DistinctValuePlanner
 from normexec.sinks import SidecarRunSink
-from normexec.stream import stream_column
+from normexec.stream import ChunkProgress, stream_column
 from normio.capabilities import CatalogConnector
 from normio.sidecar_store import SidecarStore
+from normsink.clickhouse import destination_type_for
+from normsink.destination import DestinationColumnSpec
 
 from normanalysis import (
     QUALITY_METRIC_DEFS,
@@ -95,8 +98,8 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from normexec.cache import NormalizationCache
-    from normexec.stream import ChunkProgress
     from normio.capabilities import StreamingCatalogSourceConnector, StreamingSourceConnector
+    from normsink.destination import DestinationConnector
 
     from normanalysis import NormalizationMetrics, TelemetryHandles
     from normapi.executor import RunExecutor
@@ -999,6 +1002,196 @@ class InMemoryStore:
 
         final_status = RunStatus.PARTIAL if any_column_failed else RunStatus.COMPLETED
         finished = recorder.finish(final_status).model_copy(
+            update={"columns": columns, "progress": last_progress}
+        )
+        self.refresh_run(finished)
+        if pg_store is not None:
+            pg_store.save_run(finished)
+
+    def start_destination_execution(
+        self,
+        run_id: str,
+        *,
+        dispatcher: Dispatcher,
+        source_connector: StreamingCatalogSourceConnector,
+        destination_connector: DestinationConnector,
+        source_table: str,
+        destination_table: str,
+        columns: tuple[RunColumnSpec, ...],
+        field_ref_prefix: str,
+        executor: RunExecutor,
+        pg_store: PostgresMetadataStore | None,
+        chunk_size: int = 100_000,
+    ) -> NormalizationRun:
+        """M19 (docs/plan/M13-M22-program-plan.md): mirrors `source_table`
+        into `destination_table` on a real destination — mapped columns
+        normalized (and, for NUMERIC/DATE, typed), every other real
+        source column copied verbatim. The self-write-refusal check
+        (`normsink.assert_destination_is_not_the_source`) has ALREADY run
+        in `normapi.routes.start_destination_run` before either connector
+        here was even constructed — this method never re-checks it, by
+        design: the check exists before the thing it guards against, not
+        alongside it.
+
+        Unlike `start_multi_column_execution`, results never go to the
+        sidecar — a destination run's whole point is writing real rows to
+        `destination_connector`, not accumulating Parquet."""
+        run = self.get_run(run_id)
+        if run.is_terminal():
+            msg = f"Run {run_id!r} already reached terminal status {run.status!r}"
+            raise RunNotExecutableError(msg)
+
+        executor.submit(
+            lambda: self._run_destination_worker(
+                run_id,
+                dispatcher=dispatcher,
+                source_connector=source_connector,
+                destination_connector=destination_connector,
+                source_table=source_table,
+                destination_table=destination_table,
+                columns=columns,
+                field_ref_prefix=field_ref_prefix,
+                pg_store=pg_store,
+                chunk_size=chunk_size,
+            )
+        )
+        return run
+
+    def _run_destination_worker(
+        self,
+        run_id: str,
+        *,
+        dispatcher: Dispatcher,
+        source_connector: StreamingCatalogSourceConnector,
+        destination_connector: DestinationConnector,
+        source_table: str,
+        destination_table: str,
+        columns: tuple[RunColumnSpec, ...],
+        field_ref_prefix: str,
+        pg_store: PostgresMetadataStore | None,
+        chunk_size: int,
+    ) -> None:
+        """Runs in a `RunExecutor` worker thread. Both connectors are
+        DEDICATED to this run (built fresh by the route, never pooled —
+        the same real thread-safety fix M18 made for multi-column source
+        connectors) and are this worker's responsibility to close,
+        success or failure."""
+        try:
+            self._run_destination_worker_inner(
+                run_id,
+                dispatcher=dispatcher,
+                source_connector=source_connector,
+                destination_connector=destination_connector,
+                source_table=source_table,
+                destination_table=destination_table,
+                columns=columns,
+                field_ref_prefix=field_ref_prefix,
+                pg_store=pg_store,
+                chunk_size=chunk_size,
+            )
+        except Exception as exc:
+            failed = self.get_run(run_id).model_copy(
+                update={
+                    "status": RunStatus.FAILED,
+                    "finished_at": datetime.now(UTC).isoformat(),
+                    "failure_reason": str(exc),
+                }
+            )
+            self.refresh_run(failed)
+            if pg_store is not None:
+                pg_store.save_run(failed)
+        finally:
+            source_connector.close()
+            destination_connector.close()
+
+    def _run_destination_worker_inner(
+        self,
+        run_id: str,
+        *,
+        dispatcher: Dispatcher,
+        source_connector: StreamingCatalogSourceConnector,
+        destination_connector: DestinationConnector,
+        source_table: str,
+        destination_table: str,
+        columns: tuple[RunColumnSpec, ...],
+        field_ref_prefix: str,
+        pg_store: PostgresMetadataStore | None,
+        chunk_size: int,
+    ) -> None:
+        run = self.get_run(run_id)
+        recorder = RunRecorder(run)
+        started = recorder.start().model_copy(
+            update={"columns": columns, "progress": RunProgress()}
+        )
+        self.refresh_run(started)
+        if pg_store is not None:
+            pg_store.save_run(started)
+
+        profile = self.get_profile(run.profile_id, run.profile_version)
+        key_columns = _resolve_key_columns(source_connector, source_table)
+        source_columns = source_connector.list_columns(source_table)
+        column_semantic_types = {c.column: c.semantic_type for c in columns}
+
+        destination_columns = [
+            DestinationColumnSpec(
+                name=col.name,
+                destination_type=destination_type_for(
+                    semantic_type_value=column_semantic_types[col.name].value
+                    if col.name in column_semantic_types
+                    else None,
+                    source_type=col.type,
+                ),
+                is_mapped=col.name in column_semantic_types,
+            )
+            for col in source_columns
+        ]
+        destination_connector.ensure_database()
+        destination_connector.ensure_table(
+            destination_table, columns=destination_columns, key_columns=key_columns
+        )
+        destination_connector.ensure_side_table(destination_table)
+
+        total_rows_estimate = _estimate_total_rows(source_connector, columns)
+        chunks_done = 0
+        last_progress = RunProgress(total_rows_estimate=total_rows_estimate)
+
+        def on_chunk_committed(progress: ChunkProgress) -> None:
+            nonlocal chunks_done, last_progress
+            chunks_done += 1
+            last_progress = RunProgress(
+                total_rows_estimate=total_rows_estimate,
+                rows_done=recorder.snapshot().metrics.records_processed,
+                chunks_done=chunks_done,
+                current_table=progress.table,
+                current_column=None,
+            )
+            snapshot = recorder.snapshot().model_copy(
+                update={"columns": columns, "progress": last_progress}
+            )
+            self.refresh_run(snapshot)
+
+        # The return value (total rows processed) isn't captured — it's
+        # already reflected live in recorder.snapshot().metrics via
+        # on_chunk_committed, same as the M17 multi-column worker.
+        stream_table_to_destination(
+            source_connector,
+            run_id=run_id,
+            table=source_table,
+            key_columns=key_columns,
+            source_columns=source_columns,
+            column_semantic_types=column_semantic_types,
+            field_ref_prefix=field_ref_prefix,
+            profile=profile,
+            dispatcher=dispatcher,
+            cache=self._cache,
+            recorder=recorder,
+            destination=destination_connector,
+            destination_table=destination_table,
+            chunk_size=chunk_size,
+            on_chunk_committed=on_chunk_committed,
+        )
+
+        finished = recorder.finish(RunStatus.COMPLETED).model_copy(
             update={"columns": columns, "progress": last_progress}
         )
         self.refresh_run(finished)

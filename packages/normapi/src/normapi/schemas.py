@@ -142,6 +142,40 @@ class MultiColumnRunRequest(BaseModel):
         return self
 
 
+class DestinationRunRequest(BaseModel):
+    """POST /normalization/runs/{run_id}/destination body — M19. Mirrors
+    one real source table into a real destination database: every
+    column mapped in `columns` is normalized (and, for NUMERIC/DATE, real
+    typed), every other real column of `source_table` is copied verbatim
+    — decision 6/7 of the M13-M22 program.
+
+    `i_understand_same_server` (M19's own hard rule, plan callout #3):
+    the ONLY way to target a different database on the SAME server as
+    the source — never bypasses the exact-identity self-write refusal,
+    only the same-server-different-database one. Defaults to `False`;
+    must be deliberately set `True` to write next to the real source."""
+
+    source_connection_id: str
+    source_database: str
+    source_table: str
+    destination_connection_id: str
+    destination_database: str
+    destination_table: str
+    columns: tuple[RunColumnSpec, ...]
+    chunk_size: int = Field(default=100_000, gt=0, le=1_000_000)
+    i_understand_same_server: bool = False
+
+    @model_validator(mode="after")
+    def _at_least_one_mapped_column(self) -> Self:
+        if not self.columns:
+            msg = "columns must be non-empty"
+            raise ValueError(msg)
+        if any(c.table != self.source_table for c in self.columns):
+            msg = "every column must belong to source_table — a destination run mirrors ONE table"
+            raise ValueError(msg)
+        return self
+
+
 class CollisionDecisionRequest(BaseModel):
     """§92 Collision Dashboard: a human reviewer's real disposition on
     one collision group. `normalized_value` is carried in the body

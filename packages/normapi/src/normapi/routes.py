@@ -52,6 +52,9 @@ from typing import TYPE_CHECKING, Annotated, cast
 from fastapi import APIRouter, Body, Depends, HTTPException
 from normcore.pii import safe_preview
 from normio.capabilities import CatalogConnector, CatalogSourceConnector, StreamingSourceConnector
+from normsink.clickhouse import ClickHouseDestinationConnector
+
+from normsink import SelfWriteRefusedError, assert_destination_is_not_the_source
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -101,6 +104,7 @@ from normapi.schemas import (
     ConnectionTestRequest,
     ConnectionTestResponse,
     ConnectionUpdateRequest,
+    DestinationRunRequest,
     DetectTypeRequest,
     DictionaryCreateRequest,
     DictionaryRollbackRequest,
@@ -956,6 +960,114 @@ def start_multi_column_run(
         raise HTTPException(status_code=404, detail=f"No such run: {run_id}") from exc
     except RunNotExecutableError as exc:
         connector.close()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post("/runs/{run_id}/destination", response_model=NormalizationRun, status_code=202)
+def start_destination_run(
+    run_id: str,
+    body: DestinationRunRequest,
+    *,
+    store: Annotated[InMemoryStore, Depends(get_store)],
+    dispatcher: Annotated[Dispatcher, Depends(get_dispatcher)],
+    resolver: Annotated[ConnectionResolver | None, Depends(get_connection_resolver)],
+    pg_store: Annotated[PostgresMetadataStore | None, Depends(get_postgres_store)],
+    executor: Annotated[RunExecutor, Depends(get_run_executor)],
+) -> NormalizationRun:
+    """M19 — mirrors a real source table into a real destination
+    database (decision 6). THE SELF-WRITE-REFUSAL CHECK RUNS FIRST,
+    before either connector is built or any DDL runs — see
+    `normsink.assert_destination_is_not_the_source`'s own docstring: the
+    check exists before the thing it guards against, not alongside it.
+    A caller wanting to target a different database on the SAME server
+    as the source must pass `i_understand_same_server: true` explicitly
+    (M19's callout #3 fix); an exact source==destination match can never
+    be bypassed, with or without that flag."""
+    source_record = _require_connection(pg_store, body.source_connection_id)
+    destination_record = _require_connection(pg_store, body.destination_connection_id)
+
+    source_identity = connection_identity(
+        source_record.kind, source_record.host, source_record.port, body.source_database
+    )
+    destination_identity = connection_identity(
+        destination_record.kind,
+        destination_record.host,
+        destination_record.port,
+        body.destination_database,
+    )
+    try:
+        assert_destination_is_not_the_source(
+            source_identity=source_identity,
+            destination_identity=destination_identity,
+            source_host=source_record.host,
+            source_port=source_record.port,
+            destination_host=destination_record.host,
+            destination_port=destination_record.port,
+            i_understand_same_server=body.i_understand_same_server,
+        )
+    except SelfWriteRefusedError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    if resolver is None:
+        raise _connection_registry_unavailable()
+
+    resolved_source = resolver.resolve(body.source_connection_id)
+    source_connector = build_connector_from_parts(
+        body.source_connection_id,
+        kind=resolved_source.kind,
+        host=resolved_source.host,
+        port=resolved_source.port,
+        username=resolved_source.username,
+        password=resolved_source.password,
+        database=body.source_database,
+    )
+    if not isinstance(source_connector, CatalogConnector) or not isinstance(
+        source_connector, StreamingSourceConnector
+    ):
+        source_connector.close()
+        raise HTTPException(
+            status_code=501,
+            detail=f"{source_record.kind!r} connections cannot be a destination-run source",
+        )
+    if destination_record.kind != "clickhouse":
+        source_connector.close()
+        raise HTTPException(
+            status_code=501,
+            detail=f"{destination_record.kind!r} destinations are not supported yet "
+            "(only clickhouse)",
+        )
+
+    resolved_destination = resolver.resolve(body.destination_connection_id)
+    destination_connector = ClickHouseDestinationConnector(
+        host=resolved_destination.host,
+        port=resolved_destination.port,
+        username=resolved_destination.username,
+        password=resolved_destination.password,
+        database=body.destination_database,
+    )
+
+    field_ref_prefix = f"{source_identity}.{body.source_database}.{body.source_table}."
+    try:
+        return store.start_destination_execution(
+            run_id,
+            dispatcher=dispatcher,
+            source_connector=source_connector,
+            destination_connector=destination_connector,
+            source_table=body.source_table,
+            destination_table=body.destination_table,
+            columns=body.columns,
+            field_ref_prefix=field_ref_prefix,
+            executor=executor,
+            pg_store=pg_store,
+            chunk_size=body.chunk_size,
+        )
+    except RunNotFoundError as exc:
+        source_connector.close()
+        destination_connector.close()
+        raise HTTPException(status_code=404, detail=f"No such run: {run_id}") from exc
+    except RunNotExecutableError as exc:
+        source_connector.close()
+        destination_connector.close()
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
