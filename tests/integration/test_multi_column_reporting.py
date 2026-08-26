@@ -191,6 +191,42 @@ class TestPerColumnReportsOnARealMultiColumnRun:
         finally:
             client.delete(f"/normalization/connections/{connection_id}")
 
+    def test_legacy_no_selector_route_on_a_multi_column_run_returns_empty_not_500(
+        self, tmp_path: Path
+    ) -> None:
+        """M21 regression test for a real bug found via live UI testing:
+        `store.py`'s `_hydrate_execution_from_sidecar` calls
+        `find_run_table` (a bare "LIMIT 1, no column filter" lookup) which
+        finds a real row for a multi-column run (M17 runs always write
+        real, non-empty `column_name` values), then calls
+        `sidecar.read_run(..., column="")` — the legacy path's default —
+        which raised an uncaught `FileNotFoundError` (no sidecar row has
+        `column_name=''`) that propagated as an unhandled 500 (browsers
+        report this as a CORS failure, masking the real error — the same
+        pattern M7's pack already disclosed for a different route). Hit
+        exactly as the legacy `RunDetailPage`/`CollisionsPage` UI does:
+        no `table`/`column` query params at all against a real
+        multi-column run. The honest fix returns 200 with an empty list
+        (no legacy single-column data exists for this run), not a crash."""
+        _skip_if_pg_unreachable()
+        app = _create_app(tmp_path)
+        client = TestClient(app)
+        connection_id = _create_real_connection(client, "m21-no-selector-verify")
+        try:
+            run_id = _start_two_column_industry_run(client, connection_id)
+            final = _poll_until(client, run_id, timeout=60)
+            assert final.get("status") == "COMPLETED", final
+
+            errors_no_selector = client.get(f"/normalization/runs/{run_id}/errors")
+            assert errors_no_selector.status_code == 200
+            assert errors_no_selector.json() == []
+
+            collisions_no_selector = client.get(f"/normalization/runs/{run_id}/collisions")
+            assert collisions_no_selector.status_code == 200
+            assert collisions_no_selector.json() == []
+        finally:
+            client.delete(f"/normalization/connections/{connection_id}")
+
     def test_values_pagination_covers_every_row_exactly_once(self, tmp_path: Path) -> None:
         """The real fix for the plan's own callout: `/values` pushed down
         to DuckDB OFFSET/LIMIT, never a full `to_pylist()`."""

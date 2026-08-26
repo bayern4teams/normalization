@@ -25,6 +25,11 @@ export function RunsPage() {
       const hasActiveRun = runs?.some((run) => ACTIVE_STATUSES.has(run.status));
       return hasActiveRun ? 1500 : false;
     },
+    // M21 finding, applied here too: TanStack Query's default pauses
+    // interval refetching while the tab is backgrounded/hidden — a run
+    // this page is waiting on can finish while the user is on another
+    // tab, and this page should still catch it without a manual reload.
+    refetchIntervalInBackground: true,
   });
   const profilesQuery = useQuery({ queryKey: ["profiles"], queryFn: listProfiles });
   const sourcesQuery = useQuery({ queryKey: ["sources"], queryFn: listSources });

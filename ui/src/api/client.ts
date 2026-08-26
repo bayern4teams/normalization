@@ -9,6 +9,10 @@ import type {
   CollisionDecision,
   CollisionDecisionType,
   CollisionGroup,
+  ColumnMappingResponse,
+  ConnectionKindInfo,
+  ConnectionResponse,
+  ConnectionTestResponse,
   DictionarySummary,
   ErrorPolicy,
   FieldNormalizationConfig,
@@ -23,7 +27,9 @@ import type {
   OverviewReport,
   ProfileSuggestion,
   QualityReport,
+  RunColumnSpec,
   RunSourceRequest,
+  TableSpecResponse,
   TypeSuggestion,
 } from "./types";
 
@@ -207,17 +213,44 @@ export function getRun(runId: string): Promise<NormalizationRun> {
   return request(`/runs/${runId}`);
 }
 
-export function getRunErrors(runId: string): Promise<NormalizationError[]> {
-  return request(`/runs/${runId}/errors`);
+// M18: `table`/`column` select one column of a multi-column run; omitted,
+// the original single-column lookup is unchanged.
+export interface ColumnSelector {
+  table?: string;
+  column?: string;
 }
 
-export function getRunCollisions(runId: string): Promise<CollisionGroup[]> {
-  return request(`/runs/${runId}/collisions`);
+function selectorParams(selector?: ColumnSelector): string {
+  if (!selector?.table) return "";
+  const params = new URLSearchParams({ table: selector.table });
+  if (selector.column) params.set("column", selector.column);
+  return `?${params.toString()}`;
+}
+
+export function getRunErrors(
+  runId: string,
+  selector?: ColumnSelector,
+): Promise<NormalizationError[]> {
+  return request(`/runs/${runId}/errors${selectorParams(selector)}`);
+}
+
+export function getRunCollisions(
+  runId: string,
+  selector?: ColumnSelector,
+): Promise<CollisionGroup[]> {
+  return request(`/runs/${runId}/collisions${selectorParams(selector)}`);
 }
 
 export function recordCollisionDecision(
   runId: string,
-  body: { normalized_value: string; decision: CollisionDecisionType; decided_by: string; note?: string },
+  body: {
+    normalized_value: string;
+    decision: CollisionDecisionType;
+    decided_by: string;
+    note?: string;
+    table?: string;
+    column?: string;
+  },
 ): Promise<CollisionDecision> {
   return request(`/runs/${runId}/collisions/decision`, {
     method: "POST",
@@ -235,25 +268,43 @@ export function listSourceTables(sourceId: string): Promise<string[]> {
   return request(`/sources/${sourceId}/tables`);
 }
 
+// M18: real offset/limit pagination, pushed down to DuckDB for a
+// sidecar-backed selection — never fetches a whole multi-million-row
+// column at once.
 export function getRunValues(
   runId: string,
+  selector?: ColumnSelector & { offset?: number; limit?: number },
 ): Promise<{ original: string | null; result: NormalizedValue }[]> {
-  return request(`/runs/${runId}/values`);
+  const params = new URLSearchParams();
+  if (selector?.table) params.set("table", selector.table);
+  if (selector?.column) params.set("column", selector.column);
+  if (selector?.offset !== undefined) params.set("offset", String(selector.offset));
+  if (selector?.limit !== undefined) params.set("limit", String(selector.limit));
+  const qs = params.toString();
+  return request(`/runs/${runId}/values${qs ? `?${qs}` : ""}`);
 }
 
-export function getRunProfile(runId: string): Promise<FieldProfile> {
-  return request(`/runs/${runId}/profile`);
+export function getRunProfile(runId: string, selector?: ColumnSelector): Promise<FieldProfile> {
+  return request(`/runs/${runId}/profile${selectorParams(selector)}`);
 }
 
-export function compareRuns(runIdA: string, runIdB: string): Promise<AbComparisonReport> {
+export function compareRuns(
+  runIdA: string,
+  runIdB: string,
+  selector?: ColumnSelector,
+): Promise<AbComparisonReport> {
   const params = new URLSearchParams({ run_id_a: runIdA, run_id_b: runIdB });
+  if (selector?.table) params.set("table", selector.table);
+  if (selector?.column) params.set("column", selector.column);
   return request(`/runs/compare?${params.toString()}`);
 }
 
 // --- impact / overview / quality -------------------------------------------
 
-export function getImpact(runId: string): Promise<ImpactReport> {
+export function getImpact(runId: string, selector?: ColumnSelector): Promise<ImpactReport> {
   const params = new URLSearchParams({ run_id: runId });
+  if (selector?.table) params.set("table", selector.table);
+  if (selector?.column) params.set("column", selector.column);
   return request(`/impact?${params.toString()}`);
 }
 
@@ -330,4 +381,109 @@ export function rollbackDictionary(
 export function deleteDictionary(dictionaryId: string, by: string): Promise<void> {
   const params = new URLSearchParams({ by });
   return request(`/dictionaries/${dictionaryId}?${params.toString()}`, { method: "DELETE" });
+}
+
+// --- connections (M15, M21 Connect step) ------------------------------
+
+export function listConnectionKinds(): Promise<ConnectionKindInfo[]> {
+  return request("/connection-kinds");
+}
+
+export function testConnection(body: {
+  kind: string;
+  host: string;
+  port?: number;
+  username: string;
+  password: string;
+  database: string;
+}): Promise<ConnectionTestResponse> {
+  return request("/connections/test", { method: "POST", body: JSON.stringify(body) });
+}
+
+export function createConnection(body: {
+  alias: string;
+  kind: string;
+  host: string;
+  port?: number;
+  username: string;
+  password: string;
+  database: string;
+}): Promise<ConnectionResponse> {
+  return request("/connections", { method: "POST", body: JSON.stringify(body) });
+}
+
+export function listConnections(): Promise<ConnectionResponse[]> {
+  return request("/connections");
+}
+
+export function deleteConnection(connectionId: string): Promise<void> {
+  return request(`/connections/${connectionId}`, { method: "DELETE" });
+}
+
+// --- catalog browsing (M14/M16, M21 Explore step) -----------------------
+
+export function listConnectionDatabases(connectionId: string): Promise<string[]> {
+  return request(`/connections/${connectionId}/databases`);
+}
+
+export function listConnectionTables(connectionId: string, database: string): Promise<string[]> {
+  return request(`/connections/${connectionId}/databases/${database}/tables`);
+}
+
+export function getConnectionTableColumns(
+  connectionId: string,
+  database: string,
+  table: string,
+): Promise<TableSpecResponse> {
+  return request(`/connections/${connectionId}/databases/${database}/tables/${table}/columns`);
+}
+
+export function sampleConnectionTable(
+  connectionId: string,
+  database: string,
+  table: string,
+  n = 5,
+): Promise<Record<string, string[]>> {
+  const params = new URLSearchParams({ n: String(n) });
+  return request(
+    `/connections/${connectionId}/databases/${database}/tables/${table}/samples?${params.toString()}`,
+  );
+}
+
+// --- column mappings (M16, M21 Explore step) -----------------------------
+
+export function listColumnMappings(
+  connectionId: string,
+  database: string,
+  table: string,
+): Promise<ColumnMappingResponse[]> {
+  return request(`/connections/${connectionId}/databases/${database}/tables/${table}/mappings`);
+}
+
+export function upsertColumnMapping(
+  connectionId: string,
+  database: string,
+  table: string,
+  column: string,
+  body: { semantic_type: FieldSemanticType; enabled?: boolean; updated_by: string; profile_id?: string },
+): Promise<ColumnMappingResponse> {
+  return request(
+    `/connections/${connectionId}/databases/${database}/tables/${table}/columns/${column}/mapping`,
+    { method: "PUT", body: JSON.stringify(body) },
+  );
+}
+
+// --- multi-column runs (M17, M21 Explore -> Report) ----------------------
+
+export function startMultiColumnRun(
+  runId: string,
+  body: {
+    connection_id: string;
+    database: string;
+    columns: RunColumnSpec[];
+    chunk_size?: number;
+    mode?: "incremental" | "full_resync";
+  },
+): Promise<NormalizationRun> {
+  return request(`/runs/${runId}/columns`, { method: "POST", body: JSON.stringify(body) });
 }

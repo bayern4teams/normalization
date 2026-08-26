@@ -1485,7 +1485,21 @@ class InMemoryStore:
         if location is None:
             return None
         source_id, table = location
-        arrow_table = self._sidecar.read_run(source_id=source_id, table=table, run_id=run_id)
+        try:
+            # `find_run_table` only guarantees SOME row exists for this
+            # run_id — for a real M17 multi-column run, every row's
+            # `column_name` is non-empty, so the legacy `column=""`
+            # lookup this bare (no selector) call makes never matches.
+            # A real, live-verified bug (found via the M21 UI actually
+            # hitting `/runs/{id}/errors` for a still-multi-column run):
+            # this raised an uncaught FileNotFoundError -> 500 before
+            # this try/except existed. `None` is the honest answer here
+            # — no legacy single-column data exists for this run; a
+            # caller wanting real data from a multi-column run must use
+            # `get_column_execution` with an explicit table/column.
+            arrow_table = self._sidecar.read_run(source_id=source_id, table=table, run_id=run_id)
+        except FileNotFoundError:
+            return None
         originals, results = _table_to_results(arrow_table)
         # Every row carries its own real semantic_type (part of the
         # persisted schema); a zero-value run has none to read, so

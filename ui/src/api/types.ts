@@ -152,6 +152,24 @@ export interface NormalizationRunMetrics {
   cache_misses: number;
 }
 
+// M17 — one column a multi-column run normalizes.
+export interface RunColumnSpec {
+  table: string;
+  column: string;
+  semantic_type: FieldSemanticType;
+}
+
+// M17 — mid-run progress for a multi-column chunked execution.
+export interface RunProgress {
+  total_rows_estimate: number | null;
+  rows_done: number;
+  chunks_done: number;
+  current_table: string | null;
+  current_column: string | null;
+  // M20
+  rows_skipped_null_watermark: number;
+}
+
 export interface NormalizationRun {
   id: string;
   profile_id: string;
@@ -163,6 +181,10 @@ export interface NormalizationRun {
   status: RunStatus;
   metrics: NormalizationRunMetrics;
   failure_reason: string | null;
+  // M17 — present (non-empty) only for a multi-column/destination run;
+  // absent/empty for the original single-column pasted-values path.
+  columns: RunColumnSpec[];
+  progress: RunProgress | null;
 }
 
 export interface RunSourceRequest {
@@ -300,6 +322,61 @@ export interface ProfileSuggestion {
   recommended_summary: string;
   risk: string;
   real_steps: string[];
+}
+
+// --- connections (M15) -------------------------------------------------
+
+export interface ConnectionResponse {
+  id: string;
+  alias: string;
+  kind: string;
+  host: string;
+  port: number;
+  username: string;
+  database: string;
+  identity: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ConnectionKindInfo {
+  kind: string;
+  default_port: number;
+}
+
+export interface ConnectionTestResponse {
+  ok: boolean;
+  databases: string[];
+  error: string | null;
+}
+
+// --- catalog (M14/M16) ---------------------------------------------------
+
+export interface ColumnSpecResponse {
+  name: string;
+  type: string;
+  nullable: boolean;
+  is_primary_key: boolean;
+}
+
+export interface TableSpecResponse {
+  name: string;
+  engine: string | null;
+  approx_rows: number | null;
+  columns: ColumnSpecResponse[];
+}
+
+export type SemanticSource = "USER" | "AUTO_DETECTED" | "DEFAULT";
+
+export interface ColumnMappingResponse {
+  database: string;
+  table_name: string;
+  column_name: string;
+  semantic_type: FieldSemanticType;
+  semantic_source: SemanticSource;
+  enabled: boolean;
+  updated_at: string;
+  updated_by: string;
 }
 
 export const FIELD_SEMANTIC_TYPES: FieldSemanticType[] = [
