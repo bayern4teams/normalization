@@ -50,6 +50,13 @@ class ChunkProgress:
     chunk_index: int
     last_key: tuple[object, ...]
     rows_processed: int
+    # M20: the max real `created_at` value seen in this chunk, when
+    # `track_created_at=True` — `None` when watermark tracking wasn't
+    # requested, or the table has no `created_at` column. The caller
+    # (normapi.store) accumulates this across chunks/columns to know how
+    # far an incremental watermark may safely advance once the run
+    # completes.
+    last_created_at: object | None = None
 
 
 def stream_column(
@@ -69,6 +76,7 @@ def stream_column(
     chunk_size: int = 100_000,
     resume_after_key: tuple[object, ...] | None = None,
     since: object | None = None,
+    track_created_at: bool = False,
     on_chunk_committed: Callable[[ChunkProgress], None] | None = None,
 ) -> int:
     """Streams `table.column`, chunk by chunk, until `read_chunk` reports
@@ -79,18 +87,33 @@ def stream_column(
     report `ChunkProgress` — a caller persisting that progress durably is
     what makes `resume_after_key` on a later call actually resumable.
 
+    `since` (M20): real `created_at > since` keyset filtering, pushed
+    down by the connector — an incremental run's watermark.
+    `track_created_at` (M20): when `True`, also fetches `created_at` per
+    row and reports each chunk's max value via `ChunkProgress.
+    last_created_at` — what the caller advances a watermark to, only
+    after this chunk's write is confirmed committed.
+
     Returns the total row count processed across every chunk.
     """
     planner = DistinctValuePlanner(dispatcher, cache)
     after_key = resume_after_key
     chunk_index = 0
     rows_processed = 0
+    fetch_columns = (
+        [column, *key_columns, "created_at"]
+        if track_created_at
+        else [
+            column,
+            *key_columns,
+        ]
+    )
 
     while True:
         batch = connector.read_chunk(
             table,
             key_columns=key_columns,
-            columns=[column, *key_columns],
+            columns=fetch_columns,
             after_key=after_key,
             limit=chunk_size,
             since=since,
@@ -100,6 +123,11 @@ def stream_column(
 
         column_values: list[str | None] = batch.column(column).to_pylist()
         key_arrays = [batch.column(name) for name in key_columns]
+        last_created_at = None
+        if track_created_at:
+            real_values = [v for v in batch.column("created_at").to_pylist() if v is not None]
+            if real_values:
+                last_created_at = max(real_values)
 
         results = planner.normalize_values(
             column_values,
@@ -135,6 +163,7 @@ def stream_column(
                     chunk_index=chunk_index,
                     last_key=last_key,
                     rows_processed=rows_processed,
+                    last_created_at=last_created_at,
                 )
             )
 

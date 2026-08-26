@@ -127,6 +127,18 @@ class SqlConnectorBase:
         with self._engine.connect() as conn:
             return [row[0] for row in conn.execute(query)]
 
+    def count_null(self, table: str, column: str) -> int:
+        metadata = sa.MetaData()
+        sql_table = sa.Table(table, metadata, autoload_with=self._engine)
+        if column not in sql_table.c:
+            msg = f"Unknown column for table {table!r}: {column!r}"
+            raise ValueError(msg)
+        col = sql_table.c[column]
+        query = sa.select(sa.func.count()).select_from(sql_table).where(col.is_(None))
+        with self._engine.connect() as conn:
+            result = conn.execute(query).scalar_one()
+        return int(result)
+
     def read_chunk(
         self,
         table: str,

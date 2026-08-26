@@ -124,6 +124,14 @@ class ClickHouseConnector:
         )
         return [row[0] for row in result.result_rows]
 
+    def count_null(self, table: str, column: str) -> int:
+        if column not in self._column_names(table):
+            msg = f"Unknown column for table {table!r}: {column!r}"
+            raise ValueError(msg)
+        result = self._client.query(f"SELECT count(*) FROM `{table}` WHERE `{column}` IS NULL")
+        count: int = result.result_rows[0][0]
+        return count
+
     def read_chunk(
         self,
         table: str,

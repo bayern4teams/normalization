@@ -99,6 +99,15 @@ class RunProgress(BaseModel):
     chunks_done: int = 0
     current_table: str | None = None
     current_column: str | None = None
+    # M20 (docs/plan/M13-M22-program-plan.md): a real, surfaced count of
+    # rows a `created_at` incremental watermark structurally cannot see —
+    # `created_at IS NULL` rows never satisfy `created_at > watermark`,
+    # so they would otherwise be silently skipped forever (plan callout
+    # #1). Always 0 for a non-incremental run, or a table whose
+    # `created_at` column has no real NULL rows (verified: `Person`/
+    # `Company` both currently have zero, per M14/M17's own live checks —
+    # a latent trap in the column TYPE, not a live bug today).
+    rows_skipped_null_watermark: int = 0
 
 
 class NormalizationRun(BaseModel):

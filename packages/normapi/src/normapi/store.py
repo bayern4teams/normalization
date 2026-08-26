@@ -47,6 +47,7 @@ from __future__ import annotations
 
 import threading
 import uuid
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
@@ -272,6 +273,63 @@ def _estimate_total_rows(
         return sum(connector.table_spec(table).approx_rows or 0 for table in tables)
     except ValueError:
         return None
+
+
+@dataclass
+class _TableWatermarkState:
+    """M20 (docs/plan/M13-M22-program-plan.md): one table's real
+    incremental-sync state for the duration of one run — resolved ONCE
+    per distinct table (not per mapped column, since it's a property of
+    the table, not of any one column normalized from it)."""
+
+    trackable: bool
+    since: object | None
+    rows_skipped_null: int
+    max_created_at_seen: object | None = None
+    failed: bool = False
+
+
+@dataclass
+class _RunProgressAccumulator:
+    """Shared mutable progress state threaded through
+    `_run_multi_column_one_column` across every column of a run — plain
+    `nonlocal` counters don't survive being split into a separate method,
+    this is the real replacement."""
+
+    last_progress: RunProgress
+    chunks_done: int = 0
+
+
+def _resolve_table_watermark_state(
+    connector: StreamingCatalogSourceConnector,
+    *,
+    pg_store: PostgresMetadataStore | None,
+    connection_identity: str,
+    database: str,
+    table: str,
+) -> _TableWatermarkState:
+    """Resolves whether `table` can be incrementally watermarked at all
+    (a real `created_at` column must exist), the real `since` value to
+    filter by (the saved watermark, if any — `None` on a first run or
+    right after a `full_resync`), and a real count of rows a `created_at`
+    watermark structurally can never see: `created_at IS NULL` rows never
+    satisfy `created_at > since`, so without this count they'd be
+    silently invisible forever (the plan's own callout #1)."""
+    spec = connector.table_spec(table)
+    if not spec.has_created_at or pg_store is None:
+        return _TableWatermarkState(trackable=False, since=None, rows_skipped_null=0)
+
+    watermark = pg_store.get_watermark(
+        connection_identity=connection_identity, database=database, table_name=table
+    )
+    since = watermark.last_created_at if watermark is not None else None
+
+    created_at_spec = next((c for c in spec.columns if c.name == "created_at"), None)
+    rows_skipped_null = 0
+    if created_at_spec is not None and created_at_spec.nullable:
+        rows_skipped_null = connector.count_null(table, "created_at")
+
+    return _TableWatermarkState(trackable=True, since=since, rows_skipped_null=rows_skipped_null)
 
 
 class _RunExecution:
@@ -779,6 +837,7 @@ class InMemoryStore:
         executor: RunExecutor,
         pg_store: PostgresMetadataStore | None,
         chunk_size: int = 100_000,
+        mode: str = "incremental",
     ) -> NormalizationRun:
         """M17 (docs/plan/M13-M22-program-plan.md): a real multi-column,
         chunked, resumable run — decision 5's "one run holds many
@@ -818,6 +877,7 @@ class InMemoryStore:
                 sidecar_source_id=sidecar_source_id,
                 pg_store=pg_store,
                 chunk_size=chunk_size,
+                mode=mode,
             )
         )
         return run
@@ -834,6 +894,7 @@ class InMemoryStore:
         sidecar_source_id: str,
         pg_store: PostgresMetadataStore | None,
         chunk_size: int,
+        mode: str = "incremental",
     ) -> None:
         """Runs in a `RunExecutor` worker thread. Mirrors
         `_run_execution_worker`'s "an uncaught exception becomes a real
@@ -856,6 +917,7 @@ class InMemoryStore:
                 sidecar_source_id=sidecar_source_id,
                 pg_store=pg_store,
                 chunk_size=chunk_size,
+                mode=mode,
             )
         except Exception as exc:
             failed = self.get_run(run_id).model_copy(
@@ -883,6 +945,7 @@ class InMemoryStore:
         sidecar_source_id: str,
         pg_store: PostgresMetadataStore | None,
         chunk_size: int,
+        mode: str = "incremental",
     ) -> None:
         assert self._sidecar is not None  # checked by the caller
         run = self.get_run(run_id)
@@ -897,108 +960,68 @@ class InMemoryStore:
         profile = self.get_profile(run.profile_id, run.profile_version)
         sink = SidecarRunSink(self._sidecar, source_id=sidecar_source_id)
 
+        distinct_tables = {c.table for c in columns}
+        if mode == "full_resync" and pg_store is not None:
+            for table in distinct_tables:
+                pg_store.reset_watermark(
+                    connection_identity=connection_identity, database=database, table_name=table
+                )
+
         total_rows_estimate = _estimate_total_rows(connector, columns)
-        chunks_done = 0
         any_column_failed = False
-        last_progress = RunProgress(total_rows_estimate=total_rows_estimate)
+        watermark_state: dict[str, _TableWatermarkState] = {
+            table: _resolve_table_watermark_state(
+                connector,
+                pg_store=pg_store,
+                connection_identity=connection_identity,
+                database=database,
+                table=table,
+            )
+            for table in distinct_tables
+        }
+        rows_skipped_null_watermark = sum(s.rows_skipped_null for s in watermark_state.values())
+        progress_acc = _RunProgressAccumulator(
+            last_progress=RunProgress(
+                total_rows_estimate=total_rows_estimate,
+                rows_skipped_null_watermark=rows_skipped_null_watermark,
+            )
+        )
 
         for column_spec in columns:
-            table, column, semantic_type = (
-                column_spec.table,
-                column_spec.column,
-                column_spec.semantic_type,
-            )
-            if pg_store is not None:
-                pg_store.upsert_run_column(
-                    run_id=run_id,
-                    table_name=table,
-                    column_name=column,
-                    semantic_type=semantic_type.value,
-                    status="RUNNING",
-                )
-
-            key_columns = _resolve_key_columns(connector, table)
-            field_ref = f"{connection_identity}.{database}.{table}.{column}"
-            ctx = profile.build_context(field_ref, semantic_type, error_policy=None)
-
-            resume_row = (
-                pg_store.get_last_chunk(run_id=run_id, table_name=table, column_name=column)
-                if pg_store is not None
-                else None
-            )
-            resume_after_key = resume_row.last_key if resume_row is not None else None
-
-            def on_chunk_committed(progress: ChunkProgress) -> None:
-                nonlocal chunks_done, last_progress
-                chunks_done += 1
-                if pg_store is not None:
-                    pg_store.record_chunk(
-                        run_id=progress.run_id,
-                        table_name=progress.table,
-                        column_name=progress.column,
-                        chunk_index=progress.chunk_index,
-                        last_key=progress.last_key,
-                        rows_processed=progress.rows_processed,
-                    )
-                last_progress = RunProgress(
-                    total_rows_estimate=total_rows_estimate,
-                    rows_done=recorder.snapshot().metrics.records_processed,
-                    chunks_done=chunks_done,
-                    current_table=progress.table,
-                    current_column=progress.column,
-                )
-                snapshot = recorder.snapshot().model_copy(
-                    update={"columns": columns, "progress": last_progress}
-                )
-                self.refresh_run(snapshot)
-
-            column_rows_processed = 0
-            try:
-                column_rows_processed = stream_column(
-                    connector,
-                    run_id=run_id,
-                    table=table,
-                    column=column,
-                    key_columns=key_columns,
-                    semantic_type=semantic_type,
-                    context=ctx,
-                    profile=profile,
-                    dispatcher=dispatcher,
-                    cache=self._cache,
-                    recorder=recorder,
-                    sink=sink,
-                    chunk_size=chunk_size,
-                    resume_after_key=resume_after_key,
-                    on_chunk_committed=on_chunk_committed,
-                )
-            except Exception as exc:
-                any_column_failed = True
-                if pg_store is not None:
-                    pg_store.upsert_run_column(
-                        run_id=run_id,
-                        table_name=table,
-                        column_name=column,
-                        semantic_type=semantic_type.value,
-                        status="FAILED",
-                        failure_reason=str(exc),
-                    )
-                continue
-            if pg_store is not None:
-                pg_store.upsert_run_column(
-                    run_id=run_id,
-                    table_name=table,
-                    column_name=column,
-                    semantic_type=semantic_type.value,
-                    status="COMPLETED",
-                    rows_processed=column_rows_processed,
-                )
-            self._record_column_stats_from_sidecar(
-                run_id=run_id,
-                table=table,
-                column=column,
-                semantic_type=semantic_type,
+            success = self._run_multi_column_one_column(
+                run_id,
+                column_spec,
+                connector=connector,
+                connection_identity=connection_identity,
+                database=database,
+                profile=profile,
+                dispatcher=dispatcher,
+                sink=sink,
+                chunk_size=chunk_size,
+                recorder=recorder,
+                columns=columns,
+                pg_store=pg_store,
                 sidecar_source_id=sidecar_source_id,
+                table_state=watermark_state[column_spec.table],
+                total_rows_estimate=total_rows_estimate,
+                rows_skipped_null_watermark=rows_skipped_null_watermark,
+                progress_acc=progress_acc,
             )
+            if not success:
+                any_column_failed = True
+
+        last_progress = progress_acc.last_progress
+        if pg_store is not None:
+            for table, table_state in watermark_state.items():
+                if table_state.failed or table_state.max_created_at_seen is None:
+                    continue
+                pg_store.advance_watermark(
+                    connection_identity=connection_identity,
+                    database=database,
+                    table_name=table,
+                    last_created_at=str(table_state.max_created_at_seen),
+                    last_run_id=run_id,
+                )
 
         final_status = RunStatus.PARTIAL if any_column_failed else RunStatus.COMPLETED
         finished = recorder.finish(final_status).model_copy(
@@ -1008,6 +1031,136 @@ class InMemoryStore:
         if pg_store is not None:
             pg_store.save_run(finished)
 
+    def _run_multi_column_one_column(
+        self,
+        run_id: str,
+        column_spec: RunColumnSpec,
+        *,
+        connector: StreamingCatalogSourceConnector,
+        connection_identity: str,
+        database: str,
+        profile: NormalizationProfile,
+        dispatcher: Dispatcher,
+        sink: SidecarRunSink,
+        chunk_size: int,
+        recorder: RunRecorder,
+        columns: tuple[RunColumnSpec, ...],
+        pg_store: PostgresMetadataStore | None,
+        sidecar_source_id: str,
+        table_state: _TableWatermarkState,
+        total_rows_estimate: int | None,
+        rows_skipped_null_watermark: int,
+        progress_acc: _RunProgressAccumulator,
+    ) -> bool:
+        """One column of `_run_multi_column_worker_inner`'s per-column
+        loop, split out to keep that method's own statement count
+        reasonable. Returns `True` on success, `False` on a real
+        exception from `stream_column` (already recorded as `run_columns`
+        `FAILED`, with `table_state.failed` set so the caller never
+        advances that table's watermark past a column that didn't really
+        finish)."""
+        table, column, semantic_type = (
+            column_spec.table,
+            column_spec.column,
+            column_spec.semantic_type,
+        )
+        if pg_store is not None:
+            pg_store.upsert_run_column(
+                run_id=run_id,
+                table_name=table,
+                column_name=column,
+                semantic_type=semantic_type.value,
+                status="RUNNING",
+            )
+
+        key_columns = _resolve_key_columns(connector, table)
+        field_ref = f"{connection_identity}.{database}.{table}.{column}"
+        ctx = profile.build_context(field_ref, semantic_type, error_policy=None)
+
+        resume_row = (
+            pg_store.get_last_chunk(run_id=run_id, table_name=table, column_name=column)
+            if pg_store is not None
+            else None
+        )
+        resume_after_key = resume_row.last_key if resume_row is not None else None
+
+        def on_chunk_committed(progress: ChunkProgress) -> None:
+            progress_acc.chunks_done += 1
+            if pg_store is not None:
+                pg_store.record_chunk(
+                    run_id=progress.run_id,
+                    table_name=progress.table,
+                    column_name=progress.column,
+                    chunk_index=progress.chunk_index,
+                    last_key=progress.last_key,
+                    rows_processed=progress.rows_processed,
+                )
+            if progress.last_created_at is not None:
+                table_state.max_created_at_seen = progress.last_created_at
+            progress_acc.last_progress = RunProgress(
+                total_rows_estimate=total_rows_estimate,
+                rows_done=recorder.snapshot().metrics.records_processed,
+                chunks_done=progress_acc.chunks_done,
+                current_table=progress.table,
+                current_column=progress.column,
+                rows_skipped_null_watermark=rows_skipped_null_watermark,
+            )
+            snapshot = recorder.snapshot().model_copy(
+                update={"columns": columns, "progress": progress_acc.last_progress}
+            )
+            self.refresh_run(snapshot)
+
+        try:
+            column_rows_processed = stream_column(
+                connector,
+                run_id=run_id,
+                table=table,
+                column=column,
+                key_columns=key_columns,
+                semantic_type=semantic_type,
+                context=ctx,
+                profile=profile,
+                dispatcher=dispatcher,
+                cache=self._cache,
+                recorder=recorder,
+                sink=sink,
+                chunk_size=chunk_size,
+                resume_after_key=resume_after_key,
+                since=table_state.since,
+                track_created_at=table_state.trackable,
+                on_chunk_committed=on_chunk_committed,
+            )
+        except Exception as exc:
+            table_state.failed = True
+            if pg_store is not None:
+                pg_store.upsert_run_column(
+                    run_id=run_id,
+                    table_name=table,
+                    column_name=column,
+                    semantic_type=semantic_type.value,
+                    status="FAILED",
+                    failure_reason=str(exc),
+                )
+            return False
+
+        if pg_store is not None:
+            pg_store.upsert_run_column(
+                run_id=run_id,
+                table_name=table,
+                column_name=column,
+                semantic_type=semantic_type.value,
+                status="COMPLETED",
+                rows_processed=column_rows_processed,
+            )
+        self._record_column_stats_from_sidecar(
+            run_id=run_id,
+            table=table,
+            column=column,
+            semantic_type=semantic_type,
+            sidecar_source_id=sidecar_source_id,
+        )
+        return True
+
     def start_destination_execution(
         self,
         run_id: str,
@@ -1015,6 +1168,8 @@ class InMemoryStore:
         dispatcher: Dispatcher,
         source_connector: StreamingCatalogSourceConnector,
         destination_connector: DestinationConnector,
+        source_identity: str,
+        source_database: str,
         source_table: str,
         destination_table: str,
         columns: tuple[RunColumnSpec, ...],
@@ -1022,6 +1177,7 @@ class InMemoryStore:
         executor: RunExecutor,
         pg_store: PostgresMetadataStore | None,
         chunk_size: int = 100_000,
+        mode: str = "incremental",
     ) -> NormalizationRun:
         """M19 (docs/plan/M13-M22-program-plan.md): mirrors `source_table`
         into `destination_table` on a real destination — mapped columns
@@ -1047,12 +1203,15 @@ class InMemoryStore:
                 dispatcher=dispatcher,
                 source_connector=source_connector,
                 destination_connector=destination_connector,
+                source_identity=source_identity,
+                source_database=source_database,
                 source_table=source_table,
                 destination_table=destination_table,
                 columns=columns,
                 field_ref_prefix=field_ref_prefix,
                 pg_store=pg_store,
                 chunk_size=chunk_size,
+                mode=mode,
             )
         )
         return run
@@ -1064,12 +1223,15 @@ class InMemoryStore:
         dispatcher: Dispatcher,
         source_connector: StreamingCatalogSourceConnector,
         destination_connector: DestinationConnector,
+        source_identity: str,
+        source_database: str,
         source_table: str,
         destination_table: str,
         columns: tuple[RunColumnSpec, ...],
         field_ref_prefix: str,
         pg_store: PostgresMetadataStore | None,
         chunk_size: int,
+        mode: str = "incremental",
     ) -> None:
         """Runs in a `RunExecutor` worker thread. Both connectors are
         DEDICATED to this run (built fresh by the route, never pooled —
@@ -1082,12 +1244,15 @@ class InMemoryStore:
                 dispatcher=dispatcher,
                 source_connector=source_connector,
                 destination_connector=destination_connector,
+                source_identity=source_identity,
+                source_database=source_database,
                 source_table=source_table,
                 destination_table=destination_table,
                 columns=columns,
                 field_ref_prefix=field_ref_prefix,
                 pg_store=pg_store,
                 chunk_size=chunk_size,
+                mode=mode,
             )
         except Exception as exc:
             failed = self.get_run(run_id).model_copy(
@@ -1111,12 +1276,15 @@ class InMemoryStore:
         dispatcher: Dispatcher,
         source_connector: StreamingCatalogSourceConnector,
         destination_connector: DestinationConnector,
+        source_identity: str,
+        source_database: str,
         source_table: str,
         destination_table: str,
         columns: tuple[RunColumnSpec, ...],
         field_ref_prefix: str,
         pg_store: PostgresMetadataStore | None,
         chunk_size: int,
+        mode: str = "incremental",
     ) -> None:
         run = self.get_run(run_id)
         recorder = RunRecorder(run)
@@ -1126,6 +1294,20 @@ class InMemoryStore:
         self.refresh_run(started)
         if pg_store is not None:
             pg_store.save_run(started)
+
+        if mode == "full_resync" and pg_store is not None:
+            pg_store.reset_watermark(
+                connection_identity=source_identity,
+                database=source_database,
+                table_name=source_table,
+            )
+        table_state = _resolve_table_watermark_state(
+            source_connector,
+            pg_store=pg_store,
+            connection_identity=source_identity,
+            database=source_database,
+            table=source_table,
+        )
 
         profile = self.get_profile(run.profile_id, run.profile_version)
         key_columns = _resolve_key_columns(source_connector, source_table)
@@ -1153,17 +1335,23 @@ class InMemoryStore:
 
         total_rows_estimate = _estimate_total_rows(source_connector, columns)
         chunks_done = 0
-        last_progress = RunProgress(total_rows_estimate=total_rows_estimate)
+        last_progress = RunProgress(
+            total_rows_estimate=total_rows_estimate,
+            rows_skipped_null_watermark=table_state.rows_skipped_null,
+        )
 
         def on_chunk_committed(progress: ChunkProgress) -> None:
             nonlocal chunks_done, last_progress
             chunks_done += 1
+            if progress.last_created_at is not None:
+                table_state.max_created_at_seen = progress.last_created_at
             last_progress = RunProgress(
                 total_rows_estimate=total_rows_estimate,
                 rows_done=recorder.snapshot().metrics.records_processed,
                 chunks_done=chunks_done,
                 current_table=progress.table,
                 current_column=None,
+                rows_skipped_null_watermark=table_state.rows_skipped_null,
             )
             snapshot = recorder.snapshot().model_copy(
                 update={"columns": columns, "progress": last_progress}
@@ -1172,7 +1360,11 @@ class InMemoryStore:
 
         # The return value (total rows processed) isn't captured — it's
         # already reflected live in recorder.snapshot().metrics via
-        # on_chunk_committed, same as the M17 multi-column worker.
+        # on_chunk_committed, same as the M17 multi-column worker. If
+        # this raises, `_run_destination_worker`'s own try/except marks
+        # the run FAILED and neither the code below nor the watermark
+        # advance ever runs — a partial destination write never silently
+        # advances the watermark past what it actually wrote.
         stream_table_to_destination(
             source_connector,
             run_id=run_id,
@@ -1188,8 +1380,19 @@ class InMemoryStore:
             destination=destination_connector,
             destination_table=destination_table,
             chunk_size=chunk_size,
+            since=table_state.since,
+            track_created_at=table_state.trackable,
             on_chunk_committed=on_chunk_committed,
         )
+
+        if pg_store is not None and table_state.max_created_at_seen is not None:
+            pg_store.advance_watermark(
+                connection_identity=source_identity,
+                database=source_database,
+                table_name=source_table,
+                last_created_at=str(table_state.max_created_at_seen),
+                last_run_id=run_id,
+            )
 
         finished = recorder.finish(RunStatus.COMPLETED).model_copy(
             update={"columns": columns, "progress": last_progress}

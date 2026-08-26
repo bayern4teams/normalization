@@ -81,6 +81,8 @@ def stream_table_to_destination(
     destination_table: str,
     chunk_size: int = 100_000,
     resume_after_key: tuple[object, ...] | None = None,
+    since: object | None = None,
+    track_created_at: bool = False,
     on_chunk_committed: Callable[[ChunkProgress], None] | None = None,
 ) -> int:
     """Streams `table`'s complete real rows, chunk by chunk, writing a
@@ -90,6 +92,12 @@ def stream_table_to_destination(
     names to the semantic type mapped for them — every other real source
     column is copied through unchanged, never dropped, keeping the
     destination table exactly as wide as the source (decision 7).
+
+    `since`/`track_created_at` (M20): the same real incremental-watermark
+    support `normexec.stream.stream_column` has — `columns=None` already
+    fetches every real source column, so `created_at` (when the table has
+    one) is already present in each chunk without any extra column
+    request; this just tracks its max value per chunk.
 
     Returns the total row count processed across every chunk.
     """
@@ -106,9 +114,16 @@ def stream_table_to_destination(
             columns=None,  # every real source column, not just the mapped ones
             after_key=after_key,
             limit=chunk_size,
+            since=since,
         )
         if batch is None:
             break
+
+        last_created_at = None
+        if track_created_at and "created_at" in batch.schema.names:
+            real_values = [v for v in batch.column("created_at").to_pylist() if v is not None]
+            if real_values:
+                last_created_at = max(real_values)
 
         normalized_by_column: dict[str, list[NormalizedValue]] = {}
         for column, semantic_type in column_semantic_types.items():
@@ -165,6 +180,7 @@ def stream_table_to_destination(
                     chunk_index=chunk_index,
                     last_key=last_key,
                     rows_processed=rows_processed,
+                    last_created_at=last_created_at,
                 )
             )
 

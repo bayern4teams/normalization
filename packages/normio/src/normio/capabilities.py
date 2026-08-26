@@ -56,6 +56,14 @@ class CatalogConnector(Protocol):
         multi-million-row table."""
         ...
 
+    def count_null(self, table: str, column: str) -> int:
+        """A real `COUNT(*) WHERE column IS NULL` — M20's real fix for
+        the incremental-watermark blind spot (`created_at IS NULL` rows
+        never satisfy `created_at > watermark`, so they'd otherwise be
+        silently skipped forever). Pushed down as a real aggregate at the
+        source, never fetched row-by-row."""
+        ...
+
 
 class CatalogSourceConnector(SourceConnector, CatalogConnector, Protocol):
     """A connector known to satisfy both `SourceConnector` and

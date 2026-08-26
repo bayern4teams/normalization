@@ -125,6 +125,7 @@ def _start_two_column_industry_run(client: TestClient, connection_id: str) -> st
                 {"table": "Industry", "column": "surfaceForm", "semantic_type": "FREE_TEXT"},
             ],
             "chunk_size": 50,
+            "mode": "full_resync",
         },
     )
     assert response.status_code == 202, response.text
@@ -292,6 +293,7 @@ class TestPerColumnReportsOnARealMultiColumnRun:
                             {"table": "Industry", "column": "name", "semantic_type": "FREE_TEXT"}
                         ],
                         "chunk_size": 50,
+                        "mode": "full_resync",
                     },
                 )
                 assert resp.status_code == 202, resp.text

@@ -80,6 +80,24 @@ class ColumnStatsRow:
 
 
 @dataclass(frozen=True, slots=True)
+class WatermarkRow:
+    """M20 (docs/plan/M13-M22-program-plan.md) — one row of
+    `source_watermarks`: the real incremental-sync boundary for one
+    (connection, database, table). `last_created_at` is stored as the
+    real ISO-8601 string a connector's `since` filter round-trips
+    unchanged (matching how `run_chunks.last_key` is already stored as
+    JSONB of whatever real key values a connector produced — no
+    normalization-engine-specific type coercion here)."""
+
+    connection_identity: str
+    database: str
+    table_name: str
+    last_created_at: str | None
+    last_run_id: str | None
+    updated_at: str
+
+
+@dataclass(frozen=True, slots=True)
 class ChunkProgressRow:
     """M17 — one row of `run_chunks`: real resumability state."""
 
@@ -212,12 +230,33 @@ def _create_run_column_stats_table(conn: psycopg.Connection) -> None:
         )
 
 
+def _create_source_watermarks_table(conn: psycopg.Connection) -> None:
+    """M20: the real incremental-sync boundary, keyed by connection
+    identity (decision 4, same convention as `column_mappings`) —
+    deliberately no FK to `connections.id`, so a watermark survives a
+    connection being deleted and re-added under a different alias for
+    the same real database, exactly like M16's mappings table."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "CREATE TABLE IF NOT EXISTS source_watermarks ("
+            "  connection_identity VARCHAR NOT NULL,"
+            "  database VARCHAR NOT NULL,"
+            "  table_name VARCHAR NOT NULL,"
+            "  last_created_at VARCHAR,"
+            "  last_run_id VARCHAR,"
+            "  updated_at TIMESTAMPTZ NOT NULL,"
+            "  PRIMARY KEY (connection_identity, database, table_name)"
+            ")"
+        )
+
+
 _MIGRATIONS = [
     Migration(name="m15_create_connections", apply=_create_connections_table),
     Migration(name="m16_create_column_mappings", apply=_create_column_mappings_table),
     Migration(name="m17_create_run_columns", apply=_create_run_columns_table),
     Migration(name="m17_create_run_chunks", apply=_create_run_chunks_table),
     Migration(name="m18_create_run_column_stats", apply=_create_run_column_stats_table),
+    Migration(name="m20_create_source_watermarks", apply=_create_source_watermarks_table),
 ]
 
 _SELECT_CONNECTION_COLUMNS = (
@@ -719,6 +758,70 @@ class PostgresMetadataStore:
             )
             rows = cur.fetchall()
         return [ColumnStatsRow(*row) for row in rows]
+
+    # --- source watermarks (M20) -----------------------------------------
+
+    def get_watermark(
+        self, *, connection_identity: str, database: str, table_name: str
+    ) -> WatermarkRow | None:
+        with self._conn.cursor() as cur:
+            cur.execute(
+                "SELECT connection_identity, database, table_name, last_created_at, "
+                "  last_run_id, updated_at "
+                "FROM source_watermarks "
+                "WHERE connection_identity = %s AND database = %s AND table_name = %s",
+                (connection_identity, database, table_name),
+            )
+            row = cur.fetchone()
+        if row is None:
+            return None
+        updated_at = row[5]
+        return WatermarkRow(
+            connection_identity=row[0],
+            database=row[1],
+            table_name=row[2],
+            last_created_at=row[3],
+            last_run_id=row[4],
+            updated_at=updated_at.isoformat() if hasattr(updated_at, "isoformat") else updated_at,
+        )
+
+    def advance_watermark(
+        self,
+        *,
+        connection_identity: str,
+        database: str,
+        table_name: str,
+        last_created_at: str,
+        last_run_id: str,
+    ) -> None:
+        """Advances the watermark to `last_created_at` — the caller
+        (`normapi.store`) is responsible for only ever calling this with
+        a real, chunk-committed value, and never a value earlier than
+        what's already stored (an incremental run only ever moves a
+        watermark forward)."""
+        with self._conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO source_watermarks "
+                "  (connection_identity, database, table_name, last_created_at, "
+                "   last_run_id, updated_at) "
+                "VALUES (%s, %s, %s, %s, %s, now()) "
+                "ON CONFLICT (connection_identity, database, table_name) DO UPDATE SET "
+                "  last_created_at = EXCLUDED.last_created_at, "
+                "  last_run_id = EXCLUDED.last_run_id, "
+                "  updated_at = EXCLUDED.updated_at",
+                (connection_identity, database, table_name, last_created_at, last_run_id),
+            )
+
+    def reset_watermark(self, *, connection_identity: str, database: str, table_name: str) -> None:
+        """The real mechanism behind `mode: "full_resync"` — deletes the
+        watermark row so the next incremental run for this (connection,
+        database, table) sees `since=None` again, i.e. every row."""
+        with self._conn.cursor() as cur:
+            cur.execute(
+                "DELETE FROM source_watermarks "
+                "WHERE connection_identity = %s AND database = %s AND table_name = %s",
+                (connection_identity, database, table_name),
+            )
 
     def list_running_run_ids(self) -> list[str]:
         """The real "was left RUNNING at boot" check a startup

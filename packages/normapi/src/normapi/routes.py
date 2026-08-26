@@ -947,13 +947,27 @@ def start_multi_column_run(
             run_id,
             dispatcher=dispatcher,
             connector=connector,
-            connection_identity=record.identity,
+            # M20 fix, found while wiring this same identity into the new
+            # watermark table: `record.identity` is only correct when
+            # `body.database` matches the connection's own DEFAULT
+            # database — M16 lets a request target ANY database on that
+            # connection (see `_require_catalog_connector`'s callers), so
+            # this must be recomputed for `body.database`, never trusted
+            # as `record.identity` verbatim. A real, pre-existing M17
+            # bug: a run against a non-default database was silently
+            # threading the WRONG identity into field_ref (so a saved
+            # mapping keyed by the real identity could never match) and
+            # would have keyed a watermark under the wrong identity too.
+            connection_identity=connection_identity(
+                record.kind, record.host, record.port, body.database
+            ),
             database=body.database,
             columns=body.columns,
             sidecar_source_id=body.connection_id,
             executor=executor,
             pg_store=pg_store,
             chunk_size=body.chunk_size,
+            mode=body.mode,
         )
     except RunNotFoundError as exc:
         connector.close()
@@ -1053,6 +1067,8 @@ def start_destination_run(
             dispatcher=dispatcher,
             source_connector=source_connector,
             destination_connector=destination_connector,
+            source_identity=source_identity,
+            source_database=body.source_database,
             source_table=body.source_table,
             destination_table=body.destination_table,
             columns=body.columns,
@@ -1060,6 +1076,7 @@ def start_destination_run(
             executor=executor,
             pg_store=pg_store,
             chunk_size=body.chunk_size,
+            mode=body.mode,
         )
     except RunNotFoundError as exc:
         source_connector.close()

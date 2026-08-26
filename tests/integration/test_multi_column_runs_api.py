@@ -138,6 +138,7 @@ class TestMultiColumnRunFullLifecycle:
                         },
                     ],
                     "chunk_size": 50,
+                    "mode": "full_resync",
                 },
             )
             assert response.status_code == 202, response.text
@@ -194,6 +195,7 @@ class TestMultiColumnRunFullLifecycle:
                         {"table": "Industry", "column": "name", "semantic_type": "FREE_TEXT"},
                     ],
                     "chunk_size": 50,
+                    "mode": "full_resync",
                 },
             )
             assert response.status_code == 202, response.text
@@ -241,6 +243,7 @@ class TestMultiColumnRunFullLifecycle:
                     {"table": "Industry", "column": "name", "semantic_type": "FREE_TEXT"},
                 ],
                 "chunk_size": 50,
+                "mode": "full_resync",
             }
             first = client.post(f"/normalization/runs/{run_id}/columns", json=body)
             assert first.status_code == 202, first.text
@@ -317,6 +320,7 @@ class TestMultiColumnRunAgainstThePlansOwnExample:
                     # real scale; it does not change what stream_column
                     # actually does per row.
                     "chunk_size": 3_000,
+                    "mode": "full_resync",
                 },
             )
             assert response.status_code == 202, response.text

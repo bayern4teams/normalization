@@ -274,6 +274,7 @@ class TestDestinationWriteAgainstARealSafeDestination:
                         {"table": "Industry", "column": "name", "semantic_type": "FREE_TEXT"}
                     ],
                     "chunk_size": 50,
+                    "mode": "full_resync",
                 },
             )
             assert response.status_code == 202, response.text
@@ -335,6 +336,7 @@ class TestDestinationWriteAgainstARealSafeDestination:
                         {"table": "Industry", "column": "name", "semantic_type": "FREE_TEXT"}
                     ],
                     "chunk_size": 50,
+                    "mode": "full_resync",
                 },
             )
             assert second.status_code == 409
@@ -356,6 +358,7 @@ class TestDestinationWriteAgainstARealSafeDestination:
                         {"table": "Industry", "column": "name", "semantic_type": "FREE_TEXT"}
                     ],
                     "chunk_size": 50,
+                    "mode": "full_resync",
                 },
             )
             assert third.status_code == 202, third.text

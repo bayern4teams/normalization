@@ -10,7 +10,7 @@ entity themselves) get their own thin models here.
 
 from __future__ import annotations
 
-from typing import Any, Self
+from typing import Any, Literal, Self
 
 from pydantic import BaseModel, Field, SecretStr, model_validator
 
@@ -127,12 +127,21 @@ class MultiColumnRunRequest(BaseModel):
     re-resolve semantic types from saved column mappings — a caller
     building this request from saved mappings (e.g. the future M21 UI)
     reads them via M16's `GET .../mappings` routes and fills
-    `semantic_type` in directly."""
+    `semantic_type` in directly.
+
+    `mode` (M20): `"incremental"` (default) filters to rows whose real
+    `created_at` is after this (connection, database, table)'s saved
+    watermark, and advances it as chunks commit; `"full_resync"` resets
+    that watermark to nothing first, so every real row is processed
+    again — the only correct answer for in-place row *updates*, which a
+    `created_at` watermark can never see (ReplacingMergeTree updates
+    don't bump `created_at`)."""
 
     connection_id: str
     database: str
     columns: tuple[RunColumnSpec, ...]
     chunk_size: int = Field(default=100_000, gt=0, le=1_000_000)
+    mode: Literal["incremental", "full_resync"] = "incremental"
 
     @model_validator(mode="after")
     def _at_least_one_column(self) -> Self:
@@ -164,6 +173,7 @@ class DestinationRunRequest(BaseModel):
     columns: tuple[RunColumnSpec, ...]
     chunk_size: int = Field(default=100_000, gt=0, le=1_000_000)
     i_understand_same_server: bool = False
+    mode: Literal["incremental", "full_resync"] = "incremental"
 
     @model_validator(mode="after")
     def _at_least_one_mapped_column(self) -> Self:
