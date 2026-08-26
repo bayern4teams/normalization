@@ -45,10 +45,13 @@ future mutating route is protected by construction.
 
 from __future__ import annotations
 
+import uuid
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Annotated
 
 from fastapi import APIRouter, Body, Depends, HTTPException
 from normcore.pii import safe_preview
+from normio.capabilities import CatalogConnector
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -67,16 +70,31 @@ from normanalysis import (
     suggest_semantic_type,
 )
 from normapi.auth import enforce_api_key_for_mutations
+from normapi.connections import (
+    DEFAULT_PORTS,
+    ConnectionRecord,
+    ConnectionResolver,
+    connection_identity,
+)
 from normapi.dependencies import (
+    get_connection_resolver,
     get_custom_dictionary_store,
     get_dictionary_loader,
     get_dispatcher,
+    get_postgres_store,
     get_source_registry,
     get_store,
 )
+from normapi.postgres_store import PostgresMetadataStore
 from normapi.scaffold_profile import SCAFFOLD_PROFILE
 from normapi.schemas import (
     CollisionDecisionRequest,
+    ConnectionCreateRequest,
+    ConnectionKindInfo,
+    ConnectionResponse,
+    ConnectionTestRequest,
+    ConnectionTestResponse,
+    ConnectionUpdateRequest,
     DetectTypeRequest,
     DictionaryCreateRequest,
     DictionaryRollbackRequest,
@@ -92,7 +110,7 @@ from normapi.schemas import (
     RunExecutionRequest,
     TypeSuggestionResponse,
 )
-from normapi.sources import SourceRegistry, UnknownSourceError
+from normapi.sources import SourceRegistry, UnknownSourceError, build_connector_from_parts
 from normapi.store import (
     InMemoryStore,
     ProfileNotFoundError,
@@ -291,6 +309,206 @@ def list_source_tables(
     except UnknownSourceError as exc:
         raise HTTPException(status_code=404, detail=f"No such source: {source_id}") from exc
     return list(connector.list_tables())
+
+
+# --- connections (M15, docs/plan/M13-M22-program-plan.md) -----------------
+
+
+def _connection_registry_unavailable() -> HTTPException:
+    return HTTPException(
+        status_code=503,
+        detail=(
+            "Connection registry unavailable: both NORM_SECRET_KEY and "
+            "NORM_PG_DSN must be set to store connections"
+        ),
+    )
+
+
+def _to_connection_response(record: ConnectionRecord) -> ConnectionResponse:
+    return ConnectionResponse(
+        id=record.id,
+        alias=record.alias,
+        kind=record.kind,
+        host=record.host,
+        port=record.port,
+        username=record.username,
+        database=record.database,
+        identity=record.identity,
+        created_at=record.created_at,
+        updated_at=record.updated_at,
+    )
+
+
+def _scrub(message: str, *secrets_to_scrub: str) -> str:
+    """Removes any literal occurrence of a plaintext secret from an
+    error message before it's returned to the client or could reach a
+    log line — defense in depth against a driver-level exception
+    embedding a DSN/connection string that happens to contain the
+    password, on top of never deliberately including it."""
+    for secret in secrets_to_scrub:
+        if secret:
+            message = message.replace(secret, "***")
+    return message
+
+
+def _probe_connection(
+    *, kind: str, host: str, port: int, username: str, password: str, database: str
+) -> list[str]:
+    """Builds a real connector, proves it can actually connect
+    (`list_tables()` — every SourceConnector has this), and returns
+    `list_databases()` when the connector also supports `CatalogConnector`
+    (empty list otherwise). Always closes the connector before returning,
+    whether it succeeds or raises — this connector is never pooled, it
+    exists only for the duration of this check."""
+    connector = build_connector_from_parts(
+        "connection-probe",
+        kind=kind,
+        host=host,
+        port=port,
+        username=username,
+        password=password,
+        database=database,
+    )
+    try:
+        connector.list_tables()
+        if isinstance(connector, CatalogConnector):
+            return list(connector.list_databases())
+        return []
+    finally:
+        connector.close()
+
+
+@router.get("/connection-kinds", response_model=list[ConnectionKindInfo])
+def list_connection_kinds() -> list[ConnectionKindInfo]:
+    return [
+        ConnectionKindInfo(kind=kind, default_port=port)
+        for kind, port in sorted(DEFAULT_PORTS.items())
+    ]
+
+
+@router.post("/connections/test", response_model=ConnectionTestResponse)
+def test_connection(body: ConnectionTestRequest) -> ConnectionTestResponse:
+    """Validates credentials against the real database WITHOUT persisting
+    anything — the UI's "Test" button before Save. Never raises on a bad
+    credential; a failed connection is a normal, expected outcome this
+    returns as data (`ok=False`), not an HTTP error."""
+    port = body.port or DEFAULT_PORTS[body.kind]
+    password = body.password.get_secret_value()
+    try:
+        databases = _probe_connection(
+            kind=body.kind,
+            host=body.host,
+            port=port,
+            username=body.username,
+            password=password,
+            database=body.database,
+        )
+    except Exception as exc:  # broad: any driver failure -> a scrubbed result, not a 500
+        return ConnectionTestResponse(ok=False, error=_scrub(str(exc), password))
+    return ConnectionTestResponse(ok=True, databases=databases)
+
+
+@router.post("/connections", response_model=ConnectionResponse, status_code=201)
+def create_connection(
+    body: ConnectionCreateRequest,
+    pg_store: Annotated[PostgresMetadataStore | None, Depends(get_postgres_store)],
+    resolver: Annotated[ConnectionResolver | None, Depends(get_connection_resolver)],
+) -> ConnectionResponse:
+    if pg_store is None or resolver is None:
+        raise _connection_registry_unavailable()
+    port = body.port or DEFAULT_PORTS[body.kind]
+    password = body.password.get_secret_value()
+    try:
+        _probe_connection(
+            kind=body.kind,
+            host=body.host,
+            port=port,
+            username=body.username,
+            password=password,
+            database=body.database,
+        )
+    except Exception as exc:  # see test_connection's identical rationale
+        raise HTTPException(status_code=400, detail=_scrub(str(exc), password)) from exc
+
+    now = datetime.now(UTC).isoformat()
+    record = ConnectionRecord(
+        id=str(uuid.uuid4()),
+        alias=body.alias,
+        kind=body.kind,
+        host=body.host,
+        port=port,
+        username=body.username,
+        encrypted_password=resolver.encrypt(password),
+        database=body.database,
+        identity=connection_identity(body.kind, body.host, port, body.database),
+        created_at=now,
+        updated_at=now,
+    )
+    pg_store.save_connection(record)
+    return _to_connection_response(record)
+
+
+@router.get("/connections", response_model=list[ConnectionResponse])
+def list_connections(
+    pg_store: Annotated[PostgresMetadataStore | None, Depends(get_postgres_store)],
+) -> list[ConnectionResponse]:
+    if pg_store is None:
+        return []
+    return [_to_connection_response(record) for record in pg_store.list_connections()]
+
+
+@router.patch("/connections/{connection_id}", response_model=ConnectionResponse)
+def update_connection(
+    connection_id: str,
+    body: ConnectionUpdateRequest,
+    pg_store: Annotated[PostgresMetadataStore | None, Depends(get_postgres_store)],
+    resolver: Annotated[ConnectionResolver | None, Depends(get_connection_resolver)],
+    sources: Annotated[SourceRegistry, Depends(get_source_registry)],
+) -> ConnectionResponse:
+    if pg_store is None or resolver is None:
+        raise _connection_registry_unavailable()
+    existing = pg_store.get_connection(connection_id)
+    if existing is None:
+        raise HTTPException(status_code=404, detail=f"No such connection: {connection_id}")
+
+    new_host = body.host if body.host is not None else existing.host
+    new_port = body.port if body.port is not None else existing.port
+    new_database = body.database if body.database is not None else existing.database
+    new_encrypted_password = (
+        resolver.encrypt(body.password.get_secret_value())
+        if body.password is not None
+        else existing.encrypted_password
+    )
+    updated = ConnectionRecord(
+        id=existing.id,
+        alias=body.alias if body.alias is not None else existing.alias,
+        kind=existing.kind,
+        host=new_host,
+        port=new_port,
+        username=body.username if body.username is not None else existing.username,
+        encrypted_password=new_encrypted_password,
+        database=new_database,
+        identity=connection_identity(existing.kind, new_host, new_port, new_database),
+        created_at=existing.created_at,
+        updated_at=datetime.now(UTC).isoformat(),
+    )
+    pg_store.save_connection(updated)
+    sources.refresh(connection_id)
+    return _to_connection_response(updated)
+
+
+@router.delete("/connections/{connection_id}", status_code=204)
+def delete_connection(
+    connection_id: str,
+    pg_store: Annotated[PostgresMetadataStore | None, Depends(get_postgres_store)],
+    sources: Annotated[SourceRegistry, Depends(get_source_registry)],
+) -> None:
+    if pg_store is None:
+        raise _connection_registry_unavailable()
+    deleted = pg_store.delete_connection(connection_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail=f"No such connection: {connection_id}")
+    sources.refresh(connection_id)
 
 
 # --- preview / field-test ---------------------------------------------------

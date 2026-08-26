@@ -12,9 +12,10 @@ from __future__ import annotations
 
 from typing import Any, Self
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, SecretStr, model_validator
 
 from normanalysis import CollisionDecisionType
+from normapi.connections import CONNECTION_KINDS
 from normcore import (
     ErrorPolicy,
     FieldNormalizationConfig,
@@ -180,6 +181,91 @@ class DictionarySummary(BaseModel):
     active_version: str | None = None
 
 
+class ConnectionCreateRequest(BaseModel):
+    """POST /normalization/connections body — M15. `password` is
+    `SecretStr` so it never appears verbatim in a FastAPI validation-error
+    response or a `repr()`/log of the parsed model; `port` omitted means
+    the real default port for `kind` (normapi.connections.DEFAULT_PORTS).
+    """
+
+    alias: str
+    kind: str
+    host: str
+    port: int | None = None
+    username: str
+    password: SecretStr
+    database: str
+
+    @model_validator(mode="after")
+    def _kind_is_known(self) -> Self:
+        if self.kind not in CONNECTION_KINDS:
+            allowed = sorted(CONNECTION_KINDS)
+            msg = f"Unknown connection kind {self.kind!r} (expected one of {allowed})"
+            raise ValueError(msg)
+        return self
+
+
+class ConnectionTestRequest(BaseModel):
+    """POST /normalization/connections/test body — same shape as create
+    but never persisted; used to validate credentials before saving."""
+
+    kind: str
+    host: str
+    port: int | None = None
+    username: str
+    password: SecretStr
+    database: str
+
+    @model_validator(mode="after")
+    def _kind_is_known(self) -> Self:
+        if self.kind not in CONNECTION_KINDS:
+            allowed = sorted(CONNECTION_KINDS)
+            msg = f"Unknown connection kind {self.kind!r} (expected one of {allowed})"
+            raise ValueError(msg)
+        return self
+
+
+class ConnectionUpdateRequest(BaseModel):
+    """PATCH /normalization/connections/{id} body — every field optional,
+    only supplied fields change. `password`, when supplied, is
+    re-encrypted; omitted means the stored credential is untouched."""
+
+    alias: str | None = None
+    host: str | None = None
+    port: int | None = None
+    username: str | None = None
+    password: SecretStr | None = None
+    database: str | None = None
+
+
+class ConnectionResponse(BaseModel):
+    """GET/POST /normalization/connections response — deliberately has NO
+    password field at all (absent from the schema, not present-as-null),
+    so no code path can accidentally serialize a credential into it."""
+
+    id: str
+    alias: str
+    kind: str
+    host: str
+    port: int
+    username: str
+    database: str
+    identity: str
+    created_at: str
+    updated_at: str
+
+
+class ConnectionTestResponse(BaseModel):
+    ok: bool
+    databases: list[str] = Field(default_factory=list)
+    error: str | None = None
+
+
+class ConnectionKindInfo(BaseModel):
+    kind: str
+    default_port: int
+
+
 class NotImplementedResponse(BaseModel):
     """Honest, schema-valid placeholder for §98 endpoints whose real
     implementation is still out of scope at the current milestone —
@@ -192,6 +278,12 @@ class NotImplementedResponse(BaseModel):
 
 __all__ = [
     "CollisionDecisionRequest",
+    "ConnectionCreateRequest",
+    "ConnectionKindInfo",
+    "ConnectionResponse",
+    "ConnectionTestRequest",
+    "ConnectionTestResponse",
+    "ConnectionUpdateRequest",
     "DetectTypeRequest",
     "DictionaryCreateRequest",
     "DictionaryRollbackRequest",

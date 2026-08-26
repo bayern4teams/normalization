@@ -12,6 +12,8 @@ from fastapi import Request
 if TYPE_CHECKING:
     from normexec.cache import NormalizationCache
 
+    from normapi.connections import ConnectionResolver
+    from normapi.postgres_store import PostgresMetadataStore
     from normapi.sources import SourceRegistry
     from normapi.store import InMemoryStore
     from normcore import Dispatcher
@@ -44,3 +46,11 @@ def get_source_registry(request: Request) -> SourceRegistry:
 
 def get_api_key(request: Request) -> str | None:
     return request.app.state.api_key  # type: ignore[no-any-return]
+
+
+def get_postgres_store(request: Request) -> PostgresMetadataStore | None:
+    return request.app.state.store.postgres_store  # type: ignore[no-any-return]
+
+
+def get_connection_resolver(request: Request) -> ConnectionResolver | None:
+    return request.app.state.connection_resolver  # type: ignore[no-any-return]

@@ -1,17 +1,24 @@
-"""Server-side source registry — Source.txt §105, M10.
+"""Server-side source registry — Source.txt §105, M10; hybrid with
+DB-configured connections as of M15 (docs/plan/M13-M22-program-plan.md).
 
 Maps a `source_id` to a real, already-connected `SourceConnector`.
-Configured from a JSON file (`NORM_SOURCES_CONFIG_PATH`), never from a
-client-supplied DSN/URI/credentials in a request body: accepting
-connection strings from a request would be both a credential-injection
-risk and something that would end up in request logs/traces, the same
-trust boundary `NORM_PG_DSN`/`NORM_SIDECAR_*` already draw for this
-process's own metadata/sidecar storage (see normapi.app, M9/M9-followup).
+File-configured sources (`NORM_SOURCES_CONFIG_PATH`) stay eager —
+constructed at registry-construction time (app startup), not lazily on
+first use, so a misconfigured source fails loudly at startup rather than
+surfacing as a confusing 500 on whichever request happens to touch it
+first. That eager/fail-fast property is deliberately NOT extended to
+DB-configured connections (M15's `POST /connections`): those are created
+at runtime, long after app startup, so they build LAZILY into a bounded
+pool keyed by `(connection_id, database)` on first access, with
+`refresh()` dropping a connection's cached connectors after a
+credential/host change (PATCH) or removal (DELETE) so the next access
+rebuilds rather than reusing stale credentials.
 
-Connectors are constructed eagerly, at registry-construction time (app
-startup), not lazily on first use — a misconfigured source fails loudly
-at startup rather than surfacing as a confusing 500 on whichever request
-happens to touch it first.
+Neither path ever accepts a client-supplied DSN/URI in a request body —
+file-based sources are server-side JSON, DB-based connections resolve
+through `ConnectionResolver` (Postgres + `CredentialCipher`), matching
+the same trust boundary `NORM_PG_DSN`/`NORM_SIDECAR_*` already draw for
+this process's own metadata/sidecar storage.
 """
 
 from __future__ import annotations
@@ -19,6 +26,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+from urllib.parse import quote
 
 from normio.connectors import (
     ClickHouseConnector,
@@ -30,6 +38,8 @@ from normio.connectors import (
 
 if TYPE_CHECKING:
     from normio.connector import SourceConnector
+
+    from normapi.connections import ConnectionResolver
 
 _CONNECTOR_TYPES = frozenset({"postgres", "mysql", "mongo", "clickhouse", "file"})
 
@@ -48,13 +58,26 @@ class InvalidSourceConfigError(ValueError):
 
 
 class SourceRegistry:
-    def __init__(self, config: dict[str, dict[str, Any]]) -> None:
+    def __init__(
+        self,
+        config: dict[str, dict[str, Any]],
+        *,
+        connection_resolver: ConnectionResolver | None = None,
+    ) -> None:
         self._connectors: dict[str, SourceConnector] = {
             source_id: _build_connector(source_id, spec) for source_id, spec in config.items()
         }
+        self._connection_resolver = connection_resolver
+        # Lazily-built pool for DB-configured connections, keyed by
+        # (connection_id, database) — a connection's kind/host/port
+        # allow reading multiple databases off one server, so the
+        # database is part of the cache key, not just the connection id.
+        self._connection_pool: dict[tuple[str, str], SourceConnector] = {}
 
     @classmethod
-    def from_config_file(cls, path: str | Path) -> SourceRegistry:
+    def from_config_file(
+        cls, path: str | Path, *, connection_resolver: ConnectionResolver | None = None
+    ) -> SourceRegistry:
         raw = Path(path).read_text(encoding="utf-8")
         try:
             config = json.loads(raw)
@@ -64,7 +87,7 @@ class SourceRegistry:
         if not isinstance(config, dict):
             msg = f"Source config at {path!r} must be a JSON object of source_id -> spec"
             raise InvalidSourceConfigError(msg)
-        return cls(config)
+        return cls(config, connection_resolver=connection_resolver)
 
     def get(self, source_id: str) -> SourceConnector:
         connector = self._connectors.get(source_id)
@@ -75,9 +98,46 @@ class SourceRegistry:
     def list_source_ids(self) -> list[str]:
         return sorted(self._connectors)
 
+    def get_by_connection(self, connection_id: str, database: str) -> SourceConnector:
+        """Lazily builds (or returns the cached) connector for a
+        DB-configured connection, targeting `database` — a connection's
+        own `database` field is its *default* database, but a caller may
+        target any database the same server exposes (M16's catalog
+        routes let a user browse others after connecting)."""
+        if self._connection_resolver is None:
+            raise UnknownSourceError(connection_id)
+        cache_key = (connection_id, database)
+        cached = self._connection_pool.get(cache_key)
+        if cached is not None:
+            return cached
+        resolved = self._connection_resolver.resolve(connection_id)
+        connector = build_connector_from_parts(
+            connection_id,
+            kind=resolved.kind,
+            host=resolved.host,
+            port=resolved.port,
+            username=resolved.username,
+            password=resolved.password,
+            database=database,
+        )
+        self._connection_pool[cache_key] = connector
+        return connector
+
+    def refresh(self, connection_id: str) -> None:
+        """Drops every pooled connector for `connection_id` (any
+        database), closing each first — called after a connection's
+        credentials change (PATCH) or it's removed (DELETE), so the next
+        access rebuilds rather than silently reusing stale credentials."""
+        stale_keys = [key for key in self._connection_pool if key[0] == connection_id]
+        for key in stale_keys:
+            self._connection_pool.pop(key).close()
+
     def close(self) -> None:
         for connector in self._connectors.values():
             connector.close()
+        for connector in self._connection_pool.values():
+            connector.close()
+        self._connection_pool.clear()
 
     def read_column_values(
         self, source_id: str, table: str, column: str, *, row_limit: int
@@ -129,3 +189,38 @@ def _build_connector(source_id: str, spec: dict[str, Any]) -> SourceConnector:
     except KeyError as exc:
         msg = f"Source {source_id!r} (type={kind!r}) is missing required key {exc}"
         raise InvalidSourceConfigError(msg) from exc
+
+
+def build_connector_from_parts(
+    source_id: str,
+    *,
+    kind: str,
+    host: str,
+    port: int,
+    username: str,
+    password: str,
+    database: str,
+) -> SourceConnector:
+    """Builds a connector from a `ConnectionRecord`'s uniform
+    host/port/username/password/database shape (M15's connection
+    registry) — a separate function from `_build_connector` (the
+    JSON-file config path, which accepts a raw `dsn`/`uri` per source
+    rather than decomposed parts) since the two configuration shapes
+    genuinely differ, not a redundant duplicate."""
+    if kind == "clickhouse":
+        return ClickHouseConnector(
+            source_id, host, port=port, username=username, password=password, database=database
+        )
+    # Postgres/MySQL/Mongo connectors take a DSN/URI, not decomposed
+    # parts — username/password are percent-encoded before interpolation
+    # so a credential containing "@", ":", "/", or "%" doesn't corrupt
+    # the URL or get misparsed as a different URL component.
+    user_enc = quote(username, safe="")
+    pass_enc = quote(password, safe="")
+    if kind == "postgres":
+        return PostgresConnector(
+            source_id, f"postgresql://{user_enc}:{pass_enc}@{host}:{port}/{database}"
+        )
+    if kind == "mysql":
+        return MySQLConnector(source_id, f"mysql://{user_enc}:{pass_enc}@{host}:{port}/{database}")
+    return MongoConnector(source_id, f"mongodb://{user_enc}:{pass_enc}@{host}:{port}", database)

@@ -34,7 +34,10 @@ from normexec.cache import NormalizationCache
 from normexec.env_fingerprint import compute_env_id, gather
 
 from normanalysis import NormalizationMetrics, setup_telemetry
+from normapi.connections import ConnectionResolver
+from normapi.postgres_store import PostgresMetadataStore
 from normapi.routes import router
+from normapi.secrets import CredentialCipher, SecretKeyError, load_secret_key
 from normapi.sources import SourceRegistry
 from normapi.store import InMemoryStore
 from normcore import Dispatcher, NormalizerRegistry
@@ -142,6 +145,40 @@ _DEFAULT_API_KEY = os.environ.get("NORM_API_KEY")
 # other optional-integration env var's "off by default" behavior.
 _DEFAULT_OTLP_ENDPOINT = os.environ.get("NORM_OTLP_ENDPOINT")
 
+# Connection-credential encryption at rest (M15, see normapi.secrets,
+# docs/adr/ADR-017-connection-credentials.md) — unset means the
+# connection registry is unavailable (POST/GET/PATCH/DELETE
+# /connections all fail closed) rather than storing plaintext passwords,
+# which is a hard rule of this project, not a configurable trade-off.
+_DEFAULT_SECRET_KEY = os.environ.get("NORM_SECRET_KEY")
+
+
+def _build_connection_resolver(
+    pg_store: PostgresMetadataStore | None, resolved_secret_key: str | None
+) -> ConnectionResolver | None:
+    """A cipher only gets built when a valid key is present;
+    `connection_resolver` stays `None` otherwise, and the /connections
+    routes fail closed (503) rather than ever falling back to storing/
+    returning plaintext. If real connection rows already exist in
+    Postgres (encrypted against a key this process no longer has) and no
+    key is given, boots-anyway would mean every existing connection
+    silently becomes unusable (`DecryptionError` on first real use)
+    instead of a clear, immediate startup failure — so that combination
+    is a hard `SecretKeyError`, not a warning."""
+    cipher: CredentialCipher | None = None
+    if resolved_secret_key:
+        cipher = CredentialCipher(load_secret_key(resolved_secret_key))
+    elif pg_store is not None and pg_store.any_connection_exists():
+        msg = (
+            "NORM_SECRET_KEY is not set, but real connection rows already "
+            "exist in Postgres — refusing to start rather than silently "
+            "making them unusable."
+        )
+        raise SecretKeyError(msg)
+    if cipher is None or pg_store is None:
+        return None
+    return ConnectionResolver(pg_store, cipher)
+
 
 def create_app(
     *,
@@ -154,6 +191,7 @@ def create_app(
     sources_config_path: str | Path | None = None,
     api_key: str | None = None,
     otlp_endpoint: str | None = None,
+    secret_key: str | None = None,
 ) -> FastAPI:
     app = FastAPI(
         title="Normalization Engine API",
@@ -242,11 +280,21 @@ def create_app(
     app.state.custom_dictionary_store = custom_store
     app.state.cache = cache
 
+    # Connection-credential encryption (M15) — resolved AFTER app.state.store
+    # so a real check can be made against the actual Postgres connections
+    # table, not just "was an env var set." See _build_connection_resolver's
+    # own docstring for the refuse-to-boot rule.
+    app.state.connection_resolver = _build_connection_resolver(
+        app.state.store.postgres_store, secret_key or _DEFAULT_SECRET_KEY
+    )
+
     resolved_sources_config_path = sources_config_path or _DEFAULT_SOURCES_CONFIG_PATH
     app.state.source_registry = (
-        SourceRegistry.from_config_file(resolved_sources_config_path)
+        SourceRegistry.from_config_file(
+            resolved_sources_config_path, connection_resolver=app.state.connection_resolver
+        )
         if resolved_sources_config_path
-        else SourceRegistry({})
+        else SourceRegistry({}, connection_resolver=app.state.connection_resolver)
     )
     app.state.api_key = api_key or _DEFAULT_API_KEY
 

@@ -237,6 +237,13 @@ class InMemoryStore:
         # (found during M12's observability-export work).
         self._telemetry = telemetry
 
+    @property
+    def postgres_store(self) -> PostgresMetadataStore | None:
+        """Exposes the same Postgres connection profiles/runs already
+        write through to — M15's connection registry reuses it rather
+        than opening a second Postgres connection for one more table."""
+        return self._pg
+
     def _hydrate_from_postgres(self, pg: PostgresMetadataStore) -> None:
         """Reconstructs in-memory state from whatever a PREVIOUS process
         already persisted — the actual "survives a restart" mechanism.

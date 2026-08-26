@@ -35,7 +35,70 @@ import psycopg
 from psycopg.types.json import Jsonb
 
 from normanalysis import CollisionDecision
+from normapi.connections import ConnectionRecord
+from normapi.migrations import Migration, run_migrations
 from normcore import NormalizationProfile, NormalizationRun
+
+
+def _create_connections_table(conn: psycopg.Connection) -> None:
+    """M15: the first table to go through the real migration runner
+    instead of a bare `CREATE TABLE IF NOT EXISTS` — see migrations.py's
+    docstring for why that matters starting now (six more tables land
+    across M15-M20)."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "CREATE TABLE IF NOT EXISTS connections ("
+            "  id VARCHAR PRIMARY KEY,"
+            "  alias VARCHAR NOT NULL,"
+            "  kind VARCHAR NOT NULL,"
+            "  host VARCHAR NOT NULL,"
+            "  port INTEGER NOT NULL,"
+            "  username VARCHAR NOT NULL,"
+            "  encrypted_password TEXT NOT NULL,"
+            "  database VARCHAR NOT NULL,"
+            "  identity VARCHAR NOT NULL,"
+            "  created_at TIMESTAMPTZ NOT NULL,"
+            "  updated_at TIMESTAMPTZ NOT NULL"
+            ")"
+        )
+        cur.execute("CREATE INDEX IF NOT EXISTS connections_identity_idx ON connections (identity)")
+
+
+_MIGRATIONS = [Migration(name="m15_create_connections", apply=_create_connections_table)]
+
+_SELECT_CONNECTION_COLUMNS = (
+    "SELECT id, alias, kind, host, port, username, encrypted_password, "
+    "database, identity, created_at, updated_at FROM connections"
+)
+
+
+def _row_to_connection_record(row: tuple[object, ...]) -> ConnectionRecord:
+    (
+        id_,
+        alias,
+        kind,
+        host,
+        port,
+        username,
+        encrypted_password,
+        database,
+        identity,
+        created_at,
+        updated_at,
+    ) = row
+    return ConnectionRecord(
+        id=id_,
+        alias=alias,
+        kind=kind,
+        host=host,
+        port=port,
+        username=username,
+        encrypted_password=encrypted_password,
+        database=database,
+        identity=identity,
+        created_at=created_at.isoformat() if hasattr(created_at, "isoformat") else created_at,
+        updated_at=updated_at.isoformat() if hasattr(updated_at, "isoformat") else updated_at,
+    )
 
 
 class PostgresMetadataStore:
@@ -81,6 +144,7 @@ class PostgresMetadataStore:
                 "  PRIMARY KEY (run_id, normalized_value)"
                 ")"
             )
+        run_migrations(self._conn, _MIGRATIONS)
 
     # --- profiles ---------------------------------------------------
 
@@ -213,6 +277,62 @@ class PostgresMetadataStore:
             cur.execute("SELECT data FROM collision_decisions")
             rows = cur.fetchall()
         return [CollisionDecision.model_validate(row[0]) for row in rows]
+
+    # --- connections (§105-adjacent, M15) ------------------------------
+
+    def save_connection(self, record: ConnectionRecord) -> None:
+        with self._conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO connections "
+                "  (id, alias, kind, host, port, username, encrypted_password, "
+                "   database, identity, created_at, updated_at) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
+                "ON CONFLICT (id) DO UPDATE SET "
+                "  alias = EXCLUDED.alias, kind = EXCLUDED.kind, host = EXCLUDED.host, "
+                "  port = EXCLUDED.port, username = EXCLUDED.username, "
+                "  encrypted_password = EXCLUDED.encrypted_password, "
+                "  database = EXCLUDED.database, identity = EXCLUDED.identity, "
+                "  updated_at = EXCLUDED.updated_at",
+                (
+                    record.id,
+                    record.alias,
+                    record.kind,
+                    record.host,
+                    record.port,
+                    record.username,
+                    record.encrypted_password,
+                    record.database,
+                    record.identity,
+                    record.created_at,
+                    record.updated_at,
+                ),
+            )
+
+    def get_connection(self, connection_id: str) -> ConnectionRecord | None:
+        with self._conn.cursor() as cur:
+            cur.execute(_SELECT_CONNECTION_COLUMNS + " WHERE id = %s", (connection_id,))
+            row = cur.fetchone()
+        return _row_to_connection_record(row) if row else None
+
+    def list_connections(self) -> list[ConnectionRecord]:
+        with self._conn.cursor() as cur:
+            cur.execute(_SELECT_CONNECTION_COLUMNS + " ORDER BY created_at")
+            rows = cur.fetchall()
+        return [_row_to_connection_record(row) for row in rows]
+
+    def any_connection_exists(self) -> bool:
+        """Used at startup to decide whether NORM_SECRET_KEY being unset
+        is fatal (real connection rows exist, encrypted against a key
+        this process no longer has) or merely means the feature is
+        unused so far."""
+        with self._conn.cursor() as cur:
+            cur.execute("SELECT 1 FROM connections LIMIT 1")
+            return cur.fetchone() is not None
+
+    def delete_connection(self, connection_id: str) -> bool:
+        with self._conn.cursor() as cur:
+            cur.execute("DELETE FROM connections WHERE id = %s", (connection_id,))
+            return cur.rowcount > 0
 
     def close(self) -> None:
         self._conn.close()
