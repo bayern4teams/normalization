@@ -63,6 +63,16 @@ def _build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument(
         "--dsn", default=None, help="Overrides the source's resolved DSN (mainly for testing)"
     )
+    run_parser.add_argument("--chunk-size", type=int, default=100_000)
+    run_parser.add_argument(
+        "--parallel-workers",
+        type=int,
+        default=0,
+        help=(
+            "0 (default) disables the process pool. A positive value builds a real "
+            "DistinctValueWorkerPool — see normexec.parallel for what it means."
+        ),
+    )
 
     diff_parser = subparsers.add_parser(
         "diff",
@@ -121,6 +131,8 @@ def main(argv: list[str] | None = None) -> int:
             out_dir=args.out,
             run_id=args.run_id,
             dsn=args.dsn,
+            chunk_size=args.chunk_size,
+            parallel_workers=args.parallel_workers,
         )
 
     if args.command == "diff":

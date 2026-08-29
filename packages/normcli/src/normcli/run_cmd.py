@@ -20,6 +20,7 @@ primitives with zero HTTP/registry involvement.
 
 from __future__ import annotations
 
+import functools
 import json
 import sys
 from dataclasses import dataclass
@@ -35,6 +36,7 @@ from typing import TextIO
 # must be the first third-party import in this module.
 import icu  # noqa: F401
 from normalizers.address import LibpostalClient
+from normexec.parallel import DistinctValueWorkerPool
 from normexec.sinks import SidecarRunSink
 from normexec.stream import stream_column
 from normio.connectors.postgres import PostgresConnector
@@ -46,6 +48,7 @@ from normcli.registry import (
     DEFAULT_DICTIONARIES_DIR,
     DEFAULT_LIBPOSTAL_URL,
     build_normalizer_registry,
+    build_worker_dispatcher,
     compute_process_env_id,
 )
 from normcore import Dispatcher, NormalizationRun, NormalizationRunMetrics, RunStatus
@@ -90,7 +93,18 @@ def run_normalization(
     dictionaries_dir: Path | None = None,
     libpostal_url: str | None = None,
     chunk_size: int = 100_000,
+    parallel_workers: int = 0,
 ) -> RunResult:
+    """`parallel_workers` (Phase 3 item 4, 2026-08-29): `0` (the default)
+    reproduces this function's pre-Phase-3 behavior exactly — fully
+    serial, no pool constructed at all. A positive value builds a real
+    `DistinctValueWorkerPool` (same `normexec.parallel` class the live
+    API uses) and passes it to every `stream_column` call, so `normcli
+    diff --require-identical` between a `parallel_workers=0` run and a
+    `parallel_workers=N` run over the same source is the actual
+    determinism proof this program's plan calls for: parallel execution
+    must not change output, and this is how that gets checked against
+    real data rather than asserted from reading the code."""
     profile = resolve_profile(profile_name)
     resolved_dsn = dsn if dsn is not None else resolve_source_dsn(source_name)
     resolved_dictionaries_dir = dictionaries_dir or DEFAULT_DICTIONARIES_DIR
@@ -102,6 +116,17 @@ def run_normalization(
         dictionaries_dir=resolved_dictionaries_dir, libpostal_client=libpostal_client
     )
     dispatcher = Dispatcher(registry, env_id=env_id)
+
+    pool = (
+        DistinctValueWorkerPool(
+            functools.partial(
+                build_worker_dispatcher, resolved_dictionaries_dir, resolved_libpostal_url, env_id
+            ),
+            workers=parallel_workers,
+        )
+        if parallel_workers > 0
+        else None
+    )
 
     out_dir.mkdir(parents=True, exist_ok=True)
     connector = PostgresConnector(source_name, resolved_dsn)
@@ -162,6 +187,7 @@ def run_normalization(
                         recorder=recorder,
                         sink=sink,
                         chunk_size=chunk_size,
+                        pool=pool,
                     )
                 finished_run = recorder.finish(RunStatus.COMPLETED)
             except Exception as exc:
@@ -175,6 +201,8 @@ def run_normalization(
             sidecar.close()
     finally:
         connector.close()
+        if pool is not None:
+            pool.shutdown()
 
     return RunResult(run=finished_run, rows_processed=total_rows, out_dir=out_dir)
 
@@ -186,6 +214,8 @@ def run_normalization_cli(
     out_dir: Path,
     run_id: str,
     dsn: str | None,
+    chunk_size: int = 100_000,
+    parallel_workers: int = 0,
     stream: TextIO | None = None,
 ) -> int:
     """Returns a process exit code (0 = pass), matching this package's
@@ -198,6 +228,8 @@ def run_normalization_cli(
             out_dir=out_dir,
             run_id=run_id,
             dsn=dsn,
+            chunk_size=chunk_size,
+            parallel_workers=parallel_workers,
         )
     except Exception as exc:
         out.write(f"run: ERROR: {exc}\n")

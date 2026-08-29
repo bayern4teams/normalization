@@ -47,7 +47,7 @@ from normcli.traceability import (
 )
 from normio.sidecar_store import SidecarStore
 
-from normcore import NORMALIZED_VALUE_ARROW_SCHEMA
+from normcore import NORMALIZED_VALUE_ARROW_SCHEMA, FieldSemanticType
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -407,6 +407,25 @@ class TestDemoFixture:
     def test_resolve_unknown_source_raises(self) -> None:
         with pytest.raises(UnknownSourceError):
             resolve_source_dsn("nope")
+
+    def test_resolve_profile_returns_origin1_companies_profile(self) -> None:
+        profile = resolve_profile("origin1-companies")
+        assert len(profile.field_configs) == 2
+        semantic_types = {fc.semantic_type for fc in profile.field_configs}
+        assert semantic_types == {FieldSemanticType.COMPANY_NAME, FieldSemanticType.PERSON_NAME}
+
+    def test_resolve_source_dsn_for_origin1_pg(self) -> None:
+        dsn = resolve_source_dsn("origin1_pg")
+        assert "55201" in dsn
+        assert "testorigin1" in dsn
+
+    def test_demo_and_origin1_pg_are_both_still_resolvable(self) -> None:
+        """Adding the second named pair (Phase 3 item 4) must not have
+        broken resolution of the original pair."""
+        assert resolve_profile("demo") is DEMO_PROFILE
+        assert resolve_source_dsn("demo_pg")
+        assert resolve_profile("origin1-companies") is not None
+        assert resolve_source_dsn("origin1_pg")
 
 
 def _fake_arrow_row(*, source_row_key: str, display: str) -> dict[str, object]:

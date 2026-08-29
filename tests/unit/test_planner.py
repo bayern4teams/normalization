@@ -183,3 +183,110 @@ def test_planner_to_arrow_produces_valid_struct_array() -> None:
     row0 = struct_array[0].as_py()
     assert row0["display"] == "alpha"
     assert row0["comparison"] == "alpha"
+
+
+@pytest.mark.unit
+class TestUseCacheBypass:
+    """Phase 3 item 2 (2026-08-29 throughput program): `use_cache=False`
+    bypasses both cache tiers for one call, without touching the cache
+    the planner was constructed with — the mechanism a cardinality-aware
+    policy (`normexec.stream.stream_column`) uses to skip caching a
+    high-cardinality column while a low-cardinality column in the SAME
+    run keeps using the SAME shared cache normally."""
+
+    def test_use_cache_false_never_reads_or_writes_the_cache(self) -> None:
+        normalizer = _CountingNormalizer()
+        registry = NormalizerRegistry()
+        registry.register(normalizer)
+        dispatcher = Dispatcher(registry, env_id="e" * 64)
+
+        with NormalizationCache(":memory:") as cache:
+            planner = DistinctValuePlanner(dispatcher, cache=cache)
+            ctx, profile = _context(), _profile()
+
+            planner.distinct_value_results(
+                ["alpha", "beta"], FieldSemanticType.ADDRESS, ctx, profile, use_cache=False
+            )
+            assert normalizer.call_count == 2
+            assert cache.stats.hits == 0
+            assert cache.stats.misses == 0  # never even asked — not a "miss"
+
+            # Nothing was written — a second use_cache=False call recomputes.
+            planner.distinct_value_results(
+                ["alpha", "beta"], FieldSemanticType.ADDRESS, ctx, profile, use_cache=False
+            )
+            assert normalizer.call_count == 4
+
+    def test_use_cache_default_true_is_byte_identical_to_pre_phase_3(self) -> None:
+        normalizer = _CountingNormalizer()
+        registry = NormalizerRegistry()
+        registry.register(normalizer)
+        dispatcher = Dispatcher(registry, env_id="e" * 64)
+
+        with NormalizationCache(":memory:") as cache:
+            planner = DistinctValuePlanner(dispatcher, cache=cache)
+            ctx, profile = _context(), _profile()
+
+            values = ["alpha", "beta"]
+            planner.distinct_value_results(values, FieldSemanticType.ADDRESS, ctx, profile)
+            assert normalizer.call_count == 2
+            assert cache.stats.misses == 2
+
+            planner.distinct_value_results(values, FieldSemanticType.ADDRESS, ctx, profile)
+            assert normalizer.call_count == 2  # served from cache
+            assert cache.stats.hits == 2
+
+    def test_normalize_values_use_cache_false_reports_no_cache_stats(self) -> None:
+        """A column that bypasses the cache entirely never touched it —
+        `on_cache_stat` should not fire at all for it (distinct from
+        firing with `hit=False` for every value, which would misleadingly
+        suggest the cache was consulted and failed)."""
+        registry = NormalizerRegistry()
+        registry.register(PassthroughNormalizer())
+        dispatcher = Dispatcher(registry, env_id="e" * 64)
+
+        with NormalizationCache(":memory:") as cache:
+            planner = DistinctValuePlanner(dispatcher, cache=cache)
+            stats: list[bool] = []
+            planner.normalize_values(
+                ["alpha", "beta"],
+                FieldSemanticType.ADDRESS,
+                _context(),
+                _profile(),
+                on_cache_stat=stats.append,
+                use_cache=False,
+            )
+            assert stats == []
+
+    def test_use_cache_true_and_false_coexist_on_one_shared_cache(self) -> None:
+        """The realistic shape: one planner, one shared cache, two calls
+        in the same run with different policies (mirrors two columns of
+        one run sharing normapi's process-wide cache)."""
+        normalizer = _CountingNormalizer()
+        registry = NormalizerRegistry()
+        registry.register(normalizer)
+        dispatcher = Dispatcher(registry, env_id="e" * 64)
+
+        with NormalizationCache(":memory:") as cache:
+            planner = DistinctValuePlanner(dispatcher, cache=cache)
+            ctx, profile = _context(), _profile()
+
+            planner.distinct_value_results(
+                ["cached_value"], FieldSemanticType.ADDRESS, ctx, profile, use_cache=True
+            )
+            planner.distinct_value_results(
+                ["uncached_value"], FieldSemanticType.ADDRESS, ctx, profile, use_cache=False
+            )
+            assert normalizer.call_count == 2
+            assert cache.stats.misses == 1  # only the use_cache=True call touched the cache
+
+            # Re-running: the cached value is served from cache, the
+            # uncached one is recomputed again.
+            planner.distinct_value_results(
+                ["cached_value"], FieldSemanticType.ADDRESS, ctx, profile, use_cache=True
+            )
+            planner.distinct_value_results(
+                ["uncached_value"], FieldSemanticType.ADDRESS, ctx, profile, use_cache=False
+            )
+            assert normalizer.call_count == 3  # +1 for uncached_value only
+            assert cache.stats.hits == 1

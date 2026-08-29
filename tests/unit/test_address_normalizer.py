@@ -413,3 +413,114 @@ class TestBatchAndInverse:
     def test_inverse_parse_step_returns_none(self) -> None:
         normalizer = AddressNormalizer(FakeLibpostalParser({}))
         assert normalizer.inverse("address.libpostal_parse", "10-12 Baker St") is None
+
+
+class FakeBatchLibpostalParser(FakeLibpostalParser):
+    """Adds real `parse_batch` — one call for the whole list, matching
+    `BatchLibpostalParser`'s Protocol shape, so `AddressNormalizer.
+    normalize_many` takes the real batch path instead of falling back to
+    a per-value loop."""
+
+    def __init__(self, canned: dict[str, list[tuple[str, str]]], *, always_fail: bool = False):
+        super().__init__(canned, always_fail=always_fail)
+        self.batch_call_count = 0
+        self.last_batch_size: int | None = None
+
+    def parse_batch(self, addresses: list[str]) -> list[list[tuple[str, str]]]:
+        self.batch_call_count += 1
+        self.last_batch_size = len(addresses)
+        if self._always_fail:
+            raise LibpostalUnavailableError("simulated sidecar outage")
+        return [self._canned.get(a, []) for a in addresses]
+
+
+@pytest.mark.unit
+class TestNormalizeMany:
+    """Phase 3 item 5 (2026-08-29 throughput/memory program): a real
+    batch entrypoint, `normalize_many`, that sends every value needing a
+    real parse through ONE `parse_batch` call instead of N separate
+    `parse` calls — see `normcore.dispatch.Dispatcher.normalize_many` for
+    the caller that picks this up automatically via the
+    `BatchCapableNormalizer` capability check."""
+
+    def test_output_is_identical_to_the_per_value_path(self) -> None:
+        canned = {_BAKER_ST: _BAKER_ST_PARSE, _PENNSYLVANIA_AVE: _PENNSYLVANIA_AVE_PARSE}
+        ctx = _ctx()
+        values = [_BAKER_ST, None, "", _PENNSYLVANIA_AVE]
+
+        batch_normalizer = AddressNormalizer(FakeBatchLibpostalParser(canned))
+        many_results = batch_normalizer.normalize_many(values, ctx)
+
+        scalar_normalizer = AddressNormalizer(FakeLibpostalParser(canned))
+        scalar_results = [scalar_normalizer.normalize(v, ctx) for v in values]
+
+        assert [r.model_dump(exclude={"trace"}) for r in many_results] == [
+            r.model_dump(exclude={"trace"}) for r in scalar_results
+        ]
+
+    def test_makes_exactly_one_real_call_for_the_whole_batch(self) -> None:
+        canned = {_BAKER_ST: _BAKER_ST_PARSE, _PENNSYLVANIA_AVE: _PENNSYLVANIA_AVE_PARSE}
+        parser = FakeBatchLibpostalParser(canned)
+        normalizer = AddressNormalizer(parser)
+
+        normalizer.normalize_many([_BAKER_ST, _PENNSYLVANIA_AVE, _BAKER_ST], _ctx())
+
+        assert parser.batch_call_count == 1
+        assert parser.last_batch_size == 3  # null/empty never reach parse_batch either way
+
+    def test_null_and_empty_values_never_reach_parse_batch(self) -> None:
+        parser = FakeBatchLibpostalParser({})
+        normalizer = AddressNormalizer(parser)
+
+        results = normalizer.normalize_many([None, "", None], _ctx())
+
+        assert parser.batch_call_count == 0
+        assert [r.original_kind for r in results] == [
+            MissingKind.NULL,
+            MissingKind.EMPTY_STRING,
+            MissingKind.NULL,
+        ]
+
+    def test_falls_back_to_per_value_loop_when_parser_has_no_batch_capability(self) -> None:
+        """A plain `FakeLibpostalParser` (no `parse_batch`) — the
+        pre-Phase-3 test double every other test in this file uses —
+        must still work correctly through `normalize_many`, just via the
+        per-value fallback."""
+        canned = {_BAKER_ST: _BAKER_ST_PARSE}
+        parser = FakeLibpostalParser(canned)
+        normalizer = AddressNormalizer(parser)
+
+        results = normalizer.normalize_many([_BAKER_ST, _BAKER_ST], _ctx())
+
+        assert parser.call_count == 2
+        assert results[0].display == results[1].display == _BAKER_ST
+
+    def test_a_failed_batch_falls_back_every_value_and_counts_as_one_failure(self) -> None:
+        parser = FakeBatchLibpostalParser({}, always_fail=True)
+        normalizer = AddressNormalizer(parser)
+
+        results = normalizer.normalize_many([_BAKER_ST, _PENNSYLVANIA_AVE], _ctx())
+
+        assert parser.batch_call_count == 1
+        for result in results:
+            assert result.flags == [QualityFlag.ADDRESS_PARSE_PARTIAL, QualityFlag.PARSER_FALLBACK]
+
+        # Circuit threshold is 3 — one failed batch (however large) must
+        # count as exactly one failure, not open the circuit by itself.
+        more_results = normalizer.normalize_many([_BAKER_ST], _ctx())
+        assert parser.batch_call_count == 2  # circuit still closed — tried again for real
+        assert more_results[0].errors == ["simulated sidecar outage"]
+
+    def test_circuit_open_skips_the_batch_call_entirely(self) -> None:
+        parser = FakeBatchLibpostalParser({}, always_fail=True)
+        normalizer = AddressNormalizer(parser)
+        # Trip the circuit via the per-value path (threshold=3).
+        for _ in range(3):
+            normalizer.normalize(_BAKER_ST, _ctx())
+        assert parser.call_count == 3
+
+        results = normalizer.normalize_many([_BAKER_ST, _PENNSYLVANIA_AVE], _ctx())
+
+        assert parser.batch_call_count == 0  # circuit open — no batch attempt at all
+        for result in results:
+            assert result.errors == ["circuit breaker open"]

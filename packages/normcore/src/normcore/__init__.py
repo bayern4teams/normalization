@@ -32,7 +32,7 @@ from normcore.errors import (
     NormalizerFailure,
     apply_error_policy,
 )
-from normcore.interfaces import Normalizer
+from normcore.interfaces import BatchCapableNormalizer, Normalizer
 from normcore.models import NormalizedValue
 from normcore.rules import (
     ComponentVersionInfo,
@@ -45,6 +45,7 @@ from normcore.rules import (
     ValidationOutcome,
 )
 from normcore.run import (
+    ColumnCachePolicy,
     NormalizationRun,
     NormalizationRunMetrics,
     NormalizationVersion,
@@ -62,6 +63,8 @@ from normcore.unicode_policy import (
 __all__ = [
     "DEFAULT_FORM",
     "NORMALIZED_VALUE_ARROW_SCHEMA",
+    "BatchCapableNormalizer",
+    "ColumnCachePolicy",
     "ComponentVersionInfo",
     "Dispatcher",
     "ErrorPolicy",

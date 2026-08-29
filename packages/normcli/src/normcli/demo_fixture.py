@@ -19,11 +19,26 @@ denote elsewhere in the repo:
   database `source_demo`, the genuinely-restricted `readonly_user` role
   provisioned by that same init script).
 
-Only these two names are recognized today — `run_cmd.py` raises a clear
-error for anything else. A general profile-file-loading format was
-explicitly out of scope for the throughput program this module was built
-for; extending this resolver is the natural next step if more named
-profiles/sources are needed later.
+A second pair, "origin1_companies" / "origin1_pg" (Phase 3 item 4 of the
+throughput/memory program, 2026-08-29), was added specifically because
+the 3-row demo table above is too small to exercise anything about
+process-pool parallelism (Phase 3 item 1) — pool calibration samples up
+to `200 * workers` values, so 3 rows can never leave the pool's
+"undecided" first-chunk calibration branch. "origin1_pg" is a REAL
+3,940-row dataset (`companies`, mirrored from the same live ClickHouse
+`origin1` database this program's `origin2` measurements came from, via
+a real Postgres database at `localhost:55201/testorigin1`), with two
+pool-eligible semantic types (`COMPANY_NAME` at ~721µs/value,
+`PERSON_NAME` at ~1241µs/value — both above the ~200µs break-even) —
+large enough for a real calibration decision and real concurrent
+batches, small enough to run in seconds.
+
+Extending this resolver for a second named pair, as this addition does,
+is exactly what the module's own original docstring anticipated: "a
+general profile-file-loading format was explicitly out of scope... this
+resolver is the natural next step if more named profiles/sources are
+needed later." Not a general loader still — just two more hardcoded
+names, same shape as the first pair.
 """
 
 from __future__ import annotations
@@ -69,6 +84,44 @@ DEMO_PROFILE = NormalizationProfile(
     ),
 )
 
+# Phase 3 item 4: a real ~3,940-row Postgres table, large enough to
+# exercise process-pool calibration for real — see this module's
+# docstring. Overridable the same way DEMO_PG_DSN_ENV_VAR is, for a
+# non-default host/port without editing code.
+ORIGIN1_PG_DSN_ENV_VAR = "NORM_ORIGIN1_PG_DSN"
+_DEFAULT_ORIGIN1_PG_DSN = "postgresql://postgres:pass@localhost:55201/testorigin1"
+
+ORIGIN1_SOURCE_ID = "origin1_pg"
+ORIGIN1_TABLE = "companies"
+
+ORIGIN1_PROFILE = NormalizationProfile(
+    id="origin1-companies",
+    name="origin1-companies",
+    version="v1",
+    created_at="2026-01-01T00:00:00Z",
+    updated_at="2026-01-01T00:00:00Z",
+    created_by="normcli",
+    field_configs=(
+        # 2,679 distinct of 3,940 rows — well above the pool's ~200µs
+        # break-even for COMPANY_NAME (~721µs/value measured, Phase 3
+        # item 1's live verification).
+        FieldNormalizationConfig(
+            field_ref=f"{ORIGIN1_SOURCE_ID}.{ORIGIN1_TABLE}.entity_name",
+            semantic_type=FieldSemanticType.COMPANY_NAME,
+        ),
+        # Sparse (197 of 3,940 non-null) but real — PERSON_NAME is the
+        # program's most expensive commonly-pooled type (~1241µs/value),
+        # and a sparse column is itself a real shape worth proving
+        # determinism against (most values null, computed once via
+        # `Dispatcher.normalize(None, ...)`, never touching the pool at
+        # all — see `DistinctValuePlanner.normalize_values`).
+        FieldNormalizationConfig(
+            field_ref=f"{ORIGIN1_SOURCE_ID}.{ORIGIN1_TABLE}.ceo_name",
+            semantic_type=FieldSemanticType.PERSON_NAME,
+        ),
+    ),
+)
+
 
 class UnknownProfileError(ValueError):
     pass
@@ -78,15 +131,31 @@ class UnknownSourceError(ValueError):
     pass
 
 
+_PROFILES = {"demo": DEMO_PROFILE, "origin1-companies": ORIGIN1_PROFILE}
+_SOURCE_DSN_ENV_VARS = {
+    DEMO_SOURCE_ID: (DEMO_PG_DSN_ENV_VAR, _DEFAULT_DEMO_PG_DSN),
+    ORIGIN1_SOURCE_ID: (ORIGIN1_PG_DSN_ENV_VAR, _DEFAULT_ORIGIN1_PG_DSN),
+}
+
+
 def resolve_profile(name: str) -> NormalizationProfile:
-    if name != "demo":
-        msg = f"Unknown profile {name!r} — only 'demo' is defined today (see demo_fixture.py)"
+    profile = _PROFILES.get(name)
+    if profile is None:
+        msg = (
+            f"Unknown profile {name!r} — only {sorted(_PROFILES)} are defined today "
+            "(see demo_fixture.py)"
+        )
         raise UnknownProfileError(msg)
-    return DEMO_PROFILE
+    return profile
 
 
 def resolve_source_dsn(name: str) -> str:
-    if name != DEMO_SOURCE_ID:
-        msg = f"Unknown source {name!r} — only 'demo_pg' is defined today (see demo_fixture.py)"
+    entry = _SOURCE_DSN_ENV_VARS.get(name)
+    if entry is None:
+        msg = (
+            f"Unknown source {name!r} — only {sorted(_SOURCE_DSN_ENV_VARS)} are defined today "
+            "(see demo_fixture.py)"
+        )
         raise UnknownSourceError(msg)
-    return os.environ.get(DEMO_PG_DSN_ENV_VAR, _DEFAULT_DEMO_PG_DSN)
+    env_var, default_dsn = entry
+    return os.environ.get(env_var, default_dsn)

@@ -13,7 +13,7 @@ from __future__ import annotations
 from normcore.context import NormalizationContext
 from normcore.enums import FieldSemanticType, NormalizationStatus
 from normcore.errors import NormalizerFailure, apply_error_policy
-from normcore.interfaces import Normalizer
+from normcore.interfaces import BatchCapableNormalizer, Normalizer
 from normcore.models import NormalizedValue
 from normcore.rules import NormalizationProfile
 
@@ -104,20 +104,91 @@ class Dispatcher:
         try:
             result = normalizer.normalize(value, context)
         except NormalizerFailure as exc:
-            output_value, status_str = apply_error_policy(
-                context.error_policy, original_value=value
-            )
-            return NormalizedValue(
-                original=value,
-                display=output_value,
-                normalization_status=NormalizationStatus(status_str),
-                errors=[str(exc)],
-                profile_version=profile.version,
-                env_id=self._env_id,
-                semantic_type=semantic_type,
-                context_hash=context.context_hash,
-            )
+            return self._failure_result(exc, value, context, profile)
 
+        return self._finalize(result, normalizer, context, profile)
+
+    def normalize_many(
+        self,
+        values: list[str | None],
+        semantic_type: FieldSemanticType,
+        context: NormalizationContext,
+        profile: NormalizationProfile,
+    ) -> list[NormalizedValue]:
+        """Phase 3 item 5 of the throughput/memory program (2026-08-29):
+        the real batch entrypoint `DistinctValuePlanner._compute_serial`
+        uses instead of a per-value `normalize()` loop, when — and only
+        when — the resolved normalizer implements `BatchCapableNormalizer`
+        (today: `AddressNormalizer` only). Every other semantic type
+        falls back to exactly the same per-value loop this method
+        replaces, so this is a no-op change in behavior or call count
+        for 19 of the 20 registered normalizers.
+
+        Same per-result contract as `normalize()` (context_hash
+        assertion, profile_version/env_id stamping, NormalizerFailure
+        handling) — factored into `_finalize`/`_failure_result` so both
+        methods apply it identically rather than duplicating it.
+        """
+        if context.semantic_type is not semantic_type:
+            msg = (
+                f"semantic_type argument ({semantic_type!r}) does not match "
+                f"context.semantic_type ({context.semantic_type!r})"
+            )
+            raise ValueError(msg)
+        if not values:
+            return []
+
+        normalizer = self._registry.require(semantic_type)
+        if not isinstance(normalizer, BatchCapableNormalizer):
+            return [self.normalize(v, semantic_type, context, profile) for v in values]
+
+        try:
+            raw_results = normalizer.normalize_many(values, context)
+        except NormalizerFailure:
+            # A batch-capable normalizer's real batch call failed as a
+            # WHOLE (e.g. the one HTTP call itself errored, rather than
+            # any single value being unparsable — a single value's own
+            # failure is expected to come back as a normal per-value
+            # result, not an exception, exactly like `normalize()`).
+            # Falling back to the per-value path re-attempts each value
+            # independently rather than failing every value in the batch
+            # for what might have been a transient, single-call problem.
+            return [self.normalize(v, semantic_type, context, profile) for v in values]
+
+        if len(raw_results) != len(values):
+            msg = (
+                f"Normalizer {normalizer.name!r}.normalize_many returned "
+                f"{len(raw_results)} results for {len(values)} input values"
+            )
+            raise AssertionError(msg)
+        return [self._finalize(result, normalizer, context, profile) for result in raw_results]
+
+    def _failure_result(
+        self,
+        exc: NormalizerFailure,
+        value: str | None,
+        context: NormalizationContext,
+        profile: NormalizationProfile,
+    ) -> NormalizedValue:
+        output_value, status_str = apply_error_policy(context.error_policy, original_value=value)
+        return NormalizedValue(
+            original=value,
+            display=output_value,
+            normalization_status=NormalizationStatus(status_str),
+            errors=[str(exc)],
+            profile_version=profile.version,
+            env_id=self._env_id,
+            semantic_type=context.semantic_type,
+            context_hash=context.context_hash,
+        )
+
+    def _finalize(
+        self,
+        result: NormalizedValue,
+        normalizer: Normalizer,
+        context: NormalizationContext,
+        profile: NormalizationProfile,
+    ) -> NormalizedValue:
         # profile_version and env_id are run-level bookkeeping a Normalizer
         # implementation has no way to know (NormalizationContext carries
         # neither) — the dispatcher stamps them here, once, so every

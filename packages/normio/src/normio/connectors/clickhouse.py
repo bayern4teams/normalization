@@ -160,6 +160,31 @@ class ClickHouseConnector:
             )
         return [row[0] for row in result.result_rows]
 
+    def estimate_distinct_ratio(self, table: str, column: str) -> float | None:
+        """Phase 3 item 2 of the throughput/memory program: a cheap, EXACT
+        distinctness estimate via `uniqExact` — chosen over the
+        approximate `uniq` (HyperLogLog) despite `uniq` measuring ~1.2-9.6x
+        faster in live testing against real `origin2` tables, because this
+        feeds a cache-policy decision `normcli diff --require-identical`
+        treats as part of a run's real output (Phase 3 item 4): an exact
+        aggregate keeps that comparison meaningful, and the live-measured
+        cost is negligible either way — worst case (`Person.fullName`,
+        11.8M rows) was 1.42s for `uniqExact` vs 0.18s for `uniq`, both
+        trivial next to a run that takes minutes. One query, `count()` and
+        `uniqExact()` computed together so ClickHouse scans the column
+        once, not twice."""
+        if column not in self._column_names(table):
+            msg = f"Unknown column for table {table!r}: {column!r}"
+            raise ValueError(msg)
+        with self._lock:
+            result = self._client.query(
+                f"SELECT count(), uniqExact(`{column}`) FROM `{table}` WHERE `{column}` IS NOT NULL"
+            )
+        total, distinct_count = result.result_rows[0]
+        if total == 0:
+            return None
+        return float(distinct_count) / float(total)
+
     def count_null(self, table: str, column: str) -> int:
         if column not in self._column_names(table):
             msg = f"Unknown column for table {table!r}: {column!r}"

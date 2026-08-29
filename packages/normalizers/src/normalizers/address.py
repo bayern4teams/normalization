@@ -84,6 +84,19 @@ class LibpostalParser(Protocol):
     def parse(self, address: str) -> list[tuple[str, str]]: ...
 
 
+@runtime_checkable
+class BatchLibpostalParser(Protocol):
+    """Optional — Phase 3 item 5: a client that can parse many addresses
+    in one real round trip. Kept separate from `LibpostalParser` (rather
+    than adding a required method to it) so every existing test double
+    that implements only `.parse()` keeps working unchanged;
+    `AddressNormalizer.normalize_many` checks for this capability and
+    falls back to a per-value `normalize()` loop when the injected
+    client doesn't have it."""
+
+    def parse_batch(self, addresses: list[str]) -> list[list[tuple[str, str]]]: ...
+
+
 class LibpostalClient:
     """Thin HTTP client for the libpostal sidecar (services/libpostal).
     A real network dependency, not a Protocol/mock — callers needing a
@@ -93,15 +106,28 @@ class LibpostalClient:
         self._client = httpx.Client(base_url=base_url, timeout=timeout)
 
     def parse(self, address: str) -> list[tuple[str, str]]:
+        return self.parse_batch([address])[0]
+
+    def parse_batch(self, addresses: list[str]) -> list[list[tuple[str, str]]]:
+        """Phase 3 item 5 of the throughput/memory program (2026-08-29):
+        one real HTTP round trip for the whole list, not one per address
+        — `services/libpostal/server.py`'s `/parse` already accepts a
+        list (`ParseRequest.addresses`) and was simply being sent exactly
+        one address per call regardless, which this program's own plan
+        flagged as an available, unused win. `parse()` above is now
+        implemented in terms of this (a batch of one), so there is
+        exactly one real request-building code path, not two to keep in
+        sync."""
+        if not addresses:
+            return []
         try:
-            resp = self._client.post("/parse", json={"addresses": [address]})
+            resp = self._client.post("/parse", json={"addresses": addresses})
             resp.raise_for_status()
         except httpx.HTTPError as exc:
             msg = f"libpostal sidecar request failed: {exc}"
             raise LibpostalUnavailableError(msg) from exc
         results = resp.json()
-        components = results[0]["components"]
-        return [(c["value"], c["label"]) for c in components]
+        return [[(c["value"], c["label"]) for c in entry["components"]] for entry in results]
 
     def health(self) -> dict[str, object]:
         resp = self._client.get("/health")
@@ -196,12 +222,7 @@ class AddressNormalizer:
         if value.strip() == "":
             return _missing(value, MissingKind.EMPTY_STRING, ctx)
 
-        options = UnicodeProcessingOptions(
-            form=UnicodeForm.NFC, include_accent_stripped=True, include_confusables=False
-        )
-        unicode_result = self._unicode.process(value, options)
-        cleaned = unicode_result.final_value
-        trace = build_unicode_trace(unicode_result)
+        cleaned, trace = self._clean(value)
 
         if self._circuit.is_open():
             return _fallback(value, cleaned, ctx, trace, reason="circuit breaker open")
@@ -213,55 +234,74 @@ class AddressNormalizer:
             return _fallback(value, cleaned, ctx, trace, reason=str(exc))
 
         self._circuit.record_success()
+        return _build_parsed_result(value, cleaned, trace, raw_components, ctx)
 
-        structured = _build_component_structure(raw_components)
-        postcode_valid = _validate_postcode(structured, ctx)
-        if postcode_valid is not None:
-            structured["postcode_valid"] = postcode_valid
+    def normalize_many(
+        self, values: Sequence[str | None], ctx: NormalizationContext
+    ) -> list[NormalizedValue]:
+        """Phase 3 item 5 of the throughput/memory program (2026-08-29):
+        the real batch entrypoint `normcore.dispatch.Dispatcher.
+        normalize_many` calls instead of `len(values)` separate
+        `normalize()` calls — one real libpostal HTTP round trip for
+        every value that actually needs parsing (null/empty values never
+        reach the network either way, matching `normalize()`).
 
-        # raw_components entries are (value, label) — matching
-        # LibpostalClient.parse()'s return shape, NOT (label, value).
-        comparison_parts = [
-            value
-            for value, label in raw_components
-            if label not in {"category", "near"} and value.strip()
-        ]
-        comparison, _ = text_ops.casefold(" ".join(comparison_parts), ctx.locale)
-        search = comparison
+        Falls back to the per-value path entirely when the injected
+        client doesn't support real batching (`BatchLibpostalParser` —
+        e.g. a test double implementing only `.parse()`), or when the
+        circuit is already open (nothing to batch — every real value
+        would fall back anyway). A failed batch call counts as ONE
+        circuit-breaker failure, not `len(values)` — see this method's
+        own reasoning: the batch already represents one real network
+        attempt, and inflating the failure count by batch size would
+        make the circuit trip on the very first batch against a large
+        distinct-value set, which is not what "3 consecutive failures"
+        was calibrated to mean.
+        """
+        if not isinstance(self._libpostal, BatchLibpostalParser) or self._circuit.is_open():
+            return [self.normalize(v, ctx) for v in values]
 
-        flags: list[QualityFlag] = []
-        if not structured.get("road") or not structured.get("city"):
-            flags.append(QualityFlag.ADDRESS_PARSE_PARTIAL)
+        results: list[NormalizedValue | None] = [None] * len(values)
+        real_indices: list[int] = []
+        # Keyed by index — carries the original `str` value alongside its
+        # cleaned form/trace, so the two branches below never need to
+        # re-index `values` itself (which mypy correctly types as
+        # `str | None`, even though every index reachable here was
+        # already proven non-null/non-empty above).
+        real_by_index: dict[int, tuple[str, str, list[TraceStep]]] = {}
+        for i, value in enumerate(values):
+            if value is None:
+                results[i] = _missing(None, MissingKind.NULL, ctx)
+            elif value.strip() == "":
+                results[i] = _missing(value, MissingKind.EMPTY_STRING, ctx)
+            else:
+                cleaned, trace = self._clean(value)
+                real_by_index[i] = (value, cleaned, trace)
+                real_indices.append(i)
 
-        confidence = 1.0
-        if postcode_valid is False:
-            confidence = 0.6
-        if QualityFlag.ADDRESS_PARSE_PARTIAL in flags:
-            confidence = min(confidence, 0.7)
+        if real_indices:
+            cleaned_addresses = [real_by_index[i][1] for i in real_indices]
+            try:
+                parsed_batch = self._libpostal.parse_batch(cleaned_addresses)
+            except LibpostalUnavailableError as exc:
+                self._circuit.record_failure()
+                for i in real_indices:
+                    value, cleaned, trace = real_by_index[i]
+                    results[i] = _fallback(value, cleaned, ctx, trace, reason=str(exc))
+            else:
+                self._circuit.record_success()
+                for i, raw_components in zip(real_indices, parsed_batch, strict=True):
+                    value, cleaned, trace = real_by_index[i]
+                    results[i] = _build_parsed_result(value, cleaned, trace, raw_components, ctx)
 
-        trace = [*trace, _parse_trace_step(cleaned, changed=True)]
+        return [r for r in results if r is not None]  # every index was filled above
 
-        return NormalizedValue(
-            original=value,
-            display=cleaned,
-            comparison=comparison,
-            search=search,
-            structured=structured,
-            validation_status="VALID" if not flags else "PARTIAL",
-            normalization_status=(
-                NormalizationStatus.PARSED
-                if QualityFlag.ADDRESS_PARSE_PARTIAL not in flags
-                else NormalizationStatus.PARTIAL
-            ),
-            confidence=confidence,
-            flags=flags,
-            trace=trace,
-            lossiness=Reversibility.PARTIALLY_REVERSIBLE,
-            profile_version="",
-            env_id="",
-            semantic_type=ctx.semantic_type,
-            context_hash=ctx.context_hash,
+    def _clean(self, value: str) -> tuple[str, list[TraceStep]]:
+        options = UnicodeProcessingOptions(
+            form=UnicodeForm.NFC, include_accent_stripped=True, include_confusables=False
         )
+        unicode_result = self._unicode.process(value, options)
+        return unicode_result.final_value, build_unicode_trace(unicode_result)
 
     def normalize_batch(self, values: pa.Array, ctx: NormalizationContext) -> pa.StructArray:
         results = [self.normalize(v, ctx) for v in values.to_pylist()]
@@ -315,6 +355,67 @@ class AddressNormalizer:
             output, _ = text_ops.unicode_normalize(value, inverse_form)
             return output
         return None
+
+
+def _build_parsed_result(
+    value: str,
+    cleaned: str,
+    trace: list[TraceStep],
+    raw_components: list[tuple[str, str]],
+    ctx: NormalizationContext,
+) -> NormalizedValue:
+    """The post-parse half of `normalize()`, extracted so `normalize_many`
+    (Phase 3 item 5) can share it exactly: whether `raw_components` came
+    from one `parse()` call or one entry of a `parse_batch()` call, the
+    result must be identical."""
+    structured = _build_component_structure(raw_components)
+    postcode_valid = _validate_postcode(structured, ctx)
+    if postcode_valid is not None:
+        structured["postcode_valid"] = postcode_valid
+
+    # raw_components entries are (value, label) — matching
+    # LibpostalClient.parse()'s return shape, NOT (label, value).
+    comparison_parts = [
+        value
+        for value, label in raw_components
+        if label not in {"category", "near"} and value.strip()
+    ]
+    comparison, _ = text_ops.casefold(" ".join(comparison_parts), ctx.locale)
+    search = comparison
+
+    flags: list[QualityFlag] = []
+    if not structured.get("road") or not structured.get("city"):
+        flags.append(QualityFlag.ADDRESS_PARSE_PARTIAL)
+
+    confidence = 1.0
+    if postcode_valid is False:
+        confidence = 0.6
+    if QualityFlag.ADDRESS_PARSE_PARTIAL in flags:
+        confidence = min(confidence, 0.7)
+
+    full_trace = [*trace, _parse_trace_step(cleaned, changed=True)]
+
+    return NormalizedValue(
+        original=value,
+        display=cleaned,
+        comparison=comparison,
+        search=search,
+        structured=structured,
+        validation_status="VALID" if not flags else "PARTIAL",
+        normalization_status=(
+            NormalizationStatus.PARSED
+            if QualityFlag.ADDRESS_PARSE_PARTIAL not in flags
+            else NormalizationStatus.PARTIAL
+        ),
+        confidence=confidence,
+        flags=flags,
+        trace=full_trace,
+        lossiness=Reversibility.PARTIALLY_REVERSIBLE,
+        profile_version="",
+        env_id="",
+        semantic_type=ctx.semantic_type,
+        context_hash=ctx.context_hash,
+    )
 
 
 def _build_component_structure(raw_components: list[tuple[str, str]]) -> dict[str, object]:

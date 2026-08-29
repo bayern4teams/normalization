@@ -37,6 +37,9 @@ from normcore import FieldNormalizationConfig, FieldSemanticType, RunStatus
 POSTGRES_DSN = os.environ.get(
     "TEST_PG_DSN", "postgresql://readonly_user:readonly_pass@localhost:5434/source_demo"
 )
+ORIGIN1_PG_DSN = os.environ.get(
+    "TEST_ORIGIN1_PG_DSN", "postgresql://postgres:pass@localhost:55201/testorigin1"
+)
 
 
 @pytest.mark.integration
@@ -131,6 +134,79 @@ class TestRunNormalizationLiveAgainstRealDemoPostgres:
         report = json.loads(report_path.read_text(encoding="utf-8"))
         assert report["status"] == "FAILED"
         assert "does not exist" in report["failure_reason"]
+
+
+@pytest.mark.integration
+class TestParallelExecutionIsByteIdenticalToSerial:
+    """Phase 3 item 4 (2026-08-29 throughput/memory program): the real
+    determinism proof for process-pool parallelism (Phase 3 item 1) —
+    against `origin1_pg`/`testorigin1`, a real ~3,940-row Postgres table
+    (see `normcli.demo_fixture`'s module docstring for why: the 3-row
+    `demo`/`demo_pg` fixture is too small to ever leave the pool's
+    "undecided" first-chunk calibration branch). Requires a real Postgres
+    reachable at `TEST_ORIGIN1_PG_DSN` (default: `localhost:55201/
+    testorigin1`) already seeded with the `companies` table this
+    program's Phase 3 R&D imported from the live ClickHouse `origin1`
+    database — see the Phase 3 verification pack for the import script.
+    """
+
+    def test_pooled_run_matches_serial_run_byte_for_byte(self, tmp_path: Path) -> None:
+        serial = run_normalization(
+            profile_name="origin1-companies",
+            source_name="origin1_pg",
+            out_dir=tmp_path / "serial",
+            run_id="det-serial",
+            dsn=ORIGIN1_PG_DSN,
+            chunk_size=500,  # multiple chunks — real data past chunk 1 must be reachable
+            parallel_workers=0,
+        )
+        pooled = run_normalization(
+            profile_name="origin1-companies",
+            source_name="origin1_pg",
+            out_dir=tmp_path / "pooled",
+            run_id="det-pooled",  # deliberately different — diff must not require a match
+            dsn=ORIGIN1_PG_DSN,
+            chunk_size=500,
+            parallel_workers=4,
+        )
+
+        assert serial.run.status is RunStatus.COMPLETED
+        assert pooled.run.status is RunStatus.COMPLETED
+        assert serial.rows_processed == pooled.rows_processed == 7_880  # 3,940 rows x 2 columns
+
+        diff = diff_runs(tmp_path / "serial", tmp_path / "pooled")
+        assert diff.identical, (
+            f"parquet_mismatches={diff.parquet_mismatches} "
+            f"report_mismatches={diff.report_mismatches}"
+        )
+
+    def test_two_independent_serial_runs_are_also_identical(self, tmp_path: Path) -> None:
+        """The baseline ADR-014 claim, on the same real dataset — proven
+        separately from the pooled comparison above so a future failure
+        in one immediately tells you whether the regression is about
+        parallelism specifically or determinism in general."""
+        run_a = run_normalization(
+            profile_name="origin1-companies",
+            source_name="origin1_pg",
+            out_dir=tmp_path / "a",
+            run_id="det-a",
+            dsn=ORIGIN1_PG_DSN,
+            chunk_size=500,
+        )
+        run_b = run_normalization(
+            profile_name="origin1-companies",
+            source_name="origin1_pg",
+            out_dir=tmp_path / "b",
+            run_id="det-b",
+            dsn=ORIGIN1_PG_DSN,
+            chunk_size=500,
+        )
+
+        assert run_a.run.status is RunStatus.COMPLETED
+        assert run_b.run.status is RunStatus.COMPLETED
+
+        diff = diff_runs(tmp_path / "a", tmp_path / "b")
+        assert diff.identical
 
 
 @pytest.mark.integration

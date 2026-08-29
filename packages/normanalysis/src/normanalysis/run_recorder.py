@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING
 from normcore import NormalizationRun, NormalizationRunMetrics, NormalizationStatus, RunStatus
 
 if TYPE_CHECKING:
-    from normcore import NormalizedValue
+    from normcore import ColumnCachePolicy, NormalizedValue
 
 
 class InvalidRunTransitionError(RuntimeError):
@@ -76,6 +76,14 @@ class RunRecorder:
         self._latency_samples_seen = 0
         self._latency_rng = random.Random()
         self._started_monotonic: float | None = None
+        # Phase 3 item 2 (2026-08-29 throughput program): one entry per
+        # column a cache policy was actually decided for — empty for a
+        # run with no cache configured at all (nothing to decide). A
+        # plain list, not keyed by (table, column): a resumed/restarted
+        # column could in principle report twice, and keeping every real
+        # decision (rather than silently overwriting) is more honest for
+        # an audit trail than deduplicating one away.
+        self._cache_policy: list[ColumnCachePolicy] = []
 
     @property
     def records_processed(self) -> int:
@@ -136,6 +144,12 @@ class RunRecorder:
                 self._latencies_s[replace_index] = duration_seconds
         self._library_calls += sum(1 for step in result.trace if step.library is not None)
 
+    def record_cache_policy(self, decision: ColumnCachePolicy) -> None:
+        """Called at most twice per column (`normexec.stream.stream_column`:
+        once if the connector supplies a real estimate up front, once —
+        the fallback — after the first chunk, never both)."""
+        self._cache_policy.append(decision)
+
     def record_warning(self) -> None:
         self._warnings += 1
 
@@ -157,6 +171,7 @@ class RunRecorder:
 
         return self._run.model_copy(
             update={
+                "cache_policy": tuple(self._cache_policy),
                 "metrics": NormalizationRunMetrics(
                     records_processed=self._records_processed,
                     fields_processed=self._fields_processed,

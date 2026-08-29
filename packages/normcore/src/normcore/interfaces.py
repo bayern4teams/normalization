@@ -117,3 +117,39 @@ class Normalizer(Protocol):
         inverse to prove injectivity — see ADR-012 for how each
         reversibility class is actually verified)."""
         ...
+
+
+@runtime_checkable
+class BatchCapableNormalizer(Protocol):
+    """Optional — Phase 3 item 5 of the throughput/memory program
+    (2026-08-29): a REAL batch entrypoint returning full `NormalizedValue`
+    objects, for the rare normalizer where batching genuinely helps
+    (network-bound work, where N values need one round trip instead of
+    N). Deliberately separate from `Normalizer.normalize_batch` above,
+    which every normalizer implements but returns only 4 of
+    `NormalizedValue`'s fields and — confirmed during this program's R&D
+    — nothing in the execution path ever calls: `DistinctValuePlanner`
+    has always called `Dispatcher.normalize()` once per distinct value,
+    never that method. Fixing THAT gap (rather than leaving it as
+    ADR-016 claimed-but-fictional) is intentionally narrow: only a
+    normalizer that opts in by implementing this Protocol changes
+    behavior; every other normalizer's dispatch path is untouched.
+
+    `AddressNormalizer` is the only implementation today — the libpostal
+    sidecar's `/parse` already accepts a list and was being sent exactly
+    one address per call regardless (this program's own plan flagged
+    it). A CPU-bound normalizer (name, company, ...) has no equivalent
+    win: batching doesn't remove per-value dispatcher/registry overhead,
+    which is already amortized per-process, not per-call.
+    """
+
+    def normalize_many(
+        self, values: Sequence[str | None], ctx: NormalizationContext
+    ) -> list[NormalizedValue]:
+        """Same contract as calling `normalize()` once per value, in
+        order — including `context_hash` on every result — but performs
+        at most one real batched operation (e.g. one HTTP call) instead
+        of `len(values)` of them. `Dispatcher.normalize_many` uses this
+        when the resolved normalizer implements it, and falls back to a
+        per-value loop otherwise."""
+        ...

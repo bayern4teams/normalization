@@ -17,8 +17,10 @@ from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 from normcore.contract import NORMALIZED_VALUE_ARROW_SCHEMA, normalized_value_to_arrow_row
+from normio.capabilities import CardinalitySamplingConnector
 
-from normcore import NormalizationStatus
+from normcore import ColumnCachePolicy, NormalizationStatus
+from normexec.cache_policy import decide_cache_policy
 from normexec.planner import DistinctValuePlanner
 
 if TYPE_CHECKING:
@@ -112,6 +114,24 @@ def stream_column(
     after_key = resume_after_key
     chunk_index = 0
     rows_processed = 0
+
+    # Phase 3 item 2 (cardinality-aware cache policy): decided once, up
+    # front, when the connector can supply a cheap real estimate; `None`
+    # (undecided) otherwise, in which case the first chunk always uses
+    # the cache (this run's pre-Phase-3 default) and doubles as the
+    # generic fallback's sample — see the non-negotiable "connector
+    # capability with a generic fallback" rule in the throughput/memory
+    # program's plan. Never computed at all when no cache was configured
+    # for this run — there is no policy to decide.
+    cache_policy: ColumnCachePolicy | None = None
+    if cache is not None and isinstance(connector, CardinalitySamplingConnector):
+        cache_policy = decide_cache_policy(
+            table=table,
+            column=column,
+            distinct_ratio=connector.estimate_distinct_ratio(table, column),
+            source="connector_estimate",
+        )
+        recorder.record_cache_policy(cache_policy)
     fetch_columns = (
         [column, *key_columns, "created_at"]
         if track_created_at
@@ -148,7 +168,28 @@ def stream_column(
             profile,
             on_computed=recorder.record_computation,
             on_cache_stat=lambda hit: recorder.record_cache(hit=hit),
+            use_cache=cache_policy is None or cache_policy.use_cache,
         )
+
+        if cache is not None and cache_policy is None:
+            # Generic fallback (no connector capability): estimate from
+            # the real data this chunk already fetched — zero extra I/O.
+            # This chunk itself always ran with the cache (the `True`
+            # default just above, since `cache_policy` was still `None`);
+            # only chunk 2 onward is affected by what gets decided here.
+            # A chunk with no non-null values at all leaves `cache_policy`
+            # `None` so the NEXT chunk gets a real chance to sample,
+            # rather than locking in an "unavailable" verdict from a
+            # chunk that had nothing to measure.
+            non_null = [v for v in column_values if v is not None]
+            if non_null:
+                cache_policy = decide_cache_policy(
+                    table=table,
+                    column=column,
+                    distinct_ratio=len(set(non_null)) / len(non_null),
+                    source="first_chunk_sample",
+                )
+                recorder.record_cache_policy(cache_policy)
 
         for result in results:
             changed = result.normalization_status is not NormalizationStatus.UNCHANGED

@@ -54,10 +54,30 @@ Three execution engine options were considered:
   appear in a key (§103's PII-in-cache-keys prohibition). The `env_id`
   component means any upstream library/dictionary change automatically
   invalidates stale entries rather than requiring manual cache clearing.
-- **Batch APIs are mandatory on every `Normalizer`**: the interface
-  requires `normalize_batch(values: pa.Array, ctx) -> pa.StructArray` in
-  addition to the single-value `normalize()`, and the distinct-value
-  planner always calls the batch path.
+- **The distinct-value planner calls `normalize()` once per distinct
+  value by default** (`DistinctValuePlanner._compute_serial`) — NOT a
+  batch path. `Normalizer.normalize_batch(values: pa.Array, ctx) ->
+  pa.StructArray` is a required part of the interface, but returns only
+  4 of `NormalizedValue`'s fields and, confirmed during the 2026-08-29
+  throughput/memory program's R&D pass, nothing in the real execution
+  path has ever called it — this ADR previously claimed otherwise
+  ("the distinct-value planner always calls the batch path"), which was
+  never true. It remains implemented by all 20 normalizers and unused;
+  removing it was out of scope for that program.
+  **Phase 3 item 5 of that program** added a real, narrow batch path
+  instead: an OPTIONAL `BatchCapableNormalizer.normalize_many(values,
+  ctx) -> list[NormalizedValue]` Protocol (`normcore.interfaces`),
+  checked by `Dispatcher.normalize_many` and used by
+  `DistinctValuePlanner._compute_serial` whenever the resolved
+  normalizer implements it — today, only `AddressNormalizer`, batching
+  every distinct value needing a real parse into ONE libpostal HTTP
+  call instead of one call per value (live-measured: ~58x faster on a
+  200-value batch, byte-identical output vs. the per-value path). Every
+  other semantic type still calls `normalize()` per distinct value,
+  unchanged — this is deliberately narrow, not a general batch-by-default
+  redesign: a CPU-bound normalizer has no equivalent win, since batching
+  doesn't remove per-value dispatch overhead that's already amortized
+  per-process, not per-call.
 - **Database pushdown is restricted to provably safe operations only** —
   currently limited to exact-match sentinel/missing-value detection
   (§53–§54), which is semantically a lookup, not a parser-driven

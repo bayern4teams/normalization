@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING
 
 import polars as pl
 import pyarrow as pa
+from normcore.interfaces import BatchCapableNormalizer
 
 from normexec.cache import make_cache_key
 from normexec.parallel import POOL_EXCLUDED_SEMANTIC_TYPES
@@ -79,6 +80,7 @@ class DistinctValuePlanner:
         profile: NormalizationProfile,
         *,
         on_computed: Callable[[str, NormalizedValue, float], None] | None = None,
+        use_cache: bool = True,
     ) -> dict[str, NormalizedValue]:
         """Normalize each distinct value exactly once, cache-aware.
         Returns {raw_value: NormalizedValue}.
@@ -90,8 +92,19 @@ class DistinctValuePlanner:
         per-computation samples, so callers (normanalysis's RunRecorder)
         hook in here rather than timing at the row level, where duplicate
         rows sharing one deduped result would corrupt the percentiles.
+
+        `use_cache` (Phase 3 item 2, cardinality-aware cache policy):
+        `False` bypasses both cache tiers for THIS call only, without
+        touching the cache this planner was constructed with — a
+        high-cardinality column's decision doesn't need a second planner
+        instance, and this keeps a pool's per-semantic-type calibration
+        state (`self._pool_decisions`) alive across the column's chunks
+        regardless of what the cache policy decides. Defaults to `True`
+        so every pre-Phase-3 call site is byte-identical unless it opts
+        in.
         """
-        if self._cache is None:
+        cache = self._cache if use_cache else None
+        if cache is None:
             computed = self._compute_values(
                 distinct_values, semantic_type, context, profile, on_computed=on_computed
             )
@@ -115,7 +128,7 @@ class DistinctValuePlanner:
             )
             for value in distinct_values
         }
-        cached = self._cache.get_many(list(keys_by_value.values()))
+        cached = cache.get_many(list(keys_by_value.values()))
 
         missing_values = [v for v in distinct_values if keys_by_value[v] not in cached]
         computed = self._compute_values(
@@ -136,7 +149,7 @@ class DistinctValuePlanner:
             pending_writes.append((key, result))
 
         if pending_writes:
-            self._cache.put_many(pending_writes)
+            cache.put_many(pending_writes)
 
         return results
 
@@ -222,7 +235,33 @@ class DistinctValuePlanner:
         *,
         on_computed: Callable[[str, NormalizedValue, float], None] | None,
     ) -> tuple[list[NormalizedValue], list[float]]:
-        results: list[NormalizedValue] = []
+        if not values:
+            return [], []
+
+        # Phase 3 item 5 (2026-08-29 throughput program): when the
+        # resolved normalizer is `BatchCapableNormalizer` (today: only
+        # `AddressNormalizer`, batching real libpostal HTTP calls), one
+        # real `Dispatcher.normalize_many` call replaces `len(values)`
+        # separate `normalize()` calls. Every other semantic type falls
+        # through to the unchanged per-value loop below — this is a
+        # no-op for 19 of 20 normalizers. Per-value duration is
+        # approximated as the batch's total elapsed time divided evenly
+        # across the batch, the same disclosed precision loss
+        # `_compute_via_pool` already introduces for the process pool
+        # (real per-value timing isn't observable once several values
+        # share one underlying call).
+        normalizer = self._dispatcher.registry.get(semantic_type)
+        if isinstance(normalizer, BatchCapableNormalizer):
+            start = time.perf_counter()
+            results = self._dispatcher.normalize_many(values, semantic_type, context, profile)
+            elapsed = time.perf_counter() - start
+            approx_duration = elapsed / len(values)
+            if on_computed is not None:
+                for value, result in zip(values, results, strict=True):
+                    on_computed(value, result, approx_duration)
+            return results, [approx_duration] * len(values)
+
+        results = []
         durations: list[float] = []
         for value in values:
             start = time.perf_counter()
@@ -270,6 +309,7 @@ class DistinctValuePlanner:
         *,
         on_computed: Callable[[str, NormalizedValue, float], None] | None = None,
         on_cache_stat: Callable[[bool], None] | None = None,
+        use_cache: bool = True,
     ) -> list[NormalizedValue]:
         """Normalizes a full ordered list of raw values (repeats and
         `None`s allowed) via `distinct_value_results`, resolving each
@@ -280,6 +320,12 @@ class DistinctValuePlanner:
         with whether it was a real cache hit (attributed from LOCAL
         per-call state, since a globally-shared cache's before/after
         counters can be corrupted by concurrent unrelated activity).
+
+        `use_cache` (Phase 3 item 2): passed straight through to
+        `distinct_value_results` — see that method's docstring. When
+        `False`, every distinct value is correctly reported as a miss via
+        `on_cache_stat` (accurate: this call touched no cache tier at
+        all), not silently skipped.
 
         The one shared entry point for "normalize this run's worth of
         values" — both the pasted-values/single-column path
@@ -296,10 +342,15 @@ class DistinctValuePlanner:
                 on_computed(value, result, duration)
 
         by_value = self.distinct_value_results(
-            distinct_non_null, semantic_type, context, profile, on_computed=_on_computed
+            distinct_non_null,
+            semantic_type,
+            context,
+            profile,
+            on_computed=_on_computed,
+            use_cache=use_cache,
         )
 
-        if self._cache is not None and on_cache_stat is not None:
+        if self._cache is not None and use_cache and on_cache_stat is not None:
             for value in distinct_non_null:
                 on_cache_stat(value not in computed_values)
 

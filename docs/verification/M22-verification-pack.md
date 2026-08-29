@@ -224,6 +224,15 @@ single lucky retry.
    DuckDB cache tier measured as a net loss at real ~8M-distinct-value
    scale) rather than letting a future reader wonder whether it was
    simply forgotten.
+   > **RETRACTED (2026-08-29, throughput/memory program).** The M17
+   > finding this bullet cites was a real DuckDB parameter-binder bug,
+   > fixed post-M22 — the persistent tier's real write throughput is
+   > ~10,286 values/sec, not ~80. Phase 3 item 2 now cardinality-gates
+   > it per column (skipped only where a write could never pay off,
+   > e.g. ~97%+ distinct) rather than treating it as a blanket net
+   > loss. `:memory:` remains the container default (an operational
+   > choice, disclosed as such — see the Phase 3 verification pack),
+   > but not for the reason this bullet states.
 4. **The `ui` container has no direct access to `NORM_API_KEY`** — M11's
    lightweight auth is orthogonal to this milestone; if a deployment sets
    `NORM_API_KEY` on the `api` service, the UI's existing `ui/src/api/

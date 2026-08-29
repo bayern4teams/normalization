@@ -9,6 +9,8 @@ recomputing env_fingerprint.py.
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, Field, computed_field
 
 from normcore.enums import FieldSemanticType, RunStatus
@@ -84,6 +86,33 @@ class RunColumnSpec(BaseModel):
     semantic_type: FieldSemanticType
 
 
+class ColumnCachePolicy(BaseModel):
+    """Phase 3 item 2 (2026-08-29 throughput/memory program): the
+    cardinality-aware cache decision made for one column of a run — "at
+    97-99.9% distinct [cache writes] are pure cost with no possible
+    future hit" (the plan's own framing). Recorded per column so the
+    decision is auditable, never silent, per the plan's explicit
+    requirement.
+
+    `source` distinguishes a real connector-provided estimate (e.g.
+    ClickHouse's `uniqExact`, cheap and exact) from the generic fallback
+    every connector gets for free: estimating from the first chunk
+    actually read (`normexec.stream.stream_column`) when the connector
+    implements no cardinality capability. `distinct_ratio` is `None` only
+    when a table/chunk was completely empty (nothing to estimate from) —
+    `use_cache` stays `True` in that case, matching this run's pre-
+    Phase-3 default.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    table: str
+    column: str
+    use_cache: bool
+    distinct_ratio: float | None
+    source: Literal["connector_estimate", "first_chunk_sample"]
+
+
 class RunProgress(BaseModel):
     """M17 — mid-run progress for a multi-column chunked execution,
     updated incrementally as chunks complete (unlike `metrics`, which is
@@ -143,6 +172,11 @@ class NormalizationRun(BaseModel):
     # actually happened" default.
     columns: tuple[RunColumnSpec, ...] = ()
     progress: RunProgress | None = None
+    # Phase 3 item 2: empty unless a cache was actually configured for
+    # this run (see `RunRecorder.record_cache_policy`) — a run with no
+    # cache has nothing to decide a policy about, matching `columns`'
+    # own "empty until the real thing happened" default.
+    cache_policy: tuple[ColumnCachePolicy, ...] = ()
 
     def is_terminal(self) -> bool:
         return self.status in (RunStatus.COMPLETED, RunStatus.FAILED, RunStatus.PARTIAL)

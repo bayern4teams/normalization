@@ -207,6 +207,23 @@ them.
 
 ## 4.1 Persistent cache tier bench — risk (a) from the plan, resolved
 
+> **RETRACTED (2026-08-29, throughput/memory program, Phase 3 item 3).**
+> The "~80 values/sec" figure below was a real DuckDB parameter-binder
+> bug (`get_many`/`put_many` using one `?` placeholder per key, which
+> DuckDB 1.5.5 scales badly with), fixed post-M22 (`normexec/cache.py`,
+> literal-embedded `IN (...)`/`INSERT` instead of placeholders). The
+> real, bug-fixed write throughput, measured against a real file-backed
+> DuckDB on 2026-08-29: **~10,286 values/sec** (100,000 items in 9.72s)
+> — not a day for 8M values, more like **~13 minutes**. The persistent
+> tier is now cardinality-gated (Phase 3 item 2: skipped entirely for
+> columns estimated >50% distinct, where a write could never pay off
+> regardless of raw throughput) rather than unconditionally on/off — see
+> `docs/verification/perf-program-phase-3-verification-pack.md` for the
+> real numbers and the decision this section's "stays unset/OFF"
+> conclusion no longer reflects. The section below is kept verbatim as a
+> historical record of what M17 actually measured and concluded at the
+> time, not corrected in place.
+
 The plan flagged this explicitly: *"persistent cache tier at ~8M
 distinct `Person.fullName` values may be a net loss — bench honestly...
 disclose in the pack if it does not pay."* It does not pay.

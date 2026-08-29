@@ -115,6 +115,31 @@ class StreamingSourceConnector(Protocol):
         ...
 
 
+@runtime_checkable
+class CardinalitySamplingConnector(Protocol):
+    """Optional: a cheap, real distinctness estimate pushed down to the
+    source — Phase 3 item 2 of the throughput/memory program (cardinality-
+    aware cache policy). Deliberately separate from `CatalogConnector`:
+    per the program's own non-negotiable rule, cardinality sampling "must
+    be a capability on the connector protocol with a generic fallback —
+    estimate distinctness from the first chunk actually read — not a
+    ClickHouse `uniqExact` call... nothing may *depend* on it." A
+    connector that does NOT implement this Protocol is not a gap to fix —
+    `normexec.stream.stream_column` falls back to sampling real data it
+    already reads for the first chunk, at zero extra I/O cost, for any
+    connector at all.
+    """
+
+    def estimate_distinct_ratio(self, table: str, column: str) -> float | None:
+        """Fraction of `column`'s non-null values in `table` that are
+        distinct, in `[0.0, 1.0]` — `None` if the table/column is empty
+        (nothing to estimate from). Must be cheap relative to a real run
+        over the table (a single aggregate query, not a full client-side
+        scan) — this is called once per column, before that column's
+        first chunk, not per chunk."""
+        ...
+
+
 class StreamingCatalogSourceConnector(
     SourceConnector, CatalogConnector, StreamingSourceConnector, Protocol
 ):

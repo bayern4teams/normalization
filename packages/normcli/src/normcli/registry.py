@@ -39,7 +39,7 @@ from normalizers.unit import UnitNormalizer
 from normalizers.url import URLNormalizer
 from normexec.env_fingerprint import compute_env_id, gather
 
-from normcore import NormalizerRegistry
+from normcore import Dispatcher, NormalizerRegistry
 from normdict import DictionaryLoader
 
 # Same env var app.py reads (compose.yaml sets it to /app/data/dictionaries
@@ -93,3 +93,18 @@ def compute_process_env_id(*, dictionaries_dir: Path, libpostal_client: Libposta
         dictionaries_dir=dictionaries_dir,
     )
     return compute_env_id(inputs)
+
+
+def build_worker_dispatcher(dictionaries_dir: Path, libpostal_url: str, env_id: str) -> Dispatcher:
+    """Phase 3 item 4 (2026-08-29 throughput/memory program): the
+    picklable, module-level pool-worker factory `normcli run` needs to
+    offer `--parallel-workers` — mirrors `normapi.registry.
+    build_worker_dispatcher` exactly (same reasoning: a closure over
+    `run_normalization`'s local variables cannot be pickled for the
+    `spawn` start method `DistinctValueWorkerPool` always uses).
+    `env_id` is passed in already-computed so every worker's `Dispatcher`
+    stamps the exact same env_id the main CLI process's own `Dispatcher`
+    does — required for `normcli diff --require-identical` to mean
+    anything."""
+    registry = build_normalizer_registry(dictionaries_dir, LibpostalClient(libpostal_url))
+    return Dispatcher(registry, env_id=env_id)
