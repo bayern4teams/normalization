@@ -236,3 +236,15 @@ matching the discipline every M0–M12 row above already follows.
 | Incremental watermark + full resync | M20 | `normapi.postgres_store` (`source_watermarks`), `normapi.store` (watermark resolve/advance), `normio` `read_chunk`'s `since` param, `CatalogConnector.count_null` | `tests/integration/test_incremental_watermark.py` (live, includes a NULL-watermark-skip proof) | Done, `196bf5b` — [pack](verification/M20-verification-pack.md) |
 | 3-step UI (Connect / Explore / Report), legacy tabs behind `ModeContext` | M21 | `ui/src/pages/{Connect,Explore,Report}Page.tsx`, `ui/src/app/{App,Nav}.tsx`, `ui/src/api/{client,types}.ts`, `normapi.store` (sidecar-hydration 500 fix) | `ui/e2e/three-step-flow.spec.ts` (live, against real ClickHouse), `tests/integration/test_multi_column_reporting.py::test_legacy_no_selector_route_on_a_multi_column_run_returns_empty_not_500` | Done — [pack](verification/M21-verification-pack.md) |
 | One-command startup (`ui` compose service, source env wiring) | M22 | `ui/Dockerfile`, `ui/nginx.conf`, `compose.yaml`, `.env.example`, `normio.connectors.clickhouse` (concurrency fix) | Manual: `docker compose up -d` from a clean clone → full flow (live-verified against real ClickHouse, this pack); `tests/integration/test_catalog_and_streaming.py::test_clickhouse_connector_survives_real_concurrent_calls_from_multiple_threads` | Done — [pack](verification/M22-verification-pack.md) |
+
+## Throughput/Memory Program (2026-08-29, beyond M0-M22)
+
+A separately-approved, user-triggered R&D program (plan file:
+`C:\Users\rezas\.claude\plans\humming-frolicking-shore.md`) fixing real
+measured performance defects — not part of the original M0-M22
+milestone numbering, tracked here for the same reason the M13-M22 rows
+above are: so no piece of its own scope goes silently untracked.
+
+| Item | Phase | Module | Test location | Status |
+|---|---|---|---|---|
+| `normcli bench-compare`, `normcli run`/`normcli diff --require-identical`, `TraceStep.duration_us` guard, real-scale (617/97k distinct) benchmarks, committed `tests/bench/baseline.json`, `psutil` dependency | Phase 0 | `normcli.bench_compare`, `normcli.run_cmd`, `normcli.diff_cmd`, `normcli.demo_fixture`, `normcli.registry` | `tests/unit/test_normcli.py`, `tests/unit/test_trace_duration_guard.py`, `tests/bench/test_real_scale_cardinality_benchmark.py`, `tests/integration/test_normcli_run_diff.py` (live against real demo-postgres) | Done, this session — [pack](verification/perf-program-phase-0-verification-pack.md) |

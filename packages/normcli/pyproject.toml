@@ -3,7 +3,22 @@ name = "normcli"
 version = "0.1.0"
 description = "normalization-engine :: normcli"
 requires-python = ">=3.12,<3.14"
-dependencies = []
+dependencies = [
+    "normcore",
+    "normdict",
+    "normalizers",
+    "normanalysis",
+    "normexec",
+    "normio",
+]
+
+[tool.uv.sources]
+normcore = { workspace = true }
+normdict = { workspace = true }
+normalizers = { workspace = true }
+normanalysis = { workspace = true }
+normexec = { workspace = true }
+normio = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]
