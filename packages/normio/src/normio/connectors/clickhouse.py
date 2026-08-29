@@ -66,14 +66,28 @@ class ClickHouseConnector:
         # M18 already found and fixed for DuckDB — the fix here is the
         # same shape: serialize every real call into the client.
         self._lock = threading.Lock()
+        # Phase 2 (2026-08-29 throughput program): `read_chunk` validates
+        # its `table`/`columns` arguments against `list_tables()`/
+        # `list_columns()` on EVERY chunk — up to 2 real `system.tables`/
+        # `system.columns` round trips per chunk, for schema that cannot
+        # change mid-run (a connector instance is per-run — M17's
+        # streaming loop and M14's catalog browsing both construct a new
+        # one per request/run, never share one across schema changes).
+        # Cached here, invalidated never, for exactly that reason.
+        self._table_names_cache: list[str] | None = None
+        self._columns_cache: dict[str, tuple[ColumnSpec, ...]] = {}
 
     def list_tables(self) -> Sequence[str]:
-        with self._lock:
-            result = self._client.query(
-                "SELECT name FROM system.tables WHERE database = {db:String} ORDER BY name",
-                parameters={"db": self._database},
-            )
-        return [row[0] for row in result.result_rows]
+        if self._table_names_cache is None:
+            with self._lock:
+                result = self._client.query(
+                    "SELECT name FROM system.tables WHERE database = {db:String} ORDER BY name",
+                    parameters={"db": self._database},
+                )
+            self._table_names_cache = [row[0] for row in result.result_rows]
+        # A fresh list each call, matching the pre-cache contract — a
+        # caller mutating its own copy must not corrupt the cache.
+        return list(self._table_names_cache)
 
     def list_databases(self) -> Sequence[str]:
         with self._lock:
@@ -89,21 +103,23 @@ class ClickHouseConnector:
         `is_in_primary_key` still cleanly reports `personID` and
         `contactString` as the two key columns — verified live against
         the real origin2 database)."""
-        with self._lock:
-            result = self._client.query(
-                "SELECT name, type, is_in_primary_key FROM system.columns "
-                "WHERE database = %(db)s AND table = %(t)s ORDER BY position",
-                parameters={"db": self._database, "t": table},
+        if table not in self._columns_cache:
+            with self._lock:
+                result = self._client.query(
+                    "SELECT name, type, is_in_primary_key FROM system.columns "
+                    "WHERE database = %(db)s AND table = %(t)s ORDER BY position",
+                    parameters={"db": self._database, "t": table},
+                )
+            self._columns_cache[table] = tuple(
+                ColumnSpec(
+                    name=name,
+                    type=col_type,
+                    nullable=col_type.startswith("Nullable("),
+                    is_primary_key=bool(is_pk),
+                )
+                for name, col_type, is_pk in result.result_rows
             )
-        return tuple(
-            ColumnSpec(
-                name=name,
-                type=col_type,
-                nullable=col_type.startswith("Nullable("),
-                is_primary_key=bool(is_pk),
-            )
-            for name, col_type, is_pk in result.result_rows
-        )
+        return self._columns_cache[table]  # ColumnSpec is frozen — safe to share
 
     def _column_names(self, table: str) -> set[str]:
         return {c.name for c in self.list_columns(table)}

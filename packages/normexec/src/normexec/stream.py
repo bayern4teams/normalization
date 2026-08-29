@@ -13,7 +13,7 @@ passes the last committed key back in as `resume_after_key` on restart.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 from normcore.contract import NORMALIZED_VALUE_ARROW_SCHEMA, normalized_value_to_arrow_row
@@ -180,9 +180,30 @@ def _results_to_batch(
     """Builds the Arrow batch `sink.write_chunk` receives — every
     result's flat fields plus the source's real `source_row_key`
     (already computed by the connector from real primary-key values, per
-    M14 — never a positional index)."""
+    M14 — never a positional index).
+
+    Phase 2 (2026-08-29 throughput program): duplicate rows in `results`
+    share the SAME `NormalizedValue` object by reference —
+    `DistinctValuePlanner.normalize_values` resolves every row back from
+    its distinct-value dedup, not a fresh object per row — so calling
+    `normalized_value_to_arrow_row` once per ROW repeated the same
+    (measured ~100% trace-JSON-serialization) work for every duplicate.
+    Memoized on `id(result)`: safe because `results` holds a live
+    reference to every object for this whole function call, so no id can
+    be reused by the garbage collector mid-build. Byte-identical output —
+    this only skips redundant recomputation of a value already computed
+    for an object appearing earlier in the same list.
+    """
     source_keys = source_batch.column("source_row_key").to_pylist()
-    rows = [normalized_value_to_arrow_row(result) for result in results]
+    row_cache: dict[int, dict[str, Any]] = {}
+    rows = []
+    for result in results:
+        cache_key = id(result)
+        row = row_cache.get(cache_key)
+        if row is None:
+            row = normalized_value_to_arrow_row(result)
+            row_cache[cache_key] = row
+        rows.append(row)
     arrays = [
         pa.array(
             [

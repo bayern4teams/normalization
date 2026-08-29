@@ -134,6 +134,20 @@ class Dispatcher:
             )
             raise AssertionError(msg)
 
-        return result.model_copy(
-            update={"profile_version": profile.version, "env_id": self._env_id}
-        )
+        # Phase 2 (2026-08-29 throughput program): was
+        # `result.model_copy(update={...})`, which builds a SECOND
+        # NormalizedValue per value (every normalizer already builds one,
+        # with profile_version/env_id as "" placeholders — see e.g.
+        # normalizers/boolean.py) — measured 3.81 µs/value of pure
+        # redundant construction. `NormalizedValue` (unlike most other
+        # domain models in this codebase) is NOT `frozen=True`, so
+        # stamping these two fields directly onto the same object is a
+        # plain attribute assignment, not a frozen-model workaround.
+        # Changing the `Normalizer` Protocol instead, so every
+        # implementation builds the final object directly (the
+        # alternative the plan considered), would touch all 20
+        # normalizer files' every `NormalizedValue` construction site
+        # for the same 3.81 µs/value — not a good trade for the risk.
+        result.profile_version = profile.version
+        result.env_id = self._env_id
+        return result
