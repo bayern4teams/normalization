@@ -115,6 +115,12 @@ jobs:
   integration:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      # demo-postgres/mysql/mongo/clickhouse carry `profiles: [integration]`
+      # (compose.yaml) so they don't start on a bare `docker compose up`
+      # outside CI; this makes every `docker compose` call in this job
+      # (up, config, ps, down) see them as part of the default set again.
+      COMPOSE_PROFILES: integration
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v3
@@ -152,8 +158,9 @@ jobs:
       - name: Bring up full stack
         # No service names -> starts every service in compose.yaml,
         # including the demo-postgres/mysql/mongo/clickhouse sources the
-        # read-only connector tests below need (none of them carry a
-        # `profiles:` restriction, so they're part of the default set).
+        # read-only connector tests below need (the job-level
+        # COMPOSE_PROFILES=integration above puts them back in the default
+        # set despite their `profiles: [integration]` restriction).
         run: docker compose -f compose.yaml up -d
 
       - name: Wait for all healthchecked services to report healthy

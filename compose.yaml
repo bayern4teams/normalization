@@ -107,6 +107,7 @@ services:
   # docs/adr/ADR-013-normalization-storage.md and
   # tests/integration/test_readonly_connectors.py.
   demo-postgres:
+    profiles: ["integration"]
     image: postgres:16-alpine
     environment:
       POSTGRES_USER: source_admin
@@ -123,6 +124,7 @@ services:
       retries: 10
 
   demo-mysql:
+    profiles: ["integration"]
     image: mysql:8.4
     environment:
       MYSQL_ROOT_PASSWORD: source_admin
@@ -138,6 +140,7 @@ services:
       retries: 10
 
   demo-mongo:
+    profiles: ["integration"]
     image: mongo:7
     environment:
       # Root credentials are required to enable auth at all — without a
@@ -170,6 +173,7 @@ services:
       retries: 10
 
   demo-clickhouse:
+    profiles: ["integration"]
     image: clickhouse/clickhouse-server:24.9-alpine
     ports:
       - "8124:8123"

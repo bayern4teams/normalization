@@ -93,6 +93,11 @@ jobs:
     needs: signoff-precondition
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      # demo-postgres carries `profiles: [integration]` (compose.yaml) so it
+      # doesn't start on a bare `docker compose up` outside CI; this run
+      # uses --source demo_pg, which points at it.
+      COMPOSE_PROFILES: integration
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v3
@@ -181,6 +186,12 @@ jobs:
       contains(fromJSON('["M7","M8"]'), needs.signoff-precondition.outputs.milestone)
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      # Kept in lockstep with the other jobs' `docker compose up` calls so
+      # this job's stack matches what it matched before demo-* gained
+      # `profiles: [integration]` in compose.yaml, even though this
+      # particular suite doesn't itself touch the demo-* fixtures.
+      COMPOSE_PROFILES: integration
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v3
