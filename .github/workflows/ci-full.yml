@@ -150,6 +150,21 @@ jobs:
       COMPOSE_PROFILES: integration
     steps:
       - uses: actions/checkout@v4
+
+      - name: Free runner disk space before building the stack
+        # This job builds+runs 7 real services' images plus libpostal's
+        # ~800MB cached model data on top of a standard GitHub-hosted
+        # runner's ~14GB free disk. Found 2026-08-29 (this job's first
+        # real run): "failed to register layer... no space left on
+        # device" bringing the stack up, after `build` alone had already
+        # used most of it. ubuntu-latest ships several GB of preinstalled
+        # toolcache this job never touches (.NET, Android SDK, GHC) —
+        # freed here rather than reworking the stack itself.
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc || true
+          docker image prune -af || true
+          df -h /
+
       - uses: astral-sh/setup-uv@v3
         with:
           enable-cache: true
@@ -182,16 +197,20 @@ jobs:
         run: bash download_data.sh
         working-directory: services/libpostal/_data_cache
 
-      - name: Build all images
-        run: docker compose -f compose.yaml build
+      - name: Build every image this job needs (all but ui)
+        # Excludes `ui` — a Node/frontend build never exercised by this
+        # job (no browser/e2e step here, that's the separate `e2e` job;
+        # the liveness check below hits libpostal+api directly, not the
+        # UI), so building+running it was pure disk/time waste. Every
+        # other service IS needed: demo-postgres/mysql/mongo/clickhouse
+        # (the job-level COMPOSE_PROFILES=integration above puts them
+        # back in the default set despite their `profiles: [integration]`
+        # restriction) for the read-only connector tests, api+postgres
+        # for the liveness check.
+        run: docker compose -f compose.yaml build postgres libpostal api demo-postgres demo-mysql demo-mongo demo-clickhouse
 
-      - name: Bring up full stack
-        # No service names -> starts every service in compose.yaml,
-        # including the demo-postgres/mysql/mongo/clickhouse sources the
-        # read-only connector tests below need (the job-level
-        # COMPOSE_PROFILES=integration above puts them back in the default
-        # set despite their `profiles: [integration]` restriction).
-        run: docker compose -f compose.yaml up -d
+      - name: Bring up every service this job needs (all but ui)
+        run: docker compose -f compose.yaml up -d postgres libpostal api demo-postgres demo-mysql demo-mongo demo-clickhouse
 
       - name: Wait for all healthchecked services to report healthy
         run: |
