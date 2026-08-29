@@ -210,6 +210,7 @@ class DetectTypeRequest(BaseModel):
     auto-applied (§85 "no silent changes")."""
 
     field_name: str
+    table_name: str | None = None
     sample_values: list[str | None] = Field(default_factory=list)
 
 

@@ -140,10 +140,11 @@ export function listFields(): Promise<FieldSummary[]> {
 export function detectType(
   fieldName: string,
   sampleValues: (string | null)[] = [],
+  tableName?: string,
 ): Promise<TypeSuggestion[]> {
   return request("/detect-type", {
     method: "POST",
-    body: JSON.stringify({ field_name: fieldName, sample_values: sampleValues }),
+    body: JSON.stringify({ field_name: fieldName, table_name: tableName, sample_values: sampleValues }),
   });
 }
 

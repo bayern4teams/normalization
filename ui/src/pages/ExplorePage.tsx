@@ -4,11 +4,13 @@
 // whichever columns matter, across as many tables as needed, then start
 // one real multi-column run (M17) over everything selected.
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   createProfile,
   createRun,
+  deleteConnection,
+  detectType,
   getConnectionTableColumns,
   listConnectionDatabases,
   listConnections,
@@ -17,13 +19,20 @@ import {
   startMultiColumnRun,
   upsertColumnMapping,
 } from "../api/client";
-import { FIELD_SEMANTIC_TYPES, type FieldSemanticType, type RunColumnSpec } from "../api/types";
+import { FIELD_SEMANTIC_TYPES, type FieldSemanticType, type RunColumnSpec, type TypeSuggestion } from "../api/types";
 import { QueryState } from "../components/QueryState";
+
+const AUTO_SUGGEST_MIN_CONFIDENCE = 0.5;
 
 // Bare /explore (no connection chosen yet) — pick from real, already
 // saved connections, or go make one.
 export function ExploreLandingPage() {
+  const queryClient = useQueryClient();
   const connectionsQuery = useQuery({ queryKey: ["connections"], queryFn: listConnections });
+  const deleteMutation = useMutation({
+    mutationFn: deleteConnection,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["connections"] }),
+  });
 
   return (
     <section>
@@ -38,15 +47,27 @@ export function ExploreLandingPage() {
       >
         <ul className="plain-list">
           {connectionsQuery.data?.map((c) => (
-            <li key={c.id}>
+            <li key={c.id} className="action-cell">
               <Link to={`/explore/${c.id}`}>
                 {c.alias} ({c.kind} — {c.host}:{c.port}/{c.database})
               </Link>
+              <button
+                type="button"
+                disabled={deleteMutation.isPending}
+                onClick={() => deleteMutation.mutate(c.id)}
+              >
+                Delete
+              </button>
             </li>
           ))}
         </ul>
       </QueryState>
       <Link to="/connect">Connect a new database</Link>
+      {deleteMutation.isError && (
+        <p className="state-message state-message--error">
+          Could not delete: {(deleteMutation.error as Error).message}
+        </p>
+      )}
     </section>
   );
 }
@@ -89,6 +110,51 @@ export function ExplorePage() {
     queryFn: () => sampleConnectionTable(connectionId as string, database, table, 5),
     enabled: Boolean(connectionId) && Boolean(database) && Boolean(table),
   });
+  // Deterministic suggestion only (field-name pattern + real sample-value
+  // validation, no LLM — see normanalysis.type_detection). Always a
+  // suggestion the user can override, never applied silently.
+  const suggestionsQuery = useQuery({
+    queryKey: ["connection-table-suggestions", connectionId, database, table, samplesQuery.dataUpdatedAt],
+    queryFn: async () => {
+      const cols = columnsQuery.data?.columns ?? [];
+      const samples = samplesQuery.data ?? {};
+      const entries = await Promise.all(
+        cols.map(async (col) => {
+          const suggestions = await detectType(col.name, samples[col.name] ?? [], table);
+          return [col.name, suggestions[0]] as const;
+        }),
+      );
+      return Object.fromEntries(entries) as Record<string, TypeSuggestion | undefined>;
+    },
+    enabled: Boolean(columnsQuery.data) && Boolean(samplesQuery.data),
+  });
+
+  // Auto-fill each column's dropdown with its top suggestion once, the
+  // first time a table's suggestions arrive — never overwrites a value
+  // the user already set (here or on a prior visit to this table).
+  const autoFilledTables = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (!table || !suggestionsQuery.data) return;
+    const tableKey = `${database}.${table}`;
+    if (autoFilledTables.current.has(tableKey)) return;
+    autoFilledTables.current.add(tableKey);
+    setSelections((prev) => {
+      const next = new Map(prev);
+      for (const col of columnsQuery.data?.columns ?? []) {
+        const key = `${table}.${col.name}`;
+        if (next.has(key)) continue;
+        const suggestion = suggestionsQuery.data?.[col.name];
+        if (
+          suggestion &&
+          suggestion.confidence >= AUTO_SUGGEST_MIN_CONFIDENCE &&
+          suggestion.semantic_type !== "FREE_TEXT"
+        ) {
+          next.set(key, { table, column: col.name, semanticType: suggestion.semantic_type });
+        }
+      }
+      return next;
+    });
+  }, [table, database, suggestionsQuery.data, columnsQuery.data]);
 
   const setSelection = (column: string, semanticType: FieldSemanticType | "") => {
     setSelections((prev) => {
@@ -225,6 +291,12 @@ export function ExplorePage() {
                           </option>
                         ))}
                       </select>
+                      {current !== "" && suggestionsQuery.data?.[col.name]?.semantic_type === current && (
+                        <span className="hint">
+                          {" "}
+                          suggested ({Math.round((suggestionsQuery.data[col.name]?.confidence ?? 0) * 100)}%)
+                        </span>
+                      )}
                     </td>
                   </tr>
                 );

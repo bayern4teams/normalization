@@ -109,6 +109,7 @@ _SAMPLE_VALIDATORS: dict[FieldSemanticType, FieldSemanticType] = {
 def suggest_semantic_type(
     field_name: str,
     *,
+    table_name: str | None = None,
     sample_values: Sequence[str | None] | None = None,
     registry: NormalizerRegistry | None = None,
 ) -> list[TypeSuggestion]:
@@ -125,6 +126,22 @@ def suggest_semantic_type(
                 confidence=confidence,
                 reason=f"field name matches /{pattern.pattern}/",
             )
+
+    # A generic column name (bare "name") only becomes specific with its
+    # table in view — "name" inside a Company table means something
+    # different than inside a Person table. Re-run the same curated
+    # patterns against "{table}_{field}"; a match there only ever *adds*
+    # a candidate for a semantic type the field name alone didn't already
+    # claim with its own pattern — it never overrides one.
+    if table_name:
+        qualified = f"{table_name}_{field_name}"
+        for pattern, semantic_type, confidence in _FIELD_NAME_PATTERNS:
+            if pattern.search(qualified) and semantic_type not in candidates:
+                candidates[semantic_type] = TypeSuggestion(
+                    semantic_type=semantic_type,
+                    confidence=confidence,
+                    reason=f"table+field name matches /{pattern.pattern}/",
+                )
 
     if sample_values is not None and registry is not None:
         _refine_with_sample_values(candidates, sample_values, registry)

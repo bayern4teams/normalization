@@ -268,6 +268,7 @@ def detect_type(
     modify/reject)."""
     suggestions = suggest_semantic_type(
         body.field_name,
+        table_name=body.table_name,
         sample_values=body.sample_values or None,
         registry=dispatcher.registry,
     )

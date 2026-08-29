@@ -72,6 +72,33 @@ class TestFieldNameOnlyDetection:
 
 
 @pytest.mark.unit
+class TestTableQualifiedDetection:
+    """A bare "name" column means something different per table — found
+    live against a real Company table (M21 Explore auto-suggest), where
+    field-name-only detection picked PERSON_NAME for Company.name."""
+
+    def test_bare_name_column_under_company_table_prefers_company_name(self) -> None:
+        top = suggest_semantic_type("name", table_name="Company")[0]
+        assert top.semantic_type is FieldSemanticType.COMPANY_NAME
+
+    def test_bare_name_column_without_table_context_still_falls_back_to_person_name(
+        self,
+    ) -> None:
+        top = suggest_semantic_type("name")[0]
+        assert top.semantic_type is FieldSemanticType.PERSON_NAME
+
+    def test_field_name_pattern_still_wins_over_table_qualified_match(self) -> None:
+        # "email" alone already matches EMAIL directly; a table named
+        # "Company" must not somehow steer it toward COMPANY_NAME instead.
+        top = suggest_semantic_type("email", table_name="Company")[0]
+        assert top.semantic_type is FieldSemanticType.EMAIL
+
+    def test_unrelated_table_name_does_not_manufacture_a_false_match(self) -> None:
+        top = suggest_semantic_type("id", table_name="Company")[0]
+        assert top.semantic_type is FieldSemanticType.FREE_TEXT
+
+
+@pytest.mark.unit
 class TestSampleValueConfirmation:
     def test_confirmed_by_real_parsing_raises_confidence(
         self, registry: NormalizerRegistry
