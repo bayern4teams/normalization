@@ -92,7 +92,16 @@ jobs:
         run: uv run python scripts/check_licenses.py
 
       - name: pip-audit
-        run: uv run pip-audit --strict
+        # --strict (fail on any unauditable dependency) and --skip-editable
+        # (correctly skip this uv workspace's own local packages, which
+        # have no PyPI entry to audit against) do not compose: --strict
+        # still fails on a dependency --skip-editable chose to skip, not
+        # just on a genuine resolution failure. Dropping --strict is safe
+        # here — a real vulnerability still fails the step on its own via
+        # pip-audit's normal non-zero exit (found 2026-08-29, this job's
+        # first real run: local packages made every run fail regardless
+        # of whether a real vulnerability existed).
+        run: uv run pip-audit --skip-editable
 
       - name: Secret scan (gitleaks)
         uses: gitleaks/gitleaks-action@v2
@@ -108,15 +117,27 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Assert no Splink / record-linkage primitives anywhere in the tree
+        # Matches actual usage (imports, declared dependencies), not prose
+        # that documents the boundary itself — the original bare-word
+        # regex false-positived on this job's first real run: normanalysis/
+        # handoff.py's docstring ("... -> Splink) that consumes"),
+        # ab_comparison.py's docstring ("Do not perform Splink"), and
+        # pyproject.toml's package description ("upstream of ... Splink"),
+        # none of which are violations — all three explicitly document that
+        # this project does NOT do Splink.
         run: |
           set -e
-          if grep -riE "splink|record[_-]?linkage|probabilistic[_-]?matching" \
-               --include="*.py" --include="*.toml" --include="*.txt" \
-               -l packages/ pyproject.toml 2>/dev/null; then
-            echo "BLOCKED: Splink / record-linkage reference found. This project stops before Splink (Source.txt §135)." >&2
+          if grep -rnE "^\s*(import|from)\s+(splink|recordlinkage)\b" \
+               --include="*.py" packages/ 2>/dev/null; then
+            echo "BLOCKED: Splink / record-linkage import found. This project stops before Splink (Source.txt §135)." >&2
             exit 1
           fi
-          echo "OK: no Splink/record-linkage references found."
+          if grep -rnE '"(splink|recordlinkage)([><=! ]|@|")' \
+               --include="pyproject.toml" . 2>/dev/null; then
+            echo "BLOCKED: Splink / record-linkage dependency declared. This project stops before Splink (Source.txt §135)." >&2
+            exit 1
+          fi
+          echo "OK: no Splink/record-linkage usage found."
 
   integration:
     runs-on: ubuntu-latest
@@ -155,7 +176,10 @@ jobs:
         # typically have far better bandwidth than that finding's dev
         # machine, but this script is the single supported path regardless
         # of runner bandwidth, and the cache above avoids repeating it.
-        run: bash services/libpostal/_data_cache/download_data.sh
+        # working-directory already cd's here — run the script by its bare
+        # name, not the full repo-relative path (same double-path bug
+        # found and fixed in gate.yml, 2026-08-29).
+        run: bash download_data.sh
         working-directory: services/libpostal/_data_cache
 
       - name: Build all images

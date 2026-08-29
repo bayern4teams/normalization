@@ -161,8 +161,60 @@ narrow, opt-in batch path is `BatchCapableNormalizer.normalize_many`
   `.github/workflows/gate.yml`'s `determinism-replay` job — a residual
   risk closed, not a new open item, but recorded here since the plan
   originally flagged it as open.
-- `ScriptNormalizer`'s ~3.3 ms/value cost (the most expensive normalizer
-  by far) is deliberately unoptimized — the available levers change real
-  classification output for ambiguous text, which needs product input on
-  expected languages before any change, not an engineering decision made
-  alone.
+- `ScriptNormalizer`'s per-value cost is addressed in §11 below via
+  per-column language calibration, landed 2026-08-29 after the product
+  answer to "what languages does this data contain" turned out to be
+  "it varies by source, and some sources are genuinely unknown" — see
+  §11 for why that made per-project configuration the wrong shape.
+
+## 11. `ScriptNormalizer`: per-column language calibration
+
+The available speedup levers for `_detect_language_hint`'s ~25,500
+µs/value all-75-languages `lingua` detector change its real classification
+output on ambiguous text — restricting the candidate language set can
+change which language a value scores as. A blanket, hardcoded
+per-project language list was rejected: real sources here range from
+single-language to genuinely global (`origin1`), sometimes within the
+same database, and "what languages will this data contain" is not
+something a user can reliably answer in advance for a general-purpose
+engine.
+
+Instead, `normalizers/script.py` calibrates per column, from the
+column's own data, at run time:
+
+- The first 500 values normalized for a given `context_hash` (a stable
+  per-column key — field/table/source/profile, already computed for
+  every value) run the full 75-language detector, as before, while
+  tallying which language won each call.
+- Once 500 samples are in, the top languages by tally count (capped at
+  12) are frozen into a small restricted detector, cached and reused for
+  the rest of the column.
+- Below a confidence threshold, a restricted-detector result falls back
+  to the full detector for that one value — real output correctness is
+  preserved; only speed is traded, and only where the column's own data
+  showed enough concentration to justify it.
+- A calibrated set is required to have >= 2 languages: `lingua` gives a
+  degenerate 0.0/1.0 confidence with exactly one candidate language
+  (confirmed empirically against real single-language input), which
+  would make the fallback check meaningless. A column whose 500-sample
+  tally never reaches 2 distinct languages stays on the full detector.
+
+Measured (this machine): a 1-language restricted detector runs at ~137
+µs/value (186x faster than full); a real 15-language set drawn from
+actual `origin2.Person.fullName` samples ran at ~10,700 µs/value (2.4x
+faster) — `fullName` is the program's own worked example of a
+genuinely high-diversity column (76.8% distinct, real global names), so
+a modest win there and a large one on more concentrated columns is the
+expected, intentional shape of this feature, not a shortfall.
+
+This is a deliberate accuracy/speed *tradeoff*, unlike the byte-identical
+Phase 1 fixes — flagged explicitly in `script.py`'s own module comment,
+including the one confirmed residual risk: the confidence-based fallback
+is relative to the candidate pool, so a calibrated set sitting right at
+the 2-language floor gives a weaker safety signal than the larger sets
+real noisy per-value data typically produces (500 real `fullName`
+samples alone produced 47 distinct guessed languages). Determinism is
+unaffected either way: calibration is itself deterministic (same
+profile+source+chunk order -> same calibrated set every run), it only
+trades off against how a hypothetical uncalibrated full-detector run
+would have scored the same value.

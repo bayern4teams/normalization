@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import openpyxl
 import pyarrow as pa
 import pyarrow.csv as pa_csv
 import pyarrow.parquet as pa_parquet
@@ -13,6 +14,13 @@ import pytest
 from normio.connector import SourceConnector
 from normio.connectors.file import FileConnector
 from normio.sidecar_store import SidecarStore
+
+_ROWS = (
+    ("first_name", "last_name"),
+    ("  John  ", "Smith"),
+    ("José", "García"),
+    ("JOHN", "SMITH"),
+)
 
 
 @pytest.fixture
@@ -25,6 +33,13 @@ def sample_dir(tmp_path: Path) -> Path:
     )
     pa_parquet.write_table(table, tmp_path / "customers.parquet")
     pa_csv.write_csv(table, tmp_path / "customers.csv")
+
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    for row in _ROWS:
+        sheet.append(row)
+    workbook.save(tmp_path / "customers.xlsx")
+
     return tmp_path
 
 
@@ -57,6 +72,45 @@ def test_file_connector_reads_csv_with_column_selection(sample_dir: Path) -> Non
     batches = list(connector.read_table("customers.csv", columns=["first_name"]))
     assert "last_name" not in batches[0].schema.names
     assert "first_name" in batches[0].schema.names
+
+
+@pytest.mark.unit
+def test_file_connector_lists_and_reads_xlsx(sample_dir: Path) -> None:
+    connector = FileConnector("demo_files", sample_dir)
+    assert "customers.xlsx" in connector.list_tables()
+
+    batches = list(connector.read_table("customers.xlsx"))
+    assert sum(b.num_rows for b in batches) == 3
+    assert "source_row_key" in batches[0].schema.names
+    first_names = batches[0].column("first_name").to_pylist()
+    assert "  John  " in first_names
+
+
+@pytest.mark.unit
+def test_file_connector_reads_xlsx_with_column_selection(sample_dir: Path) -> None:
+    connector = FileConnector("demo_files", sample_dir)
+    batches = list(connector.read_table("customers.xlsx", columns=["last_name"]))
+    assert batches[0].schema.names == ["last_name", "source_row_key"]
+    assert batches[0].column("last_name").to_pylist() == ["Smith", "García", "SMITH"]
+
+
+@pytest.mark.unit
+def test_file_connector_reads_xlsx_across_multiple_batches(sample_dir: Path) -> None:
+    # batch_size=1 forces _read_excel's mid-loop yield-and-reset branch,
+    # not just its final-partial-buffer flush.
+    connector = FileConnector("demo_files", sample_dir)
+    batches = list(connector.read_table("customers.xlsx", batch_size=1))
+    assert [b.num_rows for b in batches] == [1, 1, 1]
+    row_keys = [k for b in batches for k in b.column("source_row_key").to_pylist()]
+    assert row_keys == ["customers:0", "customers:1", "customers:2"]
+
+
+@pytest.mark.unit
+def test_file_connector_raises_on_unsupported_extension(tmp_path: Path) -> None:
+    (tmp_path / "notes.txt").write_text("hello")
+    connector = FileConnector("demo_files", tmp_path)
+    with pytest.raises(ValueError, match="Unsupported file type"):
+        list(connector.read_table("notes.txt"))
 
 
 @pytest.mark.unit

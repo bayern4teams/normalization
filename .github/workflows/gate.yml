@@ -122,7 +122,12 @@ jobs:
 
       - name: Pre-fetch libpostal model data (see ADR-005)
         if: steps.libpostal-data-cache.outputs.cache-hit != 'true'
-        run: bash services/libpostal/_data_cache/download_data.sh
+        # working-directory already cd's here — run the script by its bare
+        # name, not the full repo-relative path (found 2026-08-29, this
+        # job's first real run: "No such file or directory" trying to open
+        # services/libpostal/_data_cache/services/libpostal/_data_cache/
+        # download_data.sh).
+        run: bash download_data.sh
         working-directory: services/libpostal/_data_cache
 
       - run: docker compose up -d
@@ -216,7 +221,12 @@ jobs:
 
       - name: Pre-fetch libpostal model data (see ADR-005)
         if: steps.libpostal-data-cache.outputs.cache-hit != 'true'
-        run: bash services/libpostal/_data_cache/download_data.sh
+        # working-directory already cd's here — run the script by its bare
+        # name, not the full repo-relative path (found 2026-08-29, this
+        # job's first real run: "No such file or directory" trying to open
+        # services/libpostal/_data_cache/services/libpostal/_data_cache/
+        # download_data.sh).
+        run: bash download_data.sh
         working-directory: services/libpostal/_data_cache
 
       - run: docker compose up -d --build

@@ -14,6 +14,10 @@ dependencies = [
     "fastapi>=0.115,<1",
     "uvicorn[standard]>=0.31,<1",
     "psycopg[binary]>=3.2,<4",
+    # TODO(2026-08-29): PYSEC-2026-35/1284/2141/3553/3554 and
+    # GHSA-537c-gmf6-5ccf (found via pip-audit) are fixed by >=49.
+    # Deferred alongside the pyarrow/pytest bumps above — same live-venv
+    # DLL-lock conflict (this package's compiled _rust.pyd specifically).
     "cryptography>=43,<44",
     "blake3>=0.4,<1",
 ]

@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 
 import blake3
 import icu
-from lingua import LanguageDetectorBuilder
+from lingua import Language, LanguageDetectorBuilder
 from normcore.context import NormalizationContext
 from normcore.enums import FieldSemanticType, MissingKind, NormalizationStatus, Reversibility
 from normcore.models import NormalizedValue
@@ -52,6 +52,133 @@ def _get_language_detector() -> LanguageDetector:
     return _language_detector
 
 
+# --- Per-column language calibration (throughput/memory program item 9,
+# 2026-08-29) -----------------------------------------------------------
+#
+# `_get_language_detector()`'s all-75-languages model is the dominant cost
+# of ScriptNormalizer (measured ~25,500 µs/value on real free-text values,
+# see docs/normalization-performance.md). Real columns are rarely
+# uniformly global: some sources are effectively single-language, others
+# (e.g. a global `Person.fullName`) genuinely mix dozens. A fixed
+# per-project language list can't fit both, and guessing wrong in either
+# direction is either slow or inaccurate — so instead of asking for a
+# config value nobody can answer honestly, the calibration below learns
+# it from the column's own data.
+#
+# Design: the first `_CALIBRATION_SAMPLES` values of a column (keyed by
+# `ctx.context_hash`, which already captures everything that can change
+# normalization behavior — the same field/table/source/profile) run the
+# full detector, as today, while their winning languages are tallied.
+# Once the sample is in, the top languages by tally are frozen into a
+# small restricted detector reused for the rest of the column. A
+# restricted detector is real work saved: measured ~137 µs/value with 1
+# language, ~10,700 µs/value with 15, against ~25,500 µs/value for all 75.
+#
+# This is a deliberate accuracy/speed *tradeoff*, not a provably
+# output-invariant optimization like the four Phase 1 defects — a value
+# in a language calibration never saw can score differently restricted
+# than it would unrestricted. Two safety nets keep that bounded:
+#   1. Any restricted-detector result below `_FALLBACK_CONFIDENCE_THRESHOLD`
+#      re-runs the full detector for that one value — rare after warm-up,
+#      and exactly where restriction is least trustworthy anyway. This is
+#      probabilistic, not a hard guarantee: confidence is relative to the
+#      candidate pool, so a small restricted set (near the
+#      `_CALIBRATION_MIN_LANGUAGES` floor) can still score an out-of-set
+#      language above threshold by having too little competition —
+#      confirmed empirically (a 2-language set gave an unrelated French
+#      sentence ~0.68 "confidence"; an 8-language set correctly dropped
+#      it to ~0.33). `_CALIBRATION_MAX_LANGUAGES` keeps real calibrated
+#      sets well above that floor in practice (real per-value tallies are
+#      noisy — 500 real `Person.fullName` samples produced 47 distinct
+#      guessed languages, see docs/normalization-performance.md), so this
+#      is a real but narrow residual risk, concentrated on genuinely
+#      near-single-language columns.
+#   2. The restricted set always has >= `_CALIBRATION_MIN_LANGUAGES`
+#      members. lingua's confidence score is degenerate (exactly 0.0 or
+#      1.0, no useful gradient) with a single candidate language —
+#      confirmed against real single-language input — so a column whose
+#      500-sample tally never reaches 2 distinct languages is left on the
+#      full detector permanently rather than built into an unusable
+#      restricted one.
+#
+# Same process-per-worker caveat as the rest of Phase 3: under the
+# DistinctValueWorkerPool each worker calibrates independently from only
+# the slice of distinct values it is assigned, not the whole column. That
+# keeps two independent runs of the same profile+source deterministic
+# (assignment order is deterministic, see normexec/parallel.py), but means
+# calibration quality can vary slightly by worker count. Calibration state
+# also persists for the lifetime of the process (there is no per-run
+# reset) — deliberately: a long-lived server normalizing the same column
+# repeatedly should stay warm rather than re-paying the sample window each
+# time. If a column's language mix drifts after freezing, safety net (1)
+# above means output stays correct, just with less of the speedup.
+
+_CALIBRATION_SAMPLES = 500
+_CALIBRATION_MAX_LANGUAGES = 12
+_CALIBRATION_MIN_LANGUAGES = 2
+_FALLBACK_CONFIDENCE_THRESHOLD = 0.5
+
+
+class _FieldCalibration:
+    __slots__ = ("detector", "languages", "lock", "samples_seen", "tally")
+
+    def __init__(self) -> None:
+        self.lock = threading.Lock()
+        self.tally: dict[str, int] = {}
+        self.samples_seen = 0
+        self.languages: frozenset[str] | None = None  # None until frozen
+        self.detector: LanguageDetector | None = None
+
+
+_field_calibrations: dict[str, _FieldCalibration] = {}
+_field_calibrations_lock = threading.Lock()
+
+
+def _get_field_calibration(context_hash: str) -> _FieldCalibration:
+    calib = _field_calibrations.get(context_hash)
+    if calib is None:
+        with _field_calibrations_lock:
+            calib = _field_calibrations.get(context_hash)
+            if calib is None:
+                calib = _field_calibrations[context_hash] = _FieldCalibration()
+    return calib
+
+
+_restricted_detectors: dict[frozenset[str], LanguageDetector] = {}
+_restricted_detectors_lock = threading.Lock()
+
+
+def _get_restricted_detector(languages: frozenset[str]) -> LanguageDetector:
+    detector = _restricted_detectors.get(languages)
+    if detector is None:
+        with _restricted_detectors_lock:
+            detector = _restricted_detectors.get(languages)
+            if detector is None:
+                members = tuple(Language[name] for name in sorted(languages))
+                detector = LanguageDetectorBuilder.from_languages(*members).build()
+                _restricted_detectors[languages] = detector
+    return detector
+
+
+def _freeze_calibration(calib: _FieldCalibration) -> None:
+    """Caller must hold `calib.lock`."""
+    if len(calib.tally) < _CALIBRATION_MIN_LANGUAGES:
+        calib.languages = frozenset()  # too little diversity to restrict safely
+        return
+    ranked = sorted(calib.tally.items(), key=lambda kv: kv[1], reverse=True)
+    calib.languages = frozenset(name for name, _count in ranked[:_CALIBRATION_MAX_LANGUAGES])
+
+
+def _score(detector: LanguageDetector, value: str) -> tuple[str | None, float]:
+    confidences = detector.compute_language_confidence_values(value)
+    if not confidences:
+        return None, 0.0
+    best = confidences[0]
+    if best.value <= 0.0:
+        return None, 0.0
+    return best.language.name, best.value
+
+
 class _StaticStepSpec:
     def __init__(self, step_id: str, operation: str, reversibility: Reversibility, lossy: bool):
         self.step_id = step_id
@@ -79,7 +206,7 @@ class ScriptNormalizer:
 
         cleaned = value.strip()
         script, script_confidence = _detect_dominant_script(cleaned)
-        language_hint, language_confidence = _detect_language_hint(cleaned)
+        language_hint, language_confidence = _detect_language_hint(cleaned, ctx.context_hash)
 
         structured = {
             "script": script,
@@ -153,17 +280,32 @@ def _detect_dominant_script(value: str) -> tuple[str | None, float]:
     return dominant_script, dominant_count / total_letters
 
 
-def _detect_language_hint(value: str) -> tuple[str | None, float]:
+def _detect_language_hint(value: str, context_hash: str) -> tuple[str | None, float]:
     letters_only = "".join(ch for ch in value if ch.isalpha())
     if len(letters_only) < 3:
         return None, 0.0
-    confidences = _get_language_detector().compute_language_confidence_values(value)
-    if not confidences:
-        return None, 0.0
-    best = confidences[0]
-    if best.value <= 0.0:
-        return None, 0.0
-    return best.language.name, best.value
+
+    calib = _get_field_calibration(context_hash)
+
+    if calib.languages is None:
+        lang, confidence = _score(_get_language_detector(), value)
+        with calib.lock:
+            if calib.languages is None:
+                calib.samples_seen += 1
+                if lang is not None:
+                    calib.tally[lang] = calib.tally.get(lang, 0) + 1
+                if calib.samples_seen >= _CALIBRATION_SAMPLES:
+                    _freeze_calibration(calib)
+        return lang, confidence
+
+    if not calib.languages:
+        return _score(_get_language_detector(), value)
+
+    restricted = _get_restricted_detector(calib.languages)
+    lang, confidence = _score(restricted, value)
+    if confidence < _FALLBACK_CONFIDENCE_THRESHOLD:
+        return _score(_get_language_detector(), value)
+    return lang, confidence
 
 
 def _missing(value: str | None, kind: MissingKind, ctx: NormalizationContext) -> NormalizedValue:
