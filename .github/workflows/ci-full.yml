@@ -7,6 +7,12 @@ name: ci-full
 on:
   pull_request:
     branches: [main]
+  # Also invocable as a reusable workflow — gate.yml's full-suite job calls
+  # this via `uses: ./.github/workflows/ci-full.yml`, which GitHub requires
+  # workflow_call to be declared for explicitly (found 2026-08-29, when
+  # gate.yml's first real run failed at the parsing stage with "workflow is
+  # not reusable as it is missing a `on.workflow_call` trigger").
+  workflow_call:
 
 concurrency:
   group: ci-full-${{ github.ref }}
