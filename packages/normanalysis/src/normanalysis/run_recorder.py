@@ -13,6 +13,7 @@ counting logic.
 
 from __future__ import annotations
 
+import random
 import time
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
@@ -37,6 +38,23 @@ def _percentile(sorted_values: list[float], pct: float) -> float:
     return sorted_values[index]
 
 
+# Phase 1 (2026-08-29 throughput program): `_latencies_s` used to be an
+# unbounded list — every real (non-cache-hit) normalize() call appended
+# to it for the life of the run, so a `Person.fullName`-scale run
+# (~9.06M distinct values) would accumulate ~290MB of pure float
+# accumulator. Reservoir sampling (Algorithm R) caps memory at this many
+# floats regardless of run size, while keeping a statistically
+# representative uniform random sample for percentile/average reporting
+# — the one intentional behavior change in this phase: p95/p99/avg
+# latency become estimates over a bounded sample rather than exact
+# values over the full population once a run exceeds this size. Latency
+# metrics were already real `time.perf_counter()` wall-clock, never
+# claimed reproducible and already excluded by name from
+# `normcli diff --require-identical`'s comparison (see `diff_cmd.py`) —
+# so this does not touch ADR-014's determinism guarantee.
+_LATENCY_RESERVOIR_SIZE = 10_000
+
+
 class RunRecorder:
     def __init__(self, run: NormalizationRun) -> None:
         if run.status is not RunStatus.PENDING:
@@ -55,7 +73,17 @@ class RunRecorder:
         self._validation_failures = 0
         self._library_calls = 0
         self._latencies_s: list[float] = []
+        self._latency_samples_seen = 0
+        self._latency_rng = random.Random()
         self._started_monotonic: float | None = None
+
+    @property
+    def records_processed(self) -> int:
+        """The one counter mid-run progress reporting actually needs
+        (e.g. `normapi.store`'s `on_chunk_committed`) — a plain
+        attribute read, not a full `snapshot()` (which sorts/percentiles
+        the entire latency sample on every call)."""
+        return self._records_processed
 
     def start(self) -> NormalizationRun:
         self._started_monotonic = time.perf_counter()
@@ -89,8 +117,23 @@ class RunRecorder:
         `DistinctValuePlanner.distinct_value_results`'s `on_computed`
         hook. Feeds §122's latency percentiles and library-call count
         from genuine per-computation samples, not per-row (a row reusing
-        a deduped/cached result didn't really re-invoke anything)."""
-        self._latencies_s.append(duration_seconds)
+        a deduped/cached result didn't really re-invoke anything).
+
+        Reservoir sampling (Algorithm R), not an unbounded append — see
+        `_LATENCY_RESERVOIR_SIZE`'s comment. The first
+        `_LATENCY_RESERVOIR_SIZE` samples are always kept; after that,
+        each new sample replaces a uniformly random existing slot with
+        probability `_LATENCY_RESERVOIR_SIZE / n`, which is the standard
+        proof-carrying construction for "a uniform random sample of the
+        full stream without knowing its length in advance."
+        """
+        self._latency_samples_seen += 1
+        if len(self._latencies_s) < _LATENCY_RESERVOIR_SIZE:
+            self._latencies_s.append(duration_seconds)
+        else:
+            replace_index = self._latency_rng.randint(0, self._latency_samples_seen - 1)
+            if replace_index < _LATENCY_RESERVOIR_SIZE:
+                self._latencies_s[replace_index] = duration_seconds
         self._library_calls += sum(1 for step in result.trace if step.library is not None)
 
     def record_warning(self) -> None:

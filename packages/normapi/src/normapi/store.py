@@ -1099,7 +1099,13 @@ class InMemoryStore:
                 table_state.max_created_at_seen = progress.last_created_at
             progress_acc.last_progress = RunProgress(
                 total_rows_estimate=total_rows_estimate,
-                rows_done=recorder.snapshot().metrics.records_processed,
+                # Phase 1 (2026-08-29 throughput program): was
+                # `recorder.snapshot().metrics.records_processed` — a full
+                # snapshot (sorts the whole latency sample) built and
+                # discarded just to read one int, called a second time
+                # immediately below for the real snapshot this callback
+                # needs. `records_processed` is a plain counter read.
+                rows_done=recorder.records_processed,
                 chunks_done=progress_acc.chunks_done,
                 current_table=progress.table,
                 current_column=progress.column,

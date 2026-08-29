@@ -202,6 +202,19 @@ class NormalizationCache:
         sub-batches, not one query for the whole `keys` list, to bound the
         per-query statement size (see that constant's comment for why —
         one giant statement OOM-killed the API container on a real run).
+
+        Phase 1 (2026-08-29 throughput program): `duckdb_lookup_keys` was
+        an `elif key not in duckdb_lookup_keys` check against a plain
+        `list` — an O(n) scan per miss, O(n^2) over a chunk's whole miss
+        set. Fires only when the LRU-miss list is large, i.e. only on
+        high-cardinality columns — measured at 44.9s for 50,000 misses
+        pre-fix (a `set` does the same work in 0.064s at 100,000). This
+        was the actual cause of runs against high-cardinality columns
+        (e.g. `Company.name`) appearing to hang indefinitely, distinct
+        from and in addition to the M22 binder-placeholder fix above.
+        `duckdb_lookup_keys_seen` below is the O(1) membership check;
+        `duckdb_lookup_keys` itself still preserves insertion order for
+        the sub-batching loop below, unchanged.
         """
         if not keys:
             return {}
@@ -209,14 +222,16 @@ class NormalizationCache:
         with self._lock:
             results: dict[str, NormalizedValue] = {}
             duckdb_lookup_keys: list[str] = []
+            duckdb_lookup_keys_seen: set[str] = set()
             for key in keys:
                 if key in results:
                     continue
                 hit = self._lru.get(key)
                 if hit is not None:
                     results[key] = hit
-                elif key not in duckdb_lookup_keys:
+                elif key not in duckdb_lookup_keys_seen:
                     duckdb_lookup_keys.append(key)
+                    duckdb_lookup_keys_seen.add(key)
 
             for batch_start in range(0, len(duckdb_lookup_keys), _SQL_LITERAL_BATCH_SIZE):
                 batch = duckdb_lookup_keys[batch_start : batch_start + _SQL_LITERAL_BATCH_SIZE]

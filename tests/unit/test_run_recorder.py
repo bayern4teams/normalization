@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from normanalysis.run_recorder import _LATENCY_RESERVOIR_SIZE
 
 from normanalysis import InvalidRunTransitionError, RunRecorder
 from normcore import (
@@ -192,6 +193,66 @@ def test_finish_sets_finished_at_and_final_status() -> None:
     assert final.status is RunStatus.COMPLETED
     assert final.finished_at is not None
     assert final.metrics.records_processed == 1
+
+
+@pytest.mark.unit
+def test_records_processed_is_a_cheap_counter_not_a_snapshot() -> None:
+    """Phase 1 (2026-08-29 throughput program): `normapi.store`'s
+    `on_chunk_committed` used to call `recorder.snapshot()` twice per
+    chunk purely to read this one int. `records_processed` must track
+    `record_value()` exactly, without requiring a `snapshot()` call."""
+    recorder = RunRecorder(_pending_run())
+    recorder.start()
+    assert recorder.records_processed == 0
+
+    recorder.record_value(changed=True)
+    recorder.record_value(changed=False)
+    recorder.record_value(changed=True)
+    assert recorder.records_processed == 3
+    # Must agree with the full snapshot's own count.
+    assert recorder.snapshot().metrics.records_processed == 3
+
+
+@pytest.mark.unit
+def test_latency_reservoir_stays_bounded_at_scale() -> None:
+    """Phase 1 (2026-08-29 throughput program): `_latencies_s` used to be
+    an unbounded list — a `Person.fullName`-scale run (~9.06M distinct
+    values) would accumulate ~290MB of pure accumulator. Reservoir
+    sampling caps it regardless of how many computations are recorded;
+    this test uses a size well above the reservoir capacity (not 9.06M —
+    that would make this test itself slow) to prove the cap actually
+    holds, not just that it holds below capacity."""
+    recorder = RunRecorder(_pending_run())
+    recorder.start()
+
+    sample_count = _LATENCY_RESERVOIR_SIZE * 3
+    for i in range(sample_count):
+        recorder.record_computation("v", _result(), duration_seconds=i / 1000)
+
+    assert len(recorder._latencies_s) == _LATENCY_RESERVOIR_SIZE
+    # Metrics still compute successfully over the bounded sample — no
+    # crash, no unbounded sort cost, real (if approximate) percentiles.
+    snapshot = recorder.snapshot()
+    assert snapshot.metrics.avg_latency_ms > 0
+    assert snapshot.metrics.p95_latency_ms > 0
+    assert snapshot.metrics.p99_latency_ms >= snapshot.metrics.p95_latency_ms
+
+
+@pytest.mark.unit
+def test_latency_reservoir_below_capacity_is_lossless() -> None:
+    """Below `_LATENCY_RESERVOIR_SIZE`, every sample is kept — the
+    existing `test_record_computation_feeds_latency_and_library_call_metrics`
+    test already relies on this implicitly (3 samples, exact p95/p99);
+    this test states it explicitly as a regression guard."""
+    recorder = RunRecorder(_pending_run())
+    recorder.start()
+
+    durations = [0.001 * i for i in range(1, 101)]
+    for d in durations:
+        recorder.record_computation("v", _result(), d)
+
+    assert len(recorder._latencies_s) == 100
+    assert sorted(recorder._latencies_s) == durations
 
 
 @pytest.mark.unit

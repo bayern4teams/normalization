@@ -12,7 +12,7 @@ import json
 from typing import Any
 
 import blake3
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, PrivateAttr
 
 from normcore.enums import ErrorPolicy, FieldSemanticType
 
@@ -36,15 +36,31 @@ class NormalizationContext(BaseModel):
     error_policy: ErrorPolicy = ErrorPolicy.RETURN_ORIGINAL
     pii_visibility: str = "masked"
 
+    # Phase 1 (2026-08-29 throughput program): `context_hash` was a plain
+    # `@property` recomputing model_dump + json.dumps + blake3 on every
+    # access — measured 19.28 µs/access, hit ~3x per value (planner.py,
+    # every normalizer's NormalizedValue construction, dispatch.py's
+    # mismatch check), ~58 µs/value of pure redundant work on a model
+    # that can never change once constructed (frozen=True). Memoized via
+    # a `PrivateAttr`, not `functools.cached_property` — private attrs
+    # stay mutable on a frozen pydantic model (pydantic's frozen check
+    # only guards real fields' `__setattr__`), whereas
+    # `cached_property` writes into `__dict__`, which collides with how
+    # pydantic itself stores field values and does not work reliably on
+    # a `BaseModel`.
+    _context_hash_cache: str | None = PrivateAttr(default=None)
+
     @property
     def context_hash(self) -> str:
         """Stable hash of everything that can change normalization behavior
         for a given value — used as part of cache keys (never includes the
         raw value itself, see ADR-016).
         """
-        payload = self.model_dump(mode="json", exclude={"pii_visibility"})
-        canonical = _canonical_json(payload)
-        return blake3.blake3(canonical.encode("utf-8")).hexdigest()
+        if self._context_hash_cache is None:
+            payload = self.model_dump(mode="json", exclude={"pii_visibility"})
+            canonical = _canonical_json(payload)
+            self._context_hash_cache = blake3.blake3(canonical.encode("utf-8")).hexdigest()
+        return self._context_hash_cache
 
 
 def _canonical_json(payload: dict[str, Any]) -> str:
