@@ -99,6 +99,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from normexec.cache import NormalizationCache
+    from normexec.parallel import DistinctValueWorkerPool
     from normio.capabilities import StreamingCatalogSourceConnector, StreamingSourceConnector
     from normsink.destination import DestinationConnector
 
@@ -360,6 +361,7 @@ class InMemoryStore:
         sidecar_parquet_root: str | Path | None = None,
         sidecar_duckdb_path: str | Path | None = None,
         telemetry: tuple[TelemetryHandles, NormalizationMetrics] | None = None,
+        parallel_pool: DistinctValueWorkerPool | None = None,
     ) -> None:
         # profile_id -> {version: NormalizationProfile}
         self._profiles: dict[str, dict[str, NormalizationProfile]] = {}
@@ -397,6 +399,15 @@ class InMemoryStore:
         # distinct-value dedup + cross-call caching only activates when a
         # NormalizationCache is supplied, which normapi.app always does.
         self._cache = cache
+        # Optional (defaults to fully serial, matching every existing
+        # test's construction and every deployment that hasn't set
+        # NORM_PARALLEL_WORKERS) — Phase 3 of the throughput/memory
+        # program. Passed straight through to every stream_column() call
+        # this store makes; the pool itself decides per-column, per-run
+        # whether pooling is actually worth it (normexec.planner's
+        # calibration), so simply having one configured changes nothing
+        # observable until a column's real measured cost clears that bar.
+        self._parallel_pool = parallel_pool
         # Optional (defaults to pure in-memory, matching every existing
         # test's construction) — real persistence only activates when a
         # Postgres DSN is supplied, which normapi.app does when NORM_PG_DSN
@@ -1135,6 +1146,7 @@ class InMemoryStore:
                 since=table_state.since,
                 track_created_at=table_state.trackable,
                 on_chunk_committed=on_chunk_committed,
+                pool=self._parallel_pool,
             )
         except Exception as exc:
             table_state.failed = True

@@ -8,6 +8,7 @@ prohibition) — both are purely diagnostic fields.
 
 from __future__ import annotations
 
+import threading
 from typing import TYPE_CHECKING
 
 import blake3
@@ -24,16 +25,32 @@ from normcore.trace import TraceStep
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from lingua import LanguageDetector
     from normcore.interfaces import ComponentVersion, Explanation, StepSpec, ValidationResult
 
 _VERSION = "0.1.0"
 _PARSE_PARAMS_HASH = blake3.blake3(b"{}").hexdigest()
 
-# Built once (n-gram models are expensive to load) and shared across
-# every ScriptNormalizer instance, mirroring how normalizers.text_ops
-# caches its ICU handles at module scope (ADR-016: construct once, reuse
-# across the whole distinct-value batch).
-_LANGUAGE_DETECTOR = LanguageDetectorBuilder.from_all_languages().build()
+# Built lazily, once, and shared across every ScriptNormalizer instance
+# (n-gram models are expensive to load: ~2.6s, the dominant per-process
+# cost measured in the Phase 3 throughput/memory program). Building this
+# at MODULE scope — as it previously was — forces every process that
+# imports `normalizers` (every Phase 3 pool worker included) to pay it
+# whether or not it ever normalizes a SCRIPT field, and it cannot be
+# skipped by simply not registering ScriptNormalizer. Lazy + lock-guarded
+# so concurrent first callers (M21's GIL-bound run threads) block on one
+# real build instead of racing into several redundant ones.
+_language_detector: LanguageDetector | None = None
+_language_detector_lock = threading.Lock()
+
+
+def _get_language_detector() -> LanguageDetector:
+    global _language_detector  # noqa: PLW0603 - module-level lazy singleton, matches text_ops._get_spoof_checker
+    if _language_detector is None:
+        with _language_detector_lock:
+            if _language_detector is None:
+                _language_detector = LanguageDetectorBuilder.from_all_languages().build()
+    return _language_detector
 
 
 class _StaticStepSpec:
@@ -153,7 +170,7 @@ def _detect_language_hint(value: str) -> tuple[str | None, float]:
     letters_only = "".join(ch for ch in value if ch.isalpha())
     if len(letters_only) < 3:
         return None, 0.0
-    confidences = _LANGUAGE_DETECTOR.compute_language_confidence_values(value)
+    confidences = _get_language_detector().compute_language_confidence_values(value)
     if not confidences:
         return None, 0.0
     best = confidences[0]

@@ -61,6 +61,14 @@ dependencies = [
     "polars>=1.9,<2",
     "duckdb>=1.1,<2",
     "pyarrow>=17.0,<18",
+    # psutil: moved here from [dev] in Phase 3 of the throughput/memory
+    # program — normexec.resources now reads real host memory as a
+    # runtime fallback when no cgroup memory limit applies (worker-pool
+    # sizing, packages/normexec/src/normexec/resources.py), not just in
+    # dev-only benchmarks. normapi's Dockerfile runs `uv sync --no-dev`,
+    # so a dev-only psutil would ImportError in the real deployed
+    # container the moment a cgroup memory limit file was absent.
+    "psutil>=6.0,<7",
 
     # --- api ---
     "fastapi>=0.115,<1",
@@ -121,7 +129,6 @@ dev = [
     "pip-audit>=2.7,<3",
     "playwright>=1.47,<2",
     "types-python-dateutil",
-    "psutil>=6.0,<7",
 ]
 
 [tool.uv]
@@ -186,6 +193,7 @@ module = [
     "openpyxl.*",
     "pymysql.*",
     "regex.*",
+    "psutil.*",
 ]
 ignore_missing_imports = true
 

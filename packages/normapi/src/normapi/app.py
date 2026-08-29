@@ -7,42 +7,33 @@ read by normapi.dependencies at request time.
 
 from __future__ import annotations
 
+import functools
 import os
+from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from normalizers.address import AddressNormalizer, LibpostalClient
-from normalizers.boolean import BooleanNormalizer
-from normalizers.company import CompanyNormalizer
-from normalizers.country import CountryNormalizer
-from normalizers.currency import CurrencyNormalizer
-from normalizers.date import DateNormalizer
-from normalizers.email import EmailNormalizer
-from normalizers.generic_text import GenericTextNormalizer
-from normalizers.identifier import IdentifierNormalizer, UuidNormalizer
-from normalizers.language import LanguageNormalizer
-from normalizers.name import NameNormalizer
-from normalizers.numeric import NumericNormalizer
-from normalizers.passthrough import PassthroughNormalizer
-from normalizers.phone import PhoneNormalizer
-from normalizers.postcode import PostcodeNormalizer
-from normalizers.script import ScriptNormalizer
-from normalizers.unit import UnitNormalizer
-from normalizers.url import URLNormalizer
+from normalizers.address import LibpostalClient
 from normexec.cache import NormalizationCache
 from normexec.env_fingerprint import compute_env_id, gather
+from normexec.parallel import DistinctValueWorkerPool, parallel_workers_from_env
 
 from normanalysis import NormalizationMetrics, setup_telemetry
 from normapi.connections import ConnectionResolver
 from normapi.executor import RunExecutor, reconcile_running_runs
 from normapi.postgres_store import PostgresMetadataStore
+from normapi.registry import build_normalizer_registry, build_worker_dispatcher
 from normapi.routes import router
 from normapi.secrets import CredentialCipher, SecretKeyError, load_secret_key
 from normapi.sources import SourceRegistry
 from normapi.store import InMemoryStore
-from normcore import Dispatcher, NormalizerRegistry
+from normcore import Dispatcher
 from normdict import CustomDictionaryStore, DictionaryLoader
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
 
 # `profile_version` is one of env_id's real, tested inputs (ADR-014,
 # scripts/env_fingerprint.py's own `EnvFingerprintInputs` — mutating it
@@ -158,6 +149,15 @@ _DEFAULT_SECRET_KEY = os.environ.get("NORM_SECRET_KEY")
 # not something this program has load-tested a "right" number for yet.
 _DEFAULT_RUN_EXECUTOR_WORKERS = int(os.environ.get("NORM_RUN_EXECUTOR_WORKERS", "4"))
 
+# Phase 3 process-pool parallelism (2026-08-29 throughput/memory program)
+# for CPU-bound distinct-value normalization — a DIFFERENT knob from
+# NORM_RUN_EXECUTOR_WORKERS above: that one bounds how many RUNS execute
+# concurrently (GIL-bound threads, M17); this one bounds how many
+# processes ONE run's expensive-normalizer distinct values can fan out
+# across. Off by default (`0`) — see `normexec.parallel`'s own module
+# docstring for the full off-by-default/break-even-calibrated design.
+_DEFAULT_PARALLEL_WORKERS = parallel_workers_from_env()
+
 
 def _build_connection_resolver(
     pg_store: PostgresMetadataStore | None, resolved_secret_key: str | None
@@ -186,6 +186,28 @@ def _build_connection_resolver(
     return ConnectionResolver(pg_store, cipher)
 
 
+@asynccontextmanager
+async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
+    """No other `app.state` singleton has an explicit shutdown hook today
+    (`RunExecutor`'s threads, the DuckDB cache connection, etc. all rely
+    on process exit) — the Phase 3 process-pool (2026-08-29
+    throughput/memory program) is the first one that needs one for real:
+    its workers are separate OS processes, and while
+    `ProcessPoolExecutor` does register its own `atexit` cleanup (so
+    nothing leaks even without this), a graceful `shutdown(wait=True)` on
+    app shutdown avoids that fallback path racing against interpreter
+    teardown under a real ASGI server's own graceful-shutdown window.
+    Reads `app.state.parallel_pool` at shutdown time (a real attribute
+    access on the `app` FastAPI hands back to this function, not a value
+    captured by closure at `create_app()` time), so it works regardless
+    of where in `create_app()`'s body that attribute gets set.
+    """
+    yield
+    pool = app.state.parallel_pool
+    if pool is not None:
+        pool.shutdown()
+
+
 def create_app(
     *,
     dictionaries_dir: Path | None = None,
@@ -199,11 +221,13 @@ def create_app(
     otlp_endpoint: str | None = None,
     secret_key: str | None = None,
     run_executor_workers: int | None = None,
+    parallel_workers: int | None = None,
 ) -> FastAPI:
     app = FastAPI(
         title="Normalization Engine API",
         description="Source.txt §98 API surface.",
         version="0.1.0",
+        lifespan=_lifespan,
     )
 
     app.add_middleware(
@@ -218,34 +242,9 @@ def create_app(
         custom_dictionaries_dir or _DEFAULT_CUSTOM_DICTIONARIES_DIR, loader
     )
 
-    # PassthroughNormalizer registers first (covers every type as a
-    # placeholder), then real adapters register after it and win for the
-    # specific types they support — NormalizerRegistry.register() simply
-    # overwrites the dict entry per semantic type, so registration order
-    # is the mechanism, not a special-cased "prefer real over
-    # placeholder" rule.
     libpostal_client = LibpostalClient(_DEFAULT_LIBPOSTAL_URL)
-
-    registry = NormalizerRegistry()
-    registry.register(PassthroughNormalizer())
-    registry.register(GenericTextNormalizer(loader))
-    registry.register(NameNormalizer(loader))
-    registry.register(CompanyNormalizer(loader))
-    registry.register(PhoneNormalizer())
-    registry.register(EmailNormalizer())
-    registry.register(AddressNormalizer(libpostal_client))
-    registry.register(PostcodeNormalizer())
-    registry.register(DateNormalizer())
-    registry.register(CountryNormalizer())
-    registry.register(LanguageNormalizer())
-    registry.register(ScriptNormalizer())
-    registry.register(IdentifierNormalizer())
-    registry.register(UuidNormalizer())
-    registry.register(NumericNormalizer())
-    registry.register(CurrencyNormalizer())
-    registry.register(UnitNormalizer())
-    registry.register(BooleanNormalizer())
-    registry.register(URLNormalizer())
+    resolved_dictionaries_dir = dictionaries_dir or _DEFAULT_DICTIONARIES_DIR
+    registry = build_normalizer_registry(resolved_dictionaries_dir, libpostal_client)
 
     cache = NormalizationCache(cache_path or _DEFAULT_CACHE_PATH)
 
@@ -262,6 +261,32 @@ def create_app(
         dictionaries_dir=dictionaries_dir or _DEFAULT_DICTIONARIES_DIR,
     )
     env_id = compute_env_id(env_fingerprint_inputs)
+
+    # Phase 3 process-pool parallelism (2026-08-29 throughput/memory
+    # program) — off by default (`_DEFAULT_PARALLEL_WORKERS` is 0 unless
+    # NORM_PARALLEL_WORKERS is set), so nothing changes for a deployment
+    # that hasn't opted in. `build_worker_dispatcher` is passed by
+    # reference with its arguments already bound (`functools.partial` of
+    # a MODULE-LEVEL function, not a closure over this function's locals
+    # — the pool always uses the `spawn` start method, which cannot
+    # pickle a closure). Every worker stamps the SAME `env_id` this
+    # process's own `app.state.dispatcher` does (bound in below), so a
+    # value computed by a pool worker and one computed in-process are
+    # cache-key-identical (ADR-014) — never a second, independently
+    # computed env fingerprint per worker.
+    resolved_parallel_workers = (
+        parallel_workers if parallel_workers is not None else _DEFAULT_PARALLEL_WORKERS
+    )
+    app.state.parallel_pool = (
+        DistinctValueWorkerPool(
+            functools.partial(
+                build_worker_dispatcher, resolved_dictionaries_dir, _DEFAULT_LIBPOSTAL_URL, env_id
+            ),
+            workers=resolved_parallel_workers,
+        )
+        if resolved_parallel_workers > 0
+        else None
+    )
 
     # Real §122 metrics/spans (M12) — setup_telemetry()/NormalizationMetrics
     # were real and tested since M1 but never actually reachable from the
@@ -281,6 +306,7 @@ def create_app(
         sidecar_parquet_root=sidecar_parquet_root or _DEFAULT_SIDECAR_PARQUET_ROOT,
         sidecar_duckdb_path=sidecar_duckdb_path or _DEFAULT_SIDECAR_DUCKDB_PATH,
         telemetry=(telemetry_handles, telemetry_metrics),
+        parallel_pool=app.state.parallel_pool,
     )
     app.state.dispatcher = Dispatcher(registry, env_id=env_id)
     app.state.dictionary_loader = loader

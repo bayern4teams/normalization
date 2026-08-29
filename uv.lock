@@ -1170,6 +1170,7 @@ dependencies = [
     { name = "phonenumbers" },
     { name = "pint" },
     { name = "polars" },
+    { name = "psutil" },
     { name = "psycopg", extra = ["binary"] },
     { name = "pyarrow" },
     { name = "pycountry" },
@@ -1197,7 +1198,6 @@ dev = [
     { name = "mypy" },
     { name = "pip-audit" },
     { name = "playwright" },
-    { name = "psutil" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "pytest-benchmark" },
@@ -1246,7 +1246,7 @@ requires-dist = [
     { name = "pip-audit", marker = "extra == 'dev'", specifier = ">=2.7,<3" },
     { name = "playwright", marker = "extra == 'dev'", specifier = ">=1.47,<2" },
     { name = "polars", specifier = ">=1.9,<2" },
-    { name = "psutil", marker = "extra == 'dev'", specifier = ">=6.0,<7" },
+    { name = "psutil", specifier = ">=6.0,<7" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.2,<4" },
     { name = "pyarrow", specifier = ">=17.0,<18" },
     { name = "pycountry", specifier = ">=24.6,<25" },
@@ -1445,6 +1445,7 @@ dependencies = [
     { name = "normio" },
     { name = "normsink" },
     { name = "polars" },
+    { name = "psutil" },
     { name = "pyarrow" },
 ]
 
@@ -1456,6 +1457,7 @@ requires-dist = [
     { name = "normio", editable = "packages/normio" },
     { name = "normsink", editable = "packages/normsink" },
     { name = "polars", specifier = ">=1.9,<2" },
+    { name = "psutil", specifier = ">=6.0,<7" },
     { name = "pyarrow", specifier = ">=17.0,<18" },
 ]
 

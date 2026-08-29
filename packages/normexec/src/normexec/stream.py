@@ -35,6 +35,7 @@ if TYPE_CHECKING:
         NormalizedValue,
     )
     from normexec.cache import NormalizationCache
+    from normexec.parallel import DistinctValueWorkerPool
     from normexec.sinks import RunSink
 
 _CHUNK_SIDECAR_SCHEMA = pa.schema(
@@ -78,6 +79,7 @@ def stream_column(
     since: object | None = None,
     track_created_at: bool = False,
     on_chunk_committed: Callable[[ChunkProgress], None] | None = None,
+    pool: DistinctValueWorkerPool | None = None,
 ) -> int:
     """Streams `table.column`, chunk by chunk, until `read_chunk` reports
     exhaustion (`None`). Each chunk: dedupe + normalize via
@@ -94,9 +96,19 @@ def stream_column(
     last_created_at` — what the caller advances a watermark to, only
     after this chunk's write is confirmed committed.
 
+    `pool` (Phase 3, 2026-08-29 throughput/memory program): an already-
+    started `DistinctValueWorkerPool` this column's planner MAY use for
+    expensive, pool-eligible semantic types — `None` (the default)
+    reproduces this function's pre-Phase-3 behavior exactly, fully
+    serial. Never constructed here: owned and shut down by whatever
+    process-wide caller created it (see `normapi.app.create_app`), since
+    the whole point of the pool is amortizing its worker-startup cost
+    across every column/chunk of a run, not paying it per `stream_column`
+    call.
+
     Returns the total row count processed across every chunk.
     """
-    planner = DistinctValuePlanner(dispatcher, cache)
+    planner = DistinctValuePlanner(dispatcher, cache, pool=pool)
     after_key = resume_after_key
     chunk_index = 0
     rows_processed = 0

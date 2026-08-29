@@ -18,6 +18,7 @@ import polars as pl
 import pyarrow as pa
 
 from normexec.cache import make_cache_key
+from normexec.parallel import POOL_EXCLUDED_SEMANTIC_TYPES
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -29,6 +30,7 @@ if TYPE_CHECKING:
     from normcore.rules import NormalizationProfile
 
     from normexec.cache import NormalizationCache
+    from normexec.parallel import DistinctValueWorkerPool
 
 # Flat columns extracted from NormalizedValue for the join-back step. The
 # full NormalizedValue (including trace, warnings, structured) is available
@@ -40,9 +42,34 @@ _JOIN_COLUMNS = ("display", "comparison", "search", "ascii", "normalization_stat
 
 
 class DistinctValuePlanner:
-    def __init__(self, dispatcher: Dispatcher, cache: NormalizationCache | None = None) -> None:
+    def __init__(
+        self,
+        dispatcher: Dispatcher,
+        cache: NormalizationCache | None = None,
+        *,
+        pool: DistinctValueWorkerPool | None = None,
+    ) -> None:
+        """`pool`, if given, is an already-started `DistinctValueWorkerPool`
+        this planner MAY use for computing cache-misses of pool-eligible
+        semantic types (Phase 3 of the throughput/memory program) — never
+        required to use it, and never used at all unless the caller opted
+        in (the pool itself is only ever non-`None` when
+        `NORM_PARALLEL_WORKERS` is configured). `None` (the default)
+        reproduces this class's pre-Phase-3 behavior exactly: fully
+        serial, byte-identical, zero new code paths exercised.
+        """
         self._dispatcher = dispatcher
         self._cache = cache
+        self._pool = pool
+        # Decided at most once per semantic type this planner instance
+        # ever sees (in practice: once per column, since both real
+        # callers — stream.py's stream_column and store.py's
+        # _normalize_deduped — construct one planner per column), from
+        # that semantic type's FIRST batch of real (non-cache-hit)
+        # computation. `True`/`False` once decided; absent while still
+        # undecided (that first batch always runs serially regardless,
+        # so it doubles as the calibration sample).
+        self._pool_decisions: dict[FieldSemanticType, bool] = {}
 
     def distinct_value_results(
         self,
@@ -65,15 +92,10 @@ class DistinctValuePlanner:
         rows sharing one deduped result would corrupt the percentiles.
         """
         if self._cache is None:
-            results: dict[str, NormalizedValue] = {}
-            for value in distinct_values:
-                start = time.perf_counter()
-                result = self._dispatcher.normalize(value, semantic_type, context, profile)
-                duration = time.perf_counter() - start
-                if on_computed is not None:
-                    on_computed(value, result, duration)
-                results[value] = result
-            return results
+            computed = self._compute_values(
+                distinct_values, semantic_type, context, profile, on_computed=on_computed
+            )
+            return dict(zip(distinct_values, computed, strict=True))
 
         # Both lookups and writes are batched into a single DuckDB
         # statement each (`get_many`/`put_many`) rather than one
@@ -95,6 +117,12 @@ class DistinctValuePlanner:
         }
         cached = self._cache.get_many(list(keys_by_value.values()))
 
+        missing_values = [v for v in distinct_values if keys_by_value[v] not in cached]
+        computed = self._compute_values(
+            missing_values, semantic_type, context, profile, on_computed=on_computed
+        )
+        computed_by_value = dict(zip(missing_values, computed, strict=True))
+
         results = {}
         pending_writes: list[tuple[str, NormalizedValue]] = []
         for value in distinct_values:
@@ -103,18 +131,134 @@ class DistinctValuePlanner:
             if hit is not None:
                 results[value] = hit
                 continue
-
-            start = time.perf_counter()
-            result = self._dispatcher.normalize(value, semantic_type, context, profile)
-            duration = time.perf_counter() - start
-            if on_computed is not None:
-                on_computed(value, result, duration)
+            result = computed_by_value[value]
             results[value] = result
             pending_writes.append((key, result))
 
         if pending_writes:
             self._cache.put_many(pending_writes)
 
+        return results
+
+    def _compute_values(
+        self,
+        values: list[str],
+        semantic_type: FieldSemanticType,
+        context: NormalizationContext,
+        profile: NormalizationProfile,
+        *,
+        on_computed: Callable[[str, NormalizedValue, float], None] | None,
+    ) -> list[NormalizedValue]:
+        """Computes `values` (already known to need real dispatcher work
+        — cache hits never reach here) via this planner's process pool
+        when one is configured, `semantic_type` isn't permanently
+        excluded from pooling, and this column's own real, measured
+        timing says it's worth it; otherwise the original fully-serial
+        path (unchanged from before Phase 3). Returns results in the
+        same order as `values`.
+        """
+        if not values:
+            return []
+
+        pool = self._pool
+        if pool is not None and semantic_type not in POOL_EXCLUDED_SEMANTIC_TYPES:
+            decision = self._pool_decisions.get(semantic_type)
+            if decision is True:
+                return self._compute_via_pool(
+                    pool, values, semantic_type, context, profile, on_computed=on_computed
+                )
+            if decision is None:
+                # This semantic type's first batch of real computation on
+                # this planner (in practice: this column's first chunk)
+                # — always run serially so its real per-value durations
+                # can calibrate the decision for every later batch,
+                # rather than trusting a number measured on someone
+                # else's machine, on someone else's data.
+                results, durations = self._compute_serial(
+                    values, semantic_type, context, profile, on_computed=on_computed
+                )
+                avg_duration = sum(durations) / len(durations)
+                # Calibrate against a REAL `pool.normalize_batch()` call
+                # (the exact production code path, splitting the sample
+                # across all `pool.workers` processes CONCURRENTLY) —
+                # not a single worker's serial cost. Live testing against
+                # real ClickHouse data during this program's Phase 3 R&D
+                # found that comparing a single worker's serial-plus-IPC
+                # cost against per-value serial duration always loses
+                # (of course it does — one worker plus IPC overhead is
+                # strictly slower than in-process with none), even though
+                # a real N-way concurrent call measured a genuine 1.42x
+                # speedup once warm. The only fair question is whether
+                # `workers`-way concurrency beats serial for THIS column's
+                # real per-value cost — only a real concurrent call
+                # answers that. The sample is deliberately re-computed
+                # (this batch's real results already came from
+                # `_compute_serial` above; the pool's copy is discarded,
+                # used only for its wall-clock time) — a bounded, one-time
+                # cost per column, capped so a very large first chunk
+                # doesn't double its own cost to calibrate.
+                sample_size = min(len(values), 200 * pool.workers)
+                sample = values[:sample_size]
+                probe_start = time.perf_counter()
+                pool.normalize_batch(sample, semantic_type, context, profile)
+                pool_elapsed = time.perf_counter() - probe_start
+                serial_equivalent = avg_duration * sample_size
+                self._pool_decisions[semantic_type] = pool_elapsed < serial_equivalent
+                return results
+            # decision is False: measured and rejected for this column,
+            # for this run — fall through to the serial path below.
+
+        results, _durations = self._compute_serial(
+            values, semantic_type, context, profile, on_computed=on_computed
+        )
+        return results
+
+    def _compute_serial(
+        self,
+        values: list[str],
+        semantic_type: FieldSemanticType,
+        context: NormalizationContext,
+        profile: NormalizationProfile,
+        *,
+        on_computed: Callable[[str, NormalizedValue, float], None] | None,
+    ) -> tuple[list[NormalizedValue], list[float]]:
+        results: list[NormalizedValue] = []
+        durations: list[float] = []
+        for value in values:
+            start = time.perf_counter()
+            result = self._dispatcher.normalize(value, semantic_type, context, profile)
+            duration = time.perf_counter() - start
+            durations.append(duration)
+            if on_computed is not None:
+                on_computed(value, result, duration)
+            results.append(result)
+        return results, durations
+
+    def _compute_via_pool(
+        self,
+        pool: DistinctValueWorkerPool,
+        values: list[str],
+        semantic_type: FieldSemanticType,
+        context: NormalizationContext,
+        profile: NormalizationProfile,
+        *,
+        on_computed: Callable[[str, NormalizedValue, float], None] | None,
+    ) -> list[NormalizedValue]:
+        start = time.perf_counter()
+        results = pool.normalize_batch(values, semantic_type, context, profile)
+        elapsed = time.perf_counter() - start
+        if on_computed is not None:
+            # Real total wall time for this whole pool round trip,
+            # divided evenly across the batch — an approximation of true
+            # per-value cost, since workers ran concurrently and no
+            # individual value inside a worker's batch is separately
+            # timed. This is the one intentional precision loss Phase 3
+            # introduces into RunRecorder's latency percentiles for
+            # pool-computed values, disclosed here the same way Phase 1
+            # disclosed its reservoir-sampling percentile shift.
+            approx_duration = elapsed / len(values)
+            for value, result in zip(values, results, strict=True):
+                on_computed(value, result, approx_duration)
         return results
 
     def normalize_values(
