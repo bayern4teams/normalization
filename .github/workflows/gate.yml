@@ -150,7 +150,7 @@ jobs:
           uv run python -m normcli diff ./out/run1 ./out/run2 --require-identical
 
       - name: Full idempotency corpus
-        run: uv run pytest -m property tests/property/test_idempotency.py -q --hypothesis-seed=0
+        run: uv run pytest -m property tests/property/test_idempotency_determinism.py -q --hypothesis-seed=0
 
       - run: docker compose down -v
         if: always()
