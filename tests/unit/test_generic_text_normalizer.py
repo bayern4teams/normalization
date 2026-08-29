@@ -1,9 +1,8 @@
 """Unit tests for GenericTextNormalizer — Source.txt §9-§19, §53, §54, §63.
 
-Exercises the full Normalizer Protocol surface (normalize, normalize_batch,
-validate, explain, version, steps, inverse) plus the missing-value
-sentinel detection and multi-view assembly this normalizer is responsible
-for.
+Exercises the full Normalizer Protocol surface (normalize, validate,
+explain, version, steps, inverse) plus the missing-value sentinel
+detection and multi-view assembly this normalizer is responsible for.
 """
 
 # One test below deliberately contains a Cyrillic confusable character.
@@ -13,7 +12,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pyarrow as pa
 import pytest
 from normalizers.generic_text import GenericTextNormalizer
 from normcore.context import NormalizationContext
@@ -445,15 +443,3 @@ class TestValidateExplainInverse:
     def test_inverse_lossy_step_returns_none(self, normalizer: GenericTextNormalizer) -> None:
         assert normalizer.inverse("trim", "hello") is None
         assert normalizer.inverse("text_repair", "hello") is None
-
-
-@pytest.mark.unit
-class TestNormalizeBatch:
-    def test_batch_matches_scalar_results(
-        self, normalizer: GenericTextNormalizer, ctx: NormalizationContext
-    ) -> None:
-        values = ["  hello  ", "world", None]
-        batch_result = normalizer.normalize_batch(pa.array(values, type=pa.large_string()), ctx)
-        displays = batch_result.field("display").to_pylist()
-        expected = [normalizer.normalize(v, ctx).display for v in values]
-        assert displays == expected

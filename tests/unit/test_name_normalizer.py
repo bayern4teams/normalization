@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pyarrow as pa
 import pytest
 from normalizers.name import NameNormalizer
 from normcore.context import NormalizationContext
@@ -311,15 +310,7 @@ class TestValidateExplain:
 
 
 @pytest.mark.unit
-class TestBatchAndInverse:
-    def test_normalize_batch_matches_scalar(
-        self, normalizer: NameNormalizer, ctx: NormalizationContext
-    ) -> None:
-        values = ["Smith, John", "Jose Miguel Garcia"]
-        batch = normalizer.normalize_batch(pa.array(values, type=pa.large_string()), ctx)
-        displays = batch.field("display").to_pylist()
-        assert displays == [normalizer.normalize(v, ctx).display for v in values]
-
+class TestInverse:
     def test_inverse_nfc_step(self, normalizer: NameNormalizer) -> None:
         composed = "café"
         inverted = normalizer.inverse("unicode_normalize_nfc", composed)

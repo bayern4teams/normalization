@@ -16,8 +16,6 @@ from normcore.enums import FieldSemanticType, Reversibility
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    import pyarrow as pa
-
     from normcore.context import NormalizationContext
     from normcore.models import NormalizedValue
 
@@ -89,9 +87,16 @@ class Explanation(Protocol):
 @runtime_checkable
 class Normalizer(Protocol):
     """Source.txt §99: `can_handle`, `normalize`, `validate`, `explain`,
-    `version` — plus the batch entrypoint required by §104 and the
-    `steps`/`inverse` pair required by the reversibility-verification
-    design in ADR-012.
+    `version` — plus the `steps`/`inverse` pair required by the
+    reversibility-verification design in ADR-012.
+
+    §104's batch entrypoint (`normalize_batch(pa.Array) -> pa.StructArray`)
+    was removed here (throughput/memory program, 2026-08-29, Phase 3 item
+    5 cleanup): every normalizer implemented it, but nothing in the real
+    execution path ever called it — `DistinctValuePlanner` has always
+    called `normalize()` once per distinct value. The real, used batch
+    path is the narrower, opt-in `BatchCapableNormalizer.normalize_many`
+    below.
     """
 
     name: str
@@ -100,8 +105,6 @@ class Normalizer(Protocol):
     def can_handle(self, field_type: FieldSemanticType, ctx: NormalizationContext) -> bool: ...
 
     def normalize(self, value: str | None, ctx: NormalizationContext) -> NormalizedValue: ...
-
-    def normalize_batch(self, values: pa.Array, ctx: NormalizationContext) -> pa.StructArray: ...
 
     def validate(self, value: str | None, ctx: NormalizationContext) -> ValidationResult: ...
 
@@ -125,15 +128,16 @@ class BatchCapableNormalizer(Protocol):
     (2026-08-29): a REAL batch entrypoint returning full `NormalizedValue`
     objects, for the rare normalizer where batching genuinely helps
     (network-bound work, where N values need one round trip instead of
-    N). Deliberately separate from `Normalizer.normalize_batch` above,
-    which every normalizer implements but returns only 4 of
-    `NormalizedValue`'s fields and — confirmed during this program's R&D
-    — nothing in the execution path ever calls: `DistinctValuePlanner`
-    has always called `Dispatcher.normalize()` once per distinct value,
-    never that method. Fixing THAT gap (rather than leaving it as
-    ADR-016 claimed-but-fictional) is intentionally narrow: only a
-    normalizer that opts in by implementing this Protocol changes
-    behavior; every other normalizer's dispatch path is untouched.
+    N). Was deliberately separate from the now-removed `Normalizer.
+    normalize_batch(pa.Array) -> pa.StructArray`, which every normalizer
+    implemented but returned only 4 of `NormalizedValue`'s fields and —
+    confirmed during this program's R&D — nothing in the execution path
+    ever called: `DistinctValuePlanner` has always called
+    `Dispatcher.normalize()` once per distinct value, never that method.
+    Fixing THAT gap (rather than leaving it as ADR-016 claimed-but-
+    fictional) is intentionally narrow: only a normalizer that opts in
+    by implementing this Protocol changes behavior; every other
+    normalizer's dispatch path is untouched.
 
     `AddressNormalizer` is the only implementation today — the libpostal
     sidecar's `/parse` already accepts a list and was being sent exactly

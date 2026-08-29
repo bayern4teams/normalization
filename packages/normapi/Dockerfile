@@ -40,6 +40,15 @@ COPY --from=builder /app/packages /app/packages
 COPY data/dictionaries /app/data/dictionaries
 
 ENV PATH="/app/.venv/bin:$PATH"
+# Pinned (throughput/memory program Phase 3 residual risk, 2026-08-29): the
+# `spawn` start method used by DistinctValueWorkerPool (normexec/parallel.py)
+# gives each worker process its own randomized hash seed unless this is set
+# in the environment before any interpreter starts — an unpinned seed could
+# let a latent hash-order dependency in some normalizer (e.g. iterating a
+# `set`) surface only under multiple worker processes, never under serial
+# execution, defeating ADR-014's determinism guarantee in a way the
+# existing byte-identical replay test wouldn't reliably catch.
+ENV PYTHONHASHSEED=0
 WORKDIR /app
 
 EXPOSE 8080

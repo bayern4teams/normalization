@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pyarrow as pa
 import pytest
 from normalizers.company import CompanyNormalizer
 from normcore.context import NormalizationContext
@@ -311,14 +310,6 @@ class TestExactFields:
 
 
 @pytest.mark.unit
-class TestBatchAndInverse:
-    def test_normalize_batch_matches_scalar(
-        self, normalizer: CompanyNormalizer, ctx: NormalizationContext
-    ) -> None:
-        values = ["Acme Corp Inc.", "The Limited"]
-        batch = normalizer.normalize_batch(pa.array(values, type=pa.large_string()), ctx)
-        displays = batch.field("display").to_pylist()
-        assert displays == [normalizer.normalize(v, ctx).display for v in values]
-
+class TestInverse:
     def test_inverse_suffix_strip_returns_none(self, normalizer: CompanyNormalizer) -> None:
         assert normalizer.inverse("company.strip_legal_suffix", "Acme Corp") is None

@@ -139,6 +139,32 @@ class SqlConnectorBase:
             result = conn.execute(query).scalar_one()
         return int(result)
 
+    def estimate_distinct_ratio(self, table: str, column: str) -> float | None:
+        """Throughput/memory program Phase 3 item 2's `CardinalitySamplingConnector`
+        capability, for Postgres and MySQL both — `COUNT(*)`/`COUNT(DISTINCT
+        column)` is standard SQL, so this needs no dialect branching (unlike
+        `list_databases`/`_approx_row_count` above), matching the program's
+        own non-negotiable rule that nothing be ClickHouse-specific. One
+        query, both aggregates computed together so the engine scans the
+        column once, not twice — same shape as `ClickHouseConnector`'s
+        `uniqExact` version, just without a dialect-specific function name."""
+        metadata = sa.MetaData()
+        sql_table = sa.Table(table, metadata, autoload_with=self._engine)
+        if column not in sql_table.c:
+            msg = f"Unknown column for table {table!r}: {column!r}"
+            raise ValueError(msg)
+        col = sql_table.c[column]
+        query = (
+            sa.select(sa.func.count(), sa.func.count(sa.distinct(col)))
+            .select_from(sql_table)
+            .where(col.is_not(None))
+        )
+        with self._engine.connect() as conn:
+            total, distinct_count = conn.execute(query).one()
+        if total == 0:
+            return None
+        return float(distinct_count) / float(total)
+
     def read_chunk(
         self,
         table: str,

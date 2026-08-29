@@ -96,9 +96,6 @@ class _AlwaysFailsNormalizer:
     def normalize(self, value: str | None, ctx: object) -> object:
         raise NormalizerFailure("boom", operation="test_failure")
 
-    def normalize_batch(self, values: object, ctx: object) -> object:
-        raise NotImplementedError
-
     def validate(self, value: object, ctx: object) -> object:
         raise NotImplementedError
 
@@ -162,9 +159,6 @@ def test_dispatcher_rejects_context_hash_mismatch_from_a_buggy_normalizer() -> N
                 context_hash="wrong-hash",  # bug: should be ctx.context_hash
             )
 
-        def normalize_batch(self, values: object, ctx: object) -> object:
-            raise NotImplementedError
-
         def validate(self, value: object, ctx: object) -> object:
             raise NotImplementedError
 
@@ -197,8 +191,8 @@ def test_registry_requires_normalizer_to_be_actual_normalizer_protocol() -> None
 class _BatchNormalizer:
     """Phase 3 item 5: a minimal `BatchCapableNormalizer` test double —
     `normalize_many` is a real batch entrypoint (one call for the whole
-    list), separate from the required-but-unused `normalize_batch`
-    (pa.Array -> pa.StructArray) every `Normalizer` implements."""
+    list), opt-in and separate from the required `Normalizer.normalize`
+    every normalizer implements."""
 
     name = "Batch"
     supported_types = frozenset({FieldSemanticType.PERSON_NAME})
@@ -242,9 +236,6 @@ class _BatchNormalizer:
             for v in values_list
         ]
         return results[:-1] if self._wrong_length and results else results
-
-    def normalize_batch(self, values: object, ctx: object) -> object:
-        raise NotImplementedError
 
     def validate(self, value: object, ctx: object) -> object:
         raise NotImplementedError

@@ -17,7 +17,11 @@ import threading
 from typing import TYPE_CHECKING
 
 import pytest
-from normio.capabilities import CatalogConnector, StreamingSourceConnector
+from normio.capabilities import (
+    CardinalitySamplingConnector,
+    CatalogConnector,
+    StreamingSourceConnector,
+)
 from normio.connectors import ClickHouseConnector, MySQLConnector, PostgresConnector
 
 if TYPE_CHECKING:
@@ -157,6 +161,65 @@ class TestCatalogAndStreamingAcrossConnectors:
             batches = list(connector.read_table("customers"))
             keys = {key for batch in batches for key in batch.column("source_row_key").to_pylist()}
             assert keys == {"1", "2", "3"}
+        finally:
+            connector.close()
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    "make_connector",
+    [
+        _clickhouse,
+        lambda: PostgresConnector("demo_pg", POSTGRES_DSN),
+        lambda: MySQLConnector("demo_mysql", MYSQL_DSN),
+    ],
+    ids=["clickhouse", "postgres", "mysql"],
+)
+class TestCardinalitySamplingAcrossConnectors:
+    """Throughput/memory program Phase 3 item 2's `CardinalitySamplingConnector`
+    capability, now implemented by all three connector kinds (ClickHouse via
+    `uniqExact`, Postgres/MySQL via standard `COUNT(DISTINCT ...)` on
+    `SqlConnectorBase`) — proven here against real containers rather than
+    the fake-connector doubles in tests/unit/test_stream_cache_policy.py."""
+
+    def test_connector_satisfies_the_capability_protocol(
+        self, make_connector: MakeConnector
+    ) -> None:
+        connector = make_connector()
+        try:
+            assert isinstance(connector, CardinalitySamplingConnector)
+        finally:
+            connector.close()
+
+    def test_estimate_distinct_ratio_on_all_distinct_column(
+        self, make_connector: MakeConnector
+    ) -> None:
+        connector = make_connector()
+        try:
+            # Every seeded first_name is distinct (see postgres-init/mysql-init/
+            # clickhouse-init) — 3 non-null, 3 distinct.
+            ratio = connector.estimate_distinct_ratio("customers", "first_name")
+            assert ratio == pytest.approx(1.0)
+        finally:
+            connector.close()
+
+    def test_estimate_distinct_ratio_excludes_nulls(self, make_connector: MakeConnector) -> None:
+        connector = make_connector()
+        try:
+            # email has one NULL row (JOHN/SMITH) and 2 distinct non-null
+            # values — a null-inflated denominator would report 2/3, not 1.0.
+            ratio = connector.estimate_distinct_ratio("customers", "email")
+            assert ratio == pytest.approx(1.0)
+        finally:
+            connector.close()
+
+    def test_estimate_distinct_ratio_rejects_unknown_column(
+        self, make_connector: MakeConnector
+    ) -> None:
+        connector = make_connector()
+        try:
+            with pytest.raises(ValueError, match="Unknown column"):
+                connector.estimate_distinct_ratio("customers", "not_a_real_column")
         finally:
             connector.close()
 

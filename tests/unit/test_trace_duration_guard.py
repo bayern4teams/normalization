@@ -30,7 +30,7 @@ import uuid
 # run before `pyarrow` is imported anywhere in this process, or PyICU's
 # and PyArrow's bundled native DLLs conflict on Windows (segfault).
 # Building the full normalizer registry below transitively imports
-# pyarrow (e.g. normalizers.name's normalize_batch type hints).
+# pyarrow (e.g. NormalizedValue's Arrow-backed contract types).
 import icu  # noqa: F401
 import pytest
 from normalizers.address import LibpostalClient

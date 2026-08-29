@@ -12,7 +12,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import blake3
-import pyarrow as pa
 from normcore.context import NormalizationContext
 from normcore.enums import FieldSemanticType, MissingKind, NormalizationStatus, Reversibility
 from normcore.models import NormalizedValue
@@ -73,18 +72,6 @@ class BooleanNormalizer:
             return _resolved(value, canonical=False, ctx=ctx)
 
         return _invalid(value, ctx)
-
-    def normalize_batch(self, values: pa.Array, ctx: NormalizationContext) -> pa.StructArray:
-        results = [self.normalize(v, ctx) for v in values.to_pylist()]
-        return pa.StructArray.from_arrays(
-            [
-                pa.array([r.original for r in results], type=pa.large_string()),
-                pa.array([r.display for r in results], type=pa.large_string()),
-                pa.array([r.comparison for r in results], type=pa.large_string()),
-                pa.array([r.normalization_status.value for r in results], type=pa.large_string()),
-            ],
-            names=["original", "display", "comparison", "status"],
-        )
 
     def validate(self, value: str | None, ctx: NormalizationContext) -> ValidationResult:
         result = self.normalize(value, ctx)

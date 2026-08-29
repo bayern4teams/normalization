@@ -98,6 +98,13 @@ jobs:
       # doesn't start on a bare `docker compose up` outside CI; this run
       # uses --source demo_pg, which points at it.
       COMPOSE_PROFILES: integration
+      # Throughput/memory program Phase 3 residual risk (2026-08-29): pinned
+      # here too, not just in the api image's Dockerfile — `normcli run`
+      # below executes directly on the runner via `uv run`, not inside the
+      # built container, so the Dockerfile's ENV never applies to it. See
+      # the Dockerfile's identical comment for why an unpinned seed is a
+      # real, if latent, determinism risk under DistinctValueWorkerPool.
+      PYTHONHASHSEED: "0"
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v3

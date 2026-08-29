@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import pyarrow as pa
 import pytest
 from normalizers.phone import PhoneNormalizer
 from normcore.context import NormalizationContext
@@ -254,13 +253,3 @@ class TestExactFields:
         assert result.trace == []
         assert result.profile_version == ""
         assert result.env_id == ""
-
-
-@pytest.mark.unit
-class TestBatch:
-    def test_normalize_batch_matches_scalar(self, normalizer: PhoneNormalizer) -> None:
-        ctx = _ctx(country="US")
-        values = ["415-555-2671", "+1 415-555-2671"]
-        batch = normalizer.normalize_batch(pa.array(values, type=pa.large_string()), ctx)
-        displays = batch.field("display").to_pylist()
-        assert displays == [normalizer.normalize(v, ctx).display for v in values]

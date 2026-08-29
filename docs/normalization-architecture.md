@@ -65,7 +65,7 @@ normalization/
 │   ├── normalization-rules.md                 (populated from M2 onward)
 │   ├── normalization-data-contract.md         (populated in M1)
 │   ├── normalization-testing.md               (populated from M2 onward)
-│   ├── normalization-performance.md           (populated in M8)
+│   ├── normalization-performance.md           (populated 2026-08-29, throughput/memory program)
 │   ├── dependency-inventory.md
 │   ├── traceability-matrix.md
 │   ├── adr/                                   ADR-001 … ADR-016
@@ -113,13 +113,23 @@ class Normalizer(Protocol):
 
     def can_handle(self, field_type, ctx: NormalizationContext) -> bool: ...
     def normalize(self, value: str | None, ctx) -> NormalizationResult: ...
-    def normalize_batch(self, values: pa.Array, ctx) -> pa.StructArray: ...
     def validate(self, value, ctx) -> ValidationResult: ...
     def explain(self, result) -> Explanation: ...
     def version(self) -> ComponentVersion: ...
     def steps(self) -> Sequence[StepSpec]: ...
     def inverse(self, step_id: str, value: str) -> str | None: ...
 ```
+
+> **Updated (2026-08-29, throughput/memory program Phase 3 item 5
+> cleanup):** §104's `normalize_batch(values: pa.Array, ctx) -> pa.StructArray`
+> was removed from this Protocol and from all 19 normalizers that
+> implemented it. Confirmed during the program's R&D: nothing in the real
+> execution path ever called it — `DistinctValuePlanner` always called
+> `normalize()` once per distinct value. The real, used batch path is the
+> narrower, opt-in `BatchCapableNormalizer.normalize_many(values, ctx) ->
+> list[NormalizedValue]`, implemented today only by `AddressNormalizer`
+> (see `docs/verification/perf-program-phase-3-items-2-5-verification-pack.md`
+> and the corrected `ADR-016-performance-architecture.md`).
 
 Fourteen-plus adapters, one per semantic domain (§99): `GenericTextNormalizer`,
 `UnicodeNormalizer`, `NameNormalizer`, `CompanyNormalizer`,

@@ -13,7 +13,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-import pyarrow as pa
 from normcore.context import NormalizationContext
 from normcore.enums import FieldSemanticType, NormalizationStatus, QualityFlag, Reversibility
 from normcore.models import NormalizedValue
@@ -63,22 +62,6 @@ class PassthroughNormalizer:
             env_id="",
             semantic_type=ctx.semantic_type,
             context_hash=ctx.context_hash,
-        )
-
-    def normalize_batch(self, values: pa.Array, ctx: NormalizationContext) -> pa.StructArray:
-        originals = values.to_pylist()
-        displays = originals
-        comparisons = [v.casefold() if v is not None else None for v in originals]
-        statuses = [NormalizationStatus.UNCHANGED.value for _ in originals]
-
-        return pa.StructArray.from_arrays(
-            [
-                pa.array(originals, type=pa.large_string()),
-                pa.array(displays, type=pa.large_string()),
-                pa.array(comparisons, type=pa.large_string()),
-                pa.array(statuses, type=pa.large_string()),
-            ],
-            names=["original", "display", "comparison", "status"],
         )
 
     def validate(self, value: str | None, ctx: NormalizationContext) -> ValidationResult:

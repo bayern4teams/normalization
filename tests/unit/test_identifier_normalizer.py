@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import pyarrow as pa
 import pytest
 from normalizers.identifier import IdentifierNormalizer, UuidNormalizer
 from normcore.context import NormalizationContext
@@ -245,16 +244,6 @@ class TestIdentifierNormalizerExactFields:
             "check_digit_valid": False,
             "identifier_type": "US",
         }
-
-
-@pytest.mark.unit
-class TestBatch:
-    def test_normalize_batch_matches_scalar(self, normalizer: IdentifierNormalizer) -> None:
-        ctx = _ctx()
-        values = ["000123", "AB-001"]
-        batch = normalizer.normalize_batch(pa.array(values, type=pa.large_string()), ctx)
-        displays = batch.field("display").to_pylist()
-        assert displays == [normalizer.normalize(v, ctx).display for v in values]
 
 
 # --- UuidNormalizer ---------------------------------------------------

@@ -8,7 +8,6 @@ separately in tests/integration/test_address_normalizer_integration.py.
 
 from __future__ import annotations
 
-import pyarrow as pa
 import pytest
 from normalizers.address import AddressNormalizer, LibpostalUnavailableError
 from normcore.context import NormalizationContext
@@ -398,18 +397,7 @@ class TestLocaleSensitiveComparison:
 
 
 @pytest.mark.unit
-class TestBatchAndInverse:
-    def test_normalize_batch_matches_scalar(self) -> None:
-        parser = FakeLibpostalParser(
-            {_BAKER_ST: _BAKER_ST_PARSE, _PENNSYLVANIA_AVE: _PENNSYLVANIA_AVE_PARSE}
-        )
-        normalizer = AddressNormalizer(parser)
-        ctx = _ctx()
-        values = [_BAKER_ST, _PENNSYLVANIA_AVE]
-        batch = normalizer.normalize_batch(pa.array(values, type=pa.large_string()), ctx)
-        displays = batch.field("display").to_pylist()
-        assert displays == [normalizer.normalize(v, ctx).display for v in values]
-
+class TestInverse:
     def test_inverse_parse_step_returns_none(self) -> None:
         normalizer = AddressNormalizer(FakeLibpostalParser({}))
         assert normalizer.inverse("address.libpostal_parse", "10-12 Baker St") is None

@@ -56,10 +56,19 @@ services:
       # unset the app still boots (no connections saved yet), but the
       # M21 Connect step will fail until this is real.
       NORM_SECRET_KEY: ${NORM_SECRET_KEY:-}
-      # M17's persistent DuckDB cache tier is real and built, but its own
-      # bench (M17 pack) measured it as a net loss at real ~8M-distinct-
-      # value scale — deliberately left OFF (`:memory:`) here, not an
-      # oversight.
+      # M17's persistent DuckDB cache tier is real and built. Its original
+      # bench (M17 pack) measured it as a net loss, but that number was a
+      # DuckDB binder bug — re-measured post-fix at ~10,286 values/sec
+      # (see docs/verification/perf-program-phase-3-items-2-5-verification-pack.md),
+      # and M17/M22's stale conclusions are marked RETRACTED in place.
+      # Still left OFF (`:memory:`) here: the throughput/memory program's
+      # cardinality-aware cache policy (Phase 3 item 2) already skips
+      # writes for high-cardinality columns at the *within-run* LRU/DuckDB
+      # tier regardless of this setting, so enabling a real file here only
+      # buys *cross-run* reuse for low-cardinality columns — a genuine win,
+      # but one that adds a stateful volume and a cache-invalidation story
+      # this program deliberately did not design. Recommendation: flip
+      # this on for the low-cardinality-column case once that story exists.
       NORM_CACHE_PATH: ":memory:"
       # Optional legacy single-column path (M10, largely superseded by
       # M15/M21's Connect flow) — server-side JSON, never a client-
@@ -84,6 +93,14 @@ services:
       timeout: 5s
       retries: 10
       start_period: 20s
+    # Throughput/memory program Phase 3, recommendation item 1 (2026-08-29):
+    # the api service had no memory ceiling at all while NORM_PARALLEL_WORKERS
+    # could spawn a real ProcessPoolExecutor fleet — an over-sized worker
+    # count degraded the whole Docker VM instead of failing as a legible
+    # container OOM. Budget per the plan's own arithmetic: WSL2 VM ~7.8 GB,
+    # minus libpostal's 3g, minus postgres, leaves ~4 GB for the api
+    # service and its workers.
+    mem_limit: 4g
 
   ui:
     build:

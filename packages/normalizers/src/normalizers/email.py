@@ -18,7 +18,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import blake3
-import pyarrow as pa
 from email_validator import EmailNotValidError, validate_email
 from normcore.context import NormalizationContext
 from normcore.enums import (
@@ -106,18 +105,6 @@ class EmailNormalizer:
             env_id="",
             semantic_type=ctx.semantic_type,
             context_hash=ctx.context_hash,
-        )
-
-    def normalize_batch(self, values: pa.Array, ctx: NormalizationContext) -> pa.StructArray:
-        results = [self.normalize(v, ctx) for v in values.to_pylist()]
-        return pa.StructArray.from_arrays(
-            [
-                pa.array([r.original for r in results], type=pa.large_string()),
-                pa.array([r.display for r in results], type=pa.large_string()),
-                pa.array([r.comparison for r in results], type=pa.large_string()),
-                pa.array([r.normalization_status.value for r in results], type=pa.large_string()),
-            ],
-            names=["original", "display", "comparison", "status"],
         )
 
     def validate(self, value: str | None, ctx: NormalizationContext) -> ValidationResult:

@@ -146,9 +146,24 @@ re-execution — proven live via a second `POST` against the same
 
 ### 3.5 Live progress at real production scale (the plan's own example)
 
+> **Correction (2026-08-29, throughput/memory program doc-debt cleanup):**
+> the "see §5.3 for why" citation below is wrong — §5.3 is the double-start
+> race note, unrelated to chunk sizing. The real cause was never recorded
+> at the time. The most likely explanation, found retroactively by the
+> throughput/memory program: `normexec/cache.py`'s `get_many` had an O(n²)
+> list-membership scan (Phase 1 defect 1, fixed in commit `be370d3`) that
+> only fires when a chunk has many cache misses — exactly what a
+> high-cardinality column in a 50,000-row chunk would produce, and exactly
+> the shape of hang this program's own trigger case reproduced. This is a
+> plausible reconstruction, not a re-derivation of the original M17
+> decision — no log or commit message from that decision survives to
+> confirm it. Chunk size was never tuned back up after the Phase 1 fix
+> landed; doing so is optional follow-up, not required by anything above.
+
 The plan's literal verify-live example: one run over
 `Person.firstName + Person.lastName + Company.name`. `chunk_size=3_000`
-(tuned down from an initial `50_000` — see §5.3 for why). Polled for up
+(tuned down from an initial `50_000` — see the correction above, not §5.3).
+Polled for up
 to 90 seconds: `GET /runs/{id}` shows **live, monotonically increasing**
 `progress.rows_done` and `progress.chunks_done` while the run is
 `RUNNING`, and `progress.current_table`/`current_column` advance through

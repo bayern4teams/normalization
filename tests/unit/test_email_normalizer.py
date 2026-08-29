@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import pyarrow as pa
 import pytest
 from normalizers.email import EmailNormalizer
 from normcore.context import NormalizationContext
@@ -229,14 +228,3 @@ class TestEmailNormalizerExactFields:
         assert result.profile_version == ""
         assert result.env_id == ""
         assert result.trace == []
-
-
-@pytest.mark.unit
-class TestBatch:
-    def test_normalize_batch_matches_scalar(
-        self, normalizer: EmailNormalizer, ctx: NormalizationContext
-    ) -> None:
-        values = ["John.Smith@Example.com", "not an email"]
-        batch = normalizer.normalize_batch(pa.array(values, type=pa.large_string()), ctx)
-        displays = batch.field("display").to_pylist()
-        assert displays == [normalizer.normalize(v, ctx).display for v in values]

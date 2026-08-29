@@ -30,7 +30,6 @@ from normcore import (
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    import pyarrow as pa
     from normcore.context import NormalizationContext
     from normcore.interfaces import ComponentVersion, Explanation, StepSpec, ValidationResult
     from normcore.models import NormalizedValue
@@ -53,9 +52,6 @@ class _AlwaysFailsNormalizer:
 
     def normalize(self, value: str | None, ctx: NormalizationContext) -> NormalizedValue:
         raise NormalizerFailure("boom", operation="test_failure")
-
-    def normalize_batch(self, values: pa.Array, ctx: NormalizationContext) -> pa.StructArray:
-        raise NotImplementedError
 
     def validate(self, value: str | None, ctx: NormalizationContext) -> ValidationResult:
         raise NotImplementedError
