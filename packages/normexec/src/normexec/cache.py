@@ -42,6 +42,32 @@ if TYPE_CHECKING:
     from normcore.enums import FieldSemanticType
 
 
+# M22: get_many/put_many issue one DuckDB call per sub-batch of this size
+# rather than one call for an entire chunk's distinct values (which can be
+# tens of thousands at once). Building a single SQL statement with that
+# many embedded literals is fast (see the methods' docstrings) but the
+# statement string plus DuckDB's own parse/plan state for it is NOT free —
+# a real 100,000-row chunk run against this cache OOM-killed the API
+# container (confirmed via `docker inspect --format='{{.State.OOMKilled}}'`
+# -> true) building one ~90,000-literal INSERT in a single call. 2,000 is
+# chosen because it is independently measured fast at that size (~0.03s for
+# a literal-embedded `IN (...)`, ~0.14s for a literal-embedded multi-row
+# INSERT) with a correspondingly small, bounded per-call memory footprint.
+_SQL_LITERAL_BATCH_SIZE = 2_000
+
+
+def _sql_string_literal(value: str) -> str:
+    """Standard SQL single-quote escaping (double the quote). The real
+    caller (`DistinctValuePlanner`) only ever produces `cache_key` from
+    `make_cache_key` (a blake3 hexdigest), but `NormalizationCache` is a
+    general-purpose keyed cache — its own test suite exercises it with
+    arbitrary string keys — so this escapes any string safely rather
+    than assuming a hex-only key format. Also used for `value_json`
+    (arbitrary serialized `NormalizedValue` content, may contain `'`,
+    e.g. "O'Brien")."""
+    return "'" + value.replace("'", "''") + "'"
+
+
 def make_cache_key(
     raw_value: str,
     *,
@@ -154,18 +180,28 @@ class NormalizationCache:
     def get_many(self, keys: list[str]) -> dict[str, NormalizedValue]:
         """Bulk variant of `get()` — checks the in-process LRU tier per key
         (cheap, no I/O), then issues ONE batched DuckDB query for whatever
-        isn't hot, instead of one `SELECT` per miss. Same root cause as
-        `put_many`: DuckDB's per-statement overhead makes N individual
-        lookups far slower than one `IN (...)` query for the same N keys
-        (measured: ~200ms for 50 individual misses vs. a single batched
-        query for the same 50). Missing keys from `keys` are simply absent
-        from the returned dict, not represented as `None` values.
+        isn't hot, instead of one `SELECT` per miss. Missing keys from
+        `keys` are simply absent from the returned dict, not represented
+        as `None` values.
 
         `keys` may contain duplicates (the returned dict is naturally
         deduplicated by key) — `stats.hits`/`stats.misses` still count
         one outcome per requested key occurrence, not per unique key, so
         a caller that (unlike every current one) doesn't pre-dedupe still
         gets correct hit/miss accounting.
+
+        M22: the `IN (...)` clause embeds each key as an escaped SQL
+        literal rather than a `?` placeholder per key. Found live: DuckDB
+        1.5.5's parameter binder scales badly with placeholder count —
+        measured ~12s for a 2,000-placeholder query on this exact shape
+        (an empty table, so this is pure binding overhead, not query
+        execution), vs. ~0.24s for the same 20,000 keys embedded as
+        literals. This is what made every real chunked run against a
+        large table appear to hang indefinitely — a real bug, not a
+        hypothetical optimization. Issued in `_SQL_LITERAL_BATCH_SIZE`-key
+        sub-batches, not one query for the whole `keys` list, to bound the
+        per-query statement size (see that constant's comment for why —
+        one giant statement OOM-killed the API container on a real run).
         """
         if not keys:
             return {}
@@ -182,12 +218,12 @@ class NormalizationCache:
                 elif key not in duckdb_lookup_keys:
                     duckdb_lookup_keys.append(key)
 
-            if duckdb_lookup_keys:
-                placeholders = ", ".join(["?"] * len(duckdb_lookup_keys))
+            for batch_start in range(0, len(duckdb_lookup_keys), _SQL_LITERAL_BATCH_SIZE):
+                batch = duckdb_lookup_keys[batch_start : batch_start + _SQL_LITERAL_BATCH_SIZE]
+                literal_list = ", ".join(_sql_string_literal(key) for key in batch)
                 rows = self._conn.execute(
                     f"SELECT cache_key, value_json FROM normalization_cache "
-                    f"WHERE cache_key IN ({placeholders})",
-                    duckdb_lookup_keys,
+                    f"WHERE cache_key IN ({literal_list})"
                 ).fetchall()
                 for cache_key, value_json in rows:
                     value = NormalizedValue.model_validate_json(value_json)
@@ -218,23 +254,35 @@ class NormalizationCache:
         with the LRU tier (updated in iteration order, so it naturally
         keeps the last) — a real two-tier data inconsistency for any
         caller that doesn't pre-dedupe like the current one does.
+
+        M22: same fix as `get_many` — each `(cache_key, value_json)` pair
+        is embedded as escaped SQL literals rather than `(?, ?)`
+        placeholders (both may contain `'`, e.g. a `cache_key` from a
+        non-`make_cache_key` caller, or a `value_json` normalizing
+        "O'Brien") — verified against a payload containing an apostrophe,
+        unicode, and a backslash round-tripping correctly. Issued in
+        `_SQL_LITERAL_BATCH_SIZE`-item sub-batches, not one statement for
+        the whole `items` list — see that constant's comment: one giant
+        statement OOM-killed the API container on a real run.
         """
         if not items:
             return
         deduped = dict(items)  # last occurrence per key wins, like put()
-        placeholders = ", ".join(["(?, ?)"] * len(deduped))
-        flat_params: list[str] = []
-        for key, value in deduped.items():
-            flat_params.extend((key, value.model_dump_json()))
+        deduped_items = list(deduped.items())
 
         with self._lock:
-            for key, value in deduped.items():
+            for key, value in deduped_items:
                 self._lru.put(key, value)
-            self._conn.execute(
-                f"INSERT OR REPLACE INTO normalization_cache (cache_key, value_json) "
-                f"VALUES {placeholders}",
-                flat_params,
-            )
+            for batch_start in range(0, len(deduped_items), _SQL_LITERAL_BATCH_SIZE):
+                batch = deduped_items[batch_start : batch_start + _SQL_LITERAL_BATCH_SIZE]
+                rows_sql = ", ".join(
+                    f"({_sql_string_literal(key)}, {_sql_string_literal(value.model_dump_json())})"
+                    for key, value in batch
+                )
+                self._conn.execute(
+                    f"INSERT OR REPLACE INTO normalization_cache (cache_key, value_json) "
+                    f"VALUES {rows_sql}"
+                )
 
     def close(self) -> None:
         self._conn.close()

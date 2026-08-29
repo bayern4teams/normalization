@@ -100,24 +100,37 @@ def test_persistent_cache_put_many_and_get_many_at_100k_distinct_values(tmp_path
         f"({file_size_mb * 1024 / _DISTINCT_COUNT:.2f}KB/1000 values)"
     )
 
-    # REAL measured result on this session's hardware (2026-08-26):
-    # write_elapsed=1257s for 100,000 values (~80 values/s) -- roughly
-    # linear with the ~6.4ms/item already implied by this module's own
-    # docstring ("~320ms for 50 items"), not a new regression, just never
-    # tested at a scale where the per-row cost (DuckDB's PRIMARY KEY
-    # constraint maintenance on a large multi-row INSERT OR REPLACE
-    # VALUES list, most likely) became visible. At this rate the real
-    # production target -- ~8M distinct Person.fullName values -- would
-    # take on the order of A DAY to populate once. This is exactly the
-    # risk the M13-M22 plan's own M17 section named ("may be a net loss
-    # -- bench honestly... disclose in the pack if it does not pay") --
-    # it does not pay. NORM_CACHE_PATH is deliberately left OFF in
-    # compose.yaml; the bound below is calibrated to this real
-    # measurement (catch a further regression, e.g. total failure or a
-    # 10x+ slowdown from THIS already-bad baseline) rather than a
-    # fictional "should be fast" target this tier cannot currently meet.
-    assert write_elapsed < 3600
-    assert read_elapsed < 3600
+    # UPDATE (2026-08-28): the original 2026-08-26 measurement on this
+    # line -- write_elapsed=1257s for 100,000 values (~80 values/s) --
+    # was misdiagnosed. It was NOT "DuckDB's PRIMARY KEY constraint
+    # maintenance on a large multi-row INSERT OR REPLACE VALUES list" as
+    # this comment used to claim. The real cause, found live while
+    # debugging a real multi-column run that appeared to hang
+    # indefinitely: `get_many`/`put_many` built a `?` parameter
+    # placeholder per key/row (up to `_BATCH_SIZE`=2,000 placeholders per
+    # call), and DuckDB 1.5.5's parameter binder scales catastrophically
+    # with placeholder count -- independently measured at ~12s for a
+    # single 2,000-placeholder query against an EMPTY table (pure binding
+    # overhead, not row-count-dependent). Fixed by embedding each value
+    # as an escaped SQL literal instead of a `?` placeholder (see
+    # `cache.py`'s `_sql_string_literal` and both methods' docstrings).
+    #
+    # REAL measured result on this session's hardware, same 100,000
+    # values / batch=2,000, after the fix: write_elapsed=19.19s (~5,211
+    # values/s, a ~65x improvement), read_elapsed=12.55s (~7,965
+    # values/s). At this rate the real production target -- ~8M distinct
+    # Person.fullName values -- is ~26 minutes to populate once, not "on
+    # the order of a day" as this comment previously (incorrectly)
+    # concluded. This does NOT by itself mean `NORM_CACHE_PATH` should be
+    # turned on in compose.yaml -- that is a separate decision (disk
+    # growth, whether cross-run reuse is actually valuable for this
+    # workload) -- but the specific "it does not pay" conclusion drawn
+    # from the old, bugged measurement no longer holds and should be
+    # revisited. The bound below is calibrated to the real post-fix
+    # numbers with generous margin for slower CI hardware, not the
+    # original bugged baseline.
+    assert write_elapsed < 120
+    assert read_elapsed < 120
 
 
 @pytest.mark.bench

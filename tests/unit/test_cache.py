@@ -261,3 +261,54 @@ class TestGetMany:
             assert set(result.keys()) == {"k1"}
             assert cache.stats.hits == 2  # both k1 occurrences
             assert cache.stats.misses == 2  # both k2 occurrences
+
+
+@pytest.mark.unit
+class TestSqlLiteralEmbedding:
+    """M22: get_many/put_many embed cache_key/value_json as SQL literals
+    (found live: DuckDB 1.5.5's `?` parameter binder scales catastrophically
+    with placeholder count — ~12s for a 2,000-key `IN (...)`, the real
+    cause of every real multi-column run appearing to hang indefinitely).
+    Embedding raw strings into SQL is only safe if escaping is correct —
+    these are the tests that prove it, not just the happy path."""
+
+    def test_get_many_with_apostrophe_and_sql_metacharacters_in_keys(self) -> None:
+        nasty_keys = ["O'Brien", "a'; DROP TABLE normalization_cache; --", "quote''quote", ""]
+        with NormalizationCache(":memory:") as cache:
+            for key in nasty_keys:
+                if key:  # cache.get with an empty key is a valid no-op case below
+                    cache.put(key, _sample_value(key))
+
+            result = cache.get_many(nasty_keys)
+
+            assert set(result.keys()) == {k for k in nasty_keys if k}
+            for key in nasty_keys:
+                if key:
+                    assert result[key].original == key
+
+    def test_put_many_with_apostrophe_unicode_and_backslash_in_value_json(self) -> None:
+        # display/original round-tripping through model_dump_json ->
+        # embedded SQL literal -> DuckDB -> model_validate_json must
+        # survive every SQL-significant and non-ASCII character intact.
+        tricky_original = "O'Brien & Sons — café 中文 a\\b"
+        with NormalizationCache(":memory:") as cache:
+            cache.put_many([("k1", _sample_value(tricky_original))])
+            hit = cache.get("k1")
+
+        assert hit is not None
+        assert hit.original == tricky_original
+
+    def test_get_many_still_correct_at_a_scale_that_used_to_hang(self) -> None:
+        """Not a timing assertion (see tests/bench for that) — this just
+        proves correctness survives at a scale (2,000 keys) that the old
+        `?`-placeholder implementation measurably could not complete
+        quickly (~12s for this exact count, see get_many's docstring)."""
+        n = 2_000
+        items = [(f"key-{i:06d}", _sample_value(f"value-{i}")) for i in range(n)]
+        # Tiny LRU capacity forces lookups through the DuckDB tier.
+        with NormalizationCache(":memory:", lru_capacity=10) as cache:
+            cache.put_many(items)
+            result = cache.get_many([k for k, _ in items])
+
+        assert len(result) == n
+        assert all(result[f"key-{i:06d}"].original == f"value-{i}" for i in range(n))
