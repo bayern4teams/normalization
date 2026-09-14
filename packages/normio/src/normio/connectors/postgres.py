@@ -2,9 +2,15 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import sqlalchemy as sa
 
+from normio.connector import ColumnInfo
 from normio.connectors._sql_base import SqlConnectorBase
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 
 class PostgresConnector(SqlConnectorBase):
@@ -22,3 +28,30 @@ class PostgresConnector(SqlConnectorBase):
             # one. Confirmed in tests/integration/test_readonly_connectors.py.
             execution_options={"postgresql_readonly": True},
         )
+
+    def list_databases(self) -> Sequence[str]:
+        """Server-level database discovery (decision #1) — queried from
+        the server itself, never a network port scan."""
+        with self._engine.connect() as conn:
+            rows = conn.execute(
+                sa.text("SELECT datname FROM pg_database WHERE datistemplate = false ORDER BY datname")
+            ).all()
+        return [row[0] for row in rows]
+
+    def get_columns(self, table: str) -> Sequence[ColumnInfo]:
+        """Columns with native type strings, for the clone-job DDL/type
+        passthrough path. Same inspector idiom as
+        `SqlConnectorBase.list_tables` just above."""
+        inspector = sa.inspect(self._engine)
+        return [
+            ColumnInfo(name=c["name"], native_type=str(c["type"]))
+            for c in inspector.get_columns(table)
+        ]
+
+    def get_primary_key(self, table: str) -> Sequence[str]:
+        """Primary-key column names, for clone-job DDL replication
+        (decision #11) and resumable insert dedup (`ON CONFLICT DO
+        NOTHING`, decision #10). Empty if the table has none."""
+        inspector = sa.inspect(self._engine)
+        constraint = inspector.get_pk_constraint(table)
+        return list(constraint.get("constrained_columns") or [])

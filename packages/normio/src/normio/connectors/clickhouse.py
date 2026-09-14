@@ -13,6 +13,8 @@ from typing import TYPE_CHECKING
 import clickhouse_connect
 import pyarrow as pa
 
+from normio.connector import ColumnInfo
+
 if TYPE_CHECKING:
     from collections.abc import Iterator, Sequence
 
@@ -40,6 +42,37 @@ class ClickHouseConnector:
             parameters={"db": self._database},
         )
         return [row[0] for row in result.result_rows]
+
+    def list_databases(self) -> Sequence[str]:
+        """Server-level database discovery (decision #1) — same shape as
+        `list_tables` above."""
+        result = self._client.query("SELECT name FROM system.databases ORDER BY name")
+        return [row[0] for row in result.result_rows]
+
+    def get_columns(self, table: str) -> Sequence[ColumnInfo]:
+        """Public name+native-type listing for the clone-job DDL/type
+        passthrough path. `_list_columns` (just below) stays as-is —
+        `read_table` only needs the name set, not the types."""
+        result = self._client.query(
+            "SELECT name, type FROM system.columns WHERE database = {db:String} AND table = {t:String} ORDER BY position",
+            parameters={"db": self._database, "t": table},
+        )
+        return [ColumnInfo(name=row[0], native_type=row[1]) for row in result.result_rows]
+
+    def get_table_engine_info(self, table: str) -> tuple[str, Sequence[str]]:
+        """(engine, order_by_columns) for clone-job DDL replication
+        (decision #11) — `system.tables.sorting_key` is the ORDER BY
+        expression ClickHouse itself reports back as a comma-separated
+        column list for the common case (plain column names, no
+        expressions)."""
+        result = self._client.query(
+            "SELECT engine, sorting_key FROM system.tables "
+            "WHERE database = {db:String} AND name = {t:String}",
+            parameters={"db": self._database, "t": table},
+        )
+        engine, sorting_key = result.result_rows[0]
+        order_by = [c.strip() for c in sorting_key.split(",") if c.strip()]
+        return engine, order_by
 
     def _list_columns(self, table: str) -> set[str]:
         result = self._client.query(

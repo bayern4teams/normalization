@@ -2,7 +2,7 @@
 store. See docs/adr/ADR-013-normalization-storage.md.
 """
 
-from normio.connector import SourceConnector
+from normio.connector import ColumnInfo, SourceConnector
 from normio.sidecar_store import SidecarStore
 
-__all__ = ["SidecarStore", "SourceConnector"]
+__all__ = ["ColumnInfo", "SidecarStore", "SourceConnector"]

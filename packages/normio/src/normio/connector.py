@@ -15,12 +15,26 @@ not just by our code.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Sequence
 
     import pyarrow as pa
+
+
+@dataclass(frozen=True)
+class ColumnInfo:
+    """One column's name + native (engine-level) type string, as reported
+    by the source. A data shape, not a behavior interface — deliberately
+    NOT part of the `SourceConnector` Protocol (only the clone-job
+    discovery routes consume it; FileConnector/MongoConnector are out of
+    scope and would need dummy implementations if the Protocol grew it).
+    """
+
+    name: str
+    native_type: str
 
 
 @runtime_checkable

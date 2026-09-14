@@ -26,6 +26,12 @@ import sqlalchemy as sa
 if TYPE_CHECKING:
     from collections.abc import Iterator, Sequence
 
+# Bounds peak memory for chunked reads/writes across every SQL-backed
+# connector/persistence layer that chunks rows (normapi.pg_persistence's
+# save_execution, and the destination writers' bulk_insert) — one shared
+# constant instead of each redefining its own copy of the same number.
+ROW_CHUNK_SIZE = 2_000
+
 
 class SqlConnectorBase:
     source_id: str
