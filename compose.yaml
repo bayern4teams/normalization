@@ -47,7 +47,23 @@ services:
       NORM_LIBPOSTAL_URL: http://libpostal:8081
       NORM_SIDECAR_DUCKDB_PATH: /data/sidecar/catalog.duckdb
       NORM_SIDECAR_PARQUET_ROOT: /data/sidecar/parquet
+      # §103's normalization cache (normapi/app.py's _DEFAULT_CACHE_PATH) —
+      # was never set here, so the cache silently defaulted to ":memory:"
+      # in every real deployment despite being real, tested,
+      # persistence-capable code. /data/sidecar is already the sidecar_data
+      # volume mounted below, so this needs no new volume, just this line.
+      NORM_CACHE_PATH: /data/sidecar/cache.duckdb
       NORM_DICTIONARIES_DIR: /app/data/dictionaries
+      # Backstop for store.py's own row-count cap (NORM_MAX_RUN_ROWS,
+      # default 40_000 — see DEFAULT_MAX_RUN_ROWS's comment for the real
+      # memory measurements this and the limit below are based on): if
+      # something still finds a way past the cap, this limit makes the
+      # container fail predictably instead of contending for host memory.
+      # 4g, not 2g — live measurement showed 2g wasn't actually enough
+      # headroom for a 50,000-row run despite an initial (wrong, unmeasured)
+      # guess that it would be; this value IS measured (50K rows peaked at
+      # ~3.4GB and completed cleanly under this limit).
+    mem_limit: 4g
     volumes:
       - sidecar_data:/data/sidecar
     depends_on:

@@ -11,10 +11,11 @@ re-implemented per normalizer.
 from __future__ import annotations
 
 from normcore.context import NormalizationContext
-from normcore.enums import FieldSemanticType, NormalizationStatus
+from normcore.enums import FieldSemanticType, NormalizationStatus, Reversibility
 from normcore.errors import NormalizerFailure, apply_error_policy
 from normcore.interfaces import Normalizer
 from normcore.models import NormalizedValue
+from normcore.pii import sanitize_surrogates
 from normcore.rules import NormalizationProfile
 
 
@@ -99,6 +100,16 @@ class Dispatcher:
             )
             raise ValueError(msg)
 
+        # Sanitize once, here, before any normalizer or trace/cache-key
+        # hashing ever sees `value` — found via live testing that a lone
+        # UTF-16 surrogate crashed the whole pipeline downstream (not
+        # caught as a per-value NormalizerFailure), since it can't be
+        # UTF-8 encoded at all. This is the one place every call path
+        # (direct dispatch, and the distinct-value planner on a cache
+        # miss) converges before producing a NormalizedValue.
+        if value is not None:
+            value = sanitize_surrogates(value)
+
         normalizer = self._registry.require(semantic_type)
 
         try:
@@ -107,11 +118,26 @@ class Dispatcher:
             output_value, status_str = apply_error_policy(
                 context.error_policy, original_value=value
             )
+            # lossiness must be set explicitly here, not left to
+            # NormalizedValue's own LOSSLESS default: found via live
+            # testing that a failed/invalid value was silently stamped
+            # "losslessly reversible" regardless of what actually
+            # happened. RETURN_NULL policies genuinely discard real
+            # content (value -> None), which is lossy by definition;
+            # every other policy returns the original value unchanged,
+            # which is exactly what LOSSLESS means, so it's derived here
+            # rather than assumed for every outcome alike.
+            lossiness = (
+                Reversibility.LOSSY
+                if output_value is None and value is not None
+                else Reversibility.LOSSLESS
+            )
             return NormalizedValue(
                 original=value,
                 display=output_value,
                 normalization_status=NormalizationStatus(status_str),
                 errors=[str(exc)],
+                lossiness=lossiness,
                 profile_version=profile.version,
                 env_id=self._env_id,
                 semantic_type=semantic_type,

@@ -33,8 +33,9 @@ from normalizers.unit import UnitNormalizer
 from normalizers.url import URLNormalizer
 from normexec.cache import NormalizationCache
 
+from normapi.pg_persistence import PgPersistence
 from normapi.routes import router
-from normapi.store import InMemoryStore
+from normapi.store import DEFAULT_MAX_RUN_ROWS, InMemoryStore
 from normcore import Dispatcher, NormalizerRegistry
 from normdict import CustomDictionaryStore, DictionaryLoader
 
@@ -98,12 +99,29 @@ _EXTRA_CORS_ORIGINS = [
 # sensitive raw values through cache keys" requirement.
 _DEFAULT_CACHE_PATH = os.environ.get("NORM_CACHE_PATH", ":memory:")
 
+# ADR-013's metadata store. Unset (the default for `uv run` outside
+# Docker/tests) means InMemoryStore keeps its original pure-in-memory
+# behavior — no Postgres round-trip forced on every contributor's laptop.
+# compose.yaml sets this for the real deployment.
+_DEFAULT_PG_DSN = os.environ.get("NORM_PG_DSN")
+
+# A real run OOM-killed the api container in live testing — see
+# store.py's DEFAULT_MAX_RUN_ROWS for the measured per-row memory cost
+# this default (and compose.yaml's api.mem_limit: 4g) are actually based
+# on. Rejecting an oversized run outright (HTTP 413, routes.py) is a
+# predictable failure an operator can raise deliberately once they've
+# measured their own container's headroom, in place of an unpredictable
+# crash nobody chose.
+_DEFAULT_MAX_RUN_ROWS = int(os.environ.get("NORM_MAX_RUN_ROWS", str(DEFAULT_MAX_RUN_ROWS)))
+
 
 def create_app(
     *,
     dictionaries_dir: Path | None = None,
     custom_dictionaries_dir: Path | None = None,
     cache_path: str | None = None,
+    pg_dsn: str | None = None,
+    max_run_rows: int | None = None,
 ) -> FastAPI:
     app = FastAPI(
         title="Normalization Engine API",
@@ -152,7 +170,15 @@ def create_app(
 
     cache = NormalizationCache(cache_path or _DEFAULT_CACHE_PATH)
 
-    app.state.store = InMemoryStore(cache)
+    resolved_pg_dsn = pg_dsn or _DEFAULT_PG_DSN
+    persistence = None
+    if resolved_pg_dsn:
+        persistence = PgPersistence(resolved_pg_dsn)
+        persistence.ensure_schema()
+
+    app.state.store = InMemoryStore(
+        cache, persistence, max_run_rows=max_run_rows or _DEFAULT_MAX_RUN_ROWS
+    )
     app.state.dispatcher = Dispatcher(registry, env_id=_SCAFFOLD_ENV_ID)
     app.state.dictionary_loader = loader
     app.state.custom_dictionary_store = custom_store

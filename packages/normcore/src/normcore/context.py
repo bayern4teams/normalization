@@ -44,7 +44,10 @@ class NormalizationContext(BaseModel):
         """
         payload = self.model_dump(mode="json", exclude={"pii_visibility"})
         canonical = _canonical_json(payload)
-        return blake3.blake3(canonical.encode("utf-8")).hexdigest()
+        # errors="surrogatepass": field_name and friends are caller-supplied
+        # strings too (e.g. a request's field_name), not just normalized
+        # values — same defensive reasoning as normcore.pii.content_hash.
+        return blake3.blake3(canonical.encode("utf-8", errors="surrogatepass")).hexdigest()
 
 
 def _canonical_json(payload: dict[str, Any]) -> str:

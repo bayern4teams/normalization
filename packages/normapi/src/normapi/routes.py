@@ -81,6 +81,7 @@ from normapi.store import (
     InMemoryStore,
     ProfileNotFoundError,
     RunNotFoundError,
+    RunTooLargeError,
 )
 from normcore import (
     Dispatcher,
@@ -312,14 +313,17 @@ def create_run(
         raise HTTPException(status_code=404, detail=f"No such profile: {profile_id}") from exc
 
     if execution is not None:
-        run = store.execute_run(
-            run.id,
-            dispatcher=dispatcher,
-            field_name=execution.field_name,
-            semantic_type=execution.semantic_type,
-            values=execution.values,
-            error_policy=execution.error_policy,
-        )
+        try:
+            run = store.execute_run(
+                run.id,
+                dispatcher=dispatcher,
+                field_name=execution.field_name,
+                semantic_type=execution.semantic_type,
+                values=execution.values,
+                error_policy=execution.error_policy,
+            )
+        except RunTooLargeError as exc:
+            raise HTTPException(status_code=413, detail=str(exc)) from exc
     return run
 
 
@@ -410,23 +414,39 @@ def get_run_errors(
     return errors
 
 
+_MAX_VALUES_PAGE_SIZE = 1000
+
+
 @router.get("/runs/{run_id}/values")
 def get_run_values(
-    run_id: str, store: Annotated[InMemoryStore, Depends(get_store)]
+    run_id: str,
+    store: Annotated[InMemoryStore, Depends(get_store)],
+    limit: int = 100,
+    offset: int = 0,
 ) -> list[dict[str, object]]:
     """The run's real aligned (original, normalized result) pairs — backs
     §121's per-value Normalization Comparison Workspace table (Value/v1/
     v2/Difference/Reason), which needs row-level data the aggregate
-    /runs/compare endpoint deliberately doesn't return."""
+    /runs/compare endpoint deliberately doesn't return.
+
+    Paginated (default page 100, hard cap 1000) — a 5,000-row run alone
+    measured at ~24MB for one unpaginated response before this fix, and
+    that scales linearly with run size with no ceiling. Goes straight to
+    the store's paginated accessor, which queries Postgres directly when
+    configured rather than reconstructing the whole run first."""
+    limit = max(1, min(limit, _MAX_VALUES_PAGE_SIZE))
+    offset = max(0, offset)
     try:
-        execution = store.get_execution(run_id)
+        # get_run first: a 404 for a nonexistent run should say so, not
+        # silently return an empty page indistinguishable from "no more
+        # rows" on a valid run.
+        store.get_run(run_id)
+        page = store.get_run_values_page(run_id, limit=limit, offset=offset)
     except RunNotFoundError as exc:
         raise HTTPException(status_code=404, detail=f"No such run: {run_id}") from exc
-    if execution is None:
-        return []
     return [
         {"original": original, "result": result.model_dump(mode="json")}
-        for original, result in zip(execution.originals, execution.results, strict=True)
+        for original, result in page
     ]
 
 

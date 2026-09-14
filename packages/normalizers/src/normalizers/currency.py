@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING
 
 import blake3
 import pyarrow as pa
+import pycountry
 from normcore.context import NormalizationContext
 from normcore.enums import FieldSemanticType, MissingKind, NormalizationStatus, Reversibility
 from normcore.models import NormalizedValue
@@ -30,8 +31,17 @@ _VERSION = "0.1.0"
 _PARSE_PARAMS_HASH = blake3.blake3(b"{}").hexdigest()
 
 # ISO 4217 codes are unambiguous by construction — recognizing one in the
-# text always resolves confidently, no context required.
+# text always resolves confidently, no context required. The regex alone
+# only finds candidate 3-uppercase-letter tokens ("ABC", "SKU", "TBD" all
+# match) — pycountry.currencies (already a dependency) is what actually
+# confirms one is a real ISO 4217 code before it's accepted at confidence
+# 1.0; a candidate that isn't real falls through to the other resolution
+# strategies below instead of being accepted blind.
 _ISO_CODE_RE = re.compile(r"\b([A-Z]{3})\b")
+
+
+def _is_real_iso_code(code: str) -> bool:
+    return pycountry.currencies.get(alpha_3=code) is not None
 
 # Symbols are inherently ambiguous (§47) EXCEPT where a symbol is only
 # used by one currency in practice — kept deliberately small.
@@ -166,9 +176,14 @@ class CurrencyNormalizer:
 
 
 def _resolve_currency(cleaned: str, ctx: NormalizationContext) -> tuple[str | None, float]:
-    iso_match = _ISO_CODE_RE.search(cleaned)
-    if iso_match:
-        return iso_match.group(1), 1.0
+    # .finditer(), not .search(): a value can contain more than one
+    # candidate 3-letter token ("SKU USD" has two) — check each for a real
+    # ISO 4217 code rather than accepting or rejecting based on whichever
+    # comes first.
+    for iso_match in _ISO_CODE_RE.finditer(cleaned):
+        candidate = iso_match.group(1)
+        if _is_real_iso_code(candidate):
+            return candidate, 1.0
 
     lowered = cleaned.casefold()
     if lowered in _NAME_MAP:

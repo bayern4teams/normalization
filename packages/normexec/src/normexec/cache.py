@@ -35,7 +35,14 @@ def make_cache_key(
     context_hash: str,
     env_id: str,
 ) -> str:
-    raw_hash = blake3.blake3(raw_value.encode("utf-8")).hexdigest()
+    # errors="surrogatepass": this hashes the RAW value, before
+    # Dispatcher.normalize's own sanitization ever runs (the planner
+    # computes this key to check the cache first, ahead of dispatch on a
+    # miss) — a lone UTF-16 surrogate here previously crashed the whole
+    # batch with an unhandled UnicodeEncodeError. Same fix as
+    # normcore.pii.content_hash, independently needed here since this is
+    # a separate call site hashing the pre-dispatch value.
+    raw_hash = blake3.blake3(raw_value.encode("utf-8", errors="surrogatepass")).hexdigest()
     payload = json.dumps(
         {
             "raw_value_hash": raw_hash,
