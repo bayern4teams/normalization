@@ -54,6 +54,11 @@ services:
       # volume mounted below, so this needs no new volume, just this line.
       NORM_CACHE_PATH: /data/sidecar/cache.duckdb
       NORM_DICTIONARIES_DIR: /app/data/dictionaries
+      # DB-clone-and-normalize feature (decision #12): encrypts saved
+      # connection passwords at rest. Dev-only fixed key, same convention
+      # as this file's plaintext POSTGRES_PASSWORD above — generate a real
+      # one for any non-local deployment (`Fernet.generate_key()`).
+      NORM_SECRET_KEY: 4tBi41i-Vq5DF6d-c4UTVHgIV_Kd-A3t_-mQd-uN_zE=
       # Backstop for store.py's own row-count cap (NORM_MAX_RUN_ROWS,
       # default 40_000 — see DEFAULT_MAX_RUN_ROWS's comment for the real
       # memory measurements this and the limit below are based on): if

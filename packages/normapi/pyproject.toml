@@ -9,10 +9,12 @@ dependencies = [
     "normalizers",
     "normanalysis",
     "normexec",
+    "normio",
     "fastapi>=0.115,<1",
     "uvicorn[standard]>=0.31,<1",
     "sqlalchemy>=2.0,<3",
     "psycopg[binary]>=3.2,<4",
+    "cryptography>=42,<44",
 ]
 
 [tool.uv.sources]
@@ -21,6 +23,7 @@ normdict = { workspace = true }
 normalizers = { workspace = true }
 normanalysis = { workspace = true }
 normexec = { workspace = true }
+normio = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

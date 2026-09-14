@@ -10,15 +10,21 @@ entity themselves) get their own thin models here.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
 from normcore import (
+    CloneJobStatus,
     ErrorPolicy,
     FieldNormalizationConfig,
     FieldSemanticType,
 )
+
+# 'postgres' | 'clickhouse' — matches decision scope (Postgres+ClickHouse
+# only); not a normcore StrEnum since it's a normapi/normio-local
+# connection-engine choice, not a domain-model concept.
+ConnectionEngine = Literal["postgres", "clickhouse"]
 
 
 class ProfileCreateRequest(BaseModel):
@@ -137,6 +143,74 @@ class DictionarySummary(BaseModel):
     active_version: str | None = None
 
 
+class ConnectionCreateRequest(BaseModel):
+    """Decisions #2/#13: a server-level (host+port+username+password+
+    engine) saved credential. The database is picked fresh each use, never
+    baked in here."""
+
+    engine: ConnectionEngine
+    host: str
+    port: int
+    username: str
+    password: str
+
+
+class Connection(BaseModel):
+    """Response shape — never carries the password, encrypted or not
+    (decision #12: decrypted only in memory at connect-time)."""
+
+    connection_id: str
+    engine: ConnectionEngine
+    host: str
+    port: int
+    username: str
+    created_at: str
+
+
+class DatabaseDiscoveryRequest(BaseModel):
+    """Optional ad-hoc credential override for the "not yet saved"
+    discovery case (§4's `POST /connections/{id}/databases`) — when
+    `connection_id` in the path is the literal `"adhoc"`, every field
+    here is required; otherwise this body is omitted and the saved
+    connection's credentials are used as-is."""
+
+    engine: ConnectionEngine | None = None
+    host: str | None = None
+    port: int | None = None
+    username: str | None = None
+    password: str | None = None
+
+
+class ColumnInfoResponse(BaseModel):
+    name: str
+    native_type: str
+
+
+class CloneJobCreateRequest(BaseModel):
+    """Body for `POST /clone-jobs`. Every table in `source_database` is
+    cloned automatically (decision #3) — `field_configs` only decides,
+    per already-included table/column, a semantic type or passthrough
+    (a column absent from its table's map, or mapped to null, is
+    passthrough)."""
+
+    source_connection_id: str
+    source_database: str
+    destination_connection_id: str
+    destination_database: str
+    # ponytail: stored inside normalization_clone_jobs.data's JSON blob,
+    # not a separate table — consumed exactly twice (Phase 1 DDL, Phase 2
+    # normalization) by the job that owns it. Promote to its own table
+    # only if "reuse this column config across jobs" becomes a real
+    # requirement.
+    field_configs: dict[str, dict[str, FieldSemanticType | None]] = Field(default_factory=dict)
+
+
+class CloneJobCreateResponse(BaseModel):
+    job_id: str
+    status: CloneJobStatus
+    create_database_sql: str
+
+
 class NotImplementedResponse(BaseModel):
     """Honest, schema-valid placeholder for §98 endpoints whose real
     implementation is still out of scope at the current milestone —
@@ -148,6 +222,12 @@ class NotImplementedResponse(BaseModel):
 
 
 __all__ = [
+    "CloneJobCreateRequest",
+    "CloneJobCreateResponse",
+    "ColumnInfoResponse",
+    "Connection",
+    "ConnectionCreateRequest",
+    "DatabaseDiscoveryRequest",
     "DetectTypeRequest",
     "DictionaryCreateRequest",
     "DictionaryRollbackRequest",

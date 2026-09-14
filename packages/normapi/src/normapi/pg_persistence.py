@@ -49,11 +49,14 @@ from __future__ import annotations
 
 import dataclasses
 import json
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 import sqlalchemy as sa
+from normio.connectors._sql_base import ROW_CHUNK_SIZE as _ROW_CHUNK_SIZE
 
 from normanalysis import InvariantSampleReport, InvariantViolation
+from normapi import secrets
 from normcore import (
     FieldSemanticType,
     NormalizationProfile,
@@ -65,10 +68,11 @@ from normcore import (
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
-# Bounds peak memory for both save_execution's writes and
-# load_execution's full-run reconstruction: never build more than this
-# many rows' worth of Python/JSON objects in memory at once.
-_ROW_CHUNK_SIZE = 2_000
+# _ROW_CHUNK_SIZE bounds peak memory for save_execution's writes,
+# load_execution's full-run reconstruction, and (DB-clone-and-normalize
+# feature) save_clone_job_errors's writes — a shared constant
+# (normio.connectors._sql_base.ROW_CHUNK_SIZE) since it's now used by both
+# packages, not redefined here.
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS normalization_profiles (
@@ -100,6 +104,28 @@ CREATE TABLE IF NOT EXISTS normalization_execution_rows (
     PRIMARY KEY (run_id, row_index)
 );
 DROP TABLE IF EXISTS normalization_executions;
+CREATE TABLE IF NOT EXISTS normalization_connections (
+    connection_id TEXT PRIMARY KEY,
+    engine TEXT NOT NULL,
+    host TEXT NOT NULL,
+    port INTEGER NOT NULL,
+    username TEXT NOT NULL,
+    encrypted_password TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS normalization_clone_jobs (
+    job_id TEXT PRIMARY KEY,
+    data TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS normalization_clone_job_errors (
+    job_id TEXT NOT NULL,
+    row_index INTEGER NOT NULL,
+    table_name TEXT NOT NULL,
+    field TEXT NOT NULL,
+    original TEXT,
+    error TEXT NOT NULL,
+    PRIMARY KEY (job_id, row_index, table_name, field)
+);
 """
 # The last statement retires the original one-blob-per-run table this
 # schema replaces — safe on a table that only ever held this audit's own
@@ -521,6 +547,190 @@ class PgPersistence:
             rows.extend(page)
             offset += _ROW_CHUNK_SIZE
         return rows
+
+    # --- DB-clone-and-normalize: saved connections (decisions #12, #13) ---
+    # Server-level (host+port+username+password+engine) — the database is
+    # picked fresh each use, not baked into the saved connection. No
+    # per-user scoping (this app has no auth/session model). The password
+    # is encrypted here, once, at the single write path — every read
+    # returns the ciphertext; callers decrypt only at connect-time
+    # (normapi.secrets), never storing the plaintext anywhere else.
+
+    def save_connection(
+        self, connection_id: str, *, engine: str, host: str, port: int, username: str, password: str
+    ) -> dict:
+        created_at = datetime.now(UTC).isoformat()
+        encrypted_password = secrets.encrypt(password)
+        with self._engine.begin() as conn:
+            conn.execute(
+                sa.text(
+                    "INSERT INTO normalization_connections "
+                    "(connection_id, engine, host, port, username, encrypted_password, created_at) "
+                    "VALUES (:cid, :engine, :host, :port, :username, :pw, :created_at)"
+                ),
+                {
+                    "cid": connection_id,
+                    "engine": engine,
+                    "host": host,
+                    "port": port,
+                    "username": username,
+                    "pw": encrypted_password,
+                    "created_at": created_at,
+                },
+            )
+        return {
+            "connection_id": connection_id,
+            "engine": engine,
+            "host": host,
+            "port": port,
+            "username": username,
+            "encrypted_password": encrypted_password,
+            "created_at": created_at,
+        }
+
+    def get_connection(self, connection_id: str) -> dict | None:
+        with self._engine.begin() as conn:
+            row = conn.execute(
+                sa.text(
+                    "SELECT connection_id, engine, host, port, username, encrypted_password, created_at "
+                    "FROM normalization_connections WHERE connection_id = :cid"
+                ),
+                {"cid": connection_id},
+            ).first()
+        return _connection_row_to_dict(row) if row is not None else None
+
+    def list_connections(self) -> list[dict]:
+        with self._engine.begin() as conn:
+            rows = conn.execute(
+                sa.text(
+                    "SELECT connection_id, engine, host, port, username, encrypted_password, created_at "
+                    "FROM normalization_connections ORDER BY created_at"
+                )
+            ).all()
+        return [_connection_row_to_dict(row) for row in rows]
+
+    def delete_connection(self, connection_id: str) -> None:
+        with self._engine.begin() as conn:
+            conn.execute(
+                sa.text("DELETE FROM normalization_connections WHERE connection_id = :cid"),
+                {"cid": connection_id},
+            )
+
+    # --- DB-clone-and-normalize: clone jobs (decisions #4, #5, #10) ---
+    # Same single-JSONB-status-blob shape as normalization_runs — status,
+    # source/dest connection_id+database, per-table field_configs, and
+    # progress counters (current table, last committed source_row_key per
+    # table) all live in `data`.
+
+    def create_clone_job(self, job_id: str, data: dict) -> None:
+        with self._engine.begin() as conn:
+            conn.execute(
+                sa.text("INSERT INTO normalization_clone_jobs (job_id, data) VALUES (:jid, :data)"),
+                {"jid": job_id, "data": json.dumps(data)},
+            )
+
+    def save_clone_job(self, job_id: str, data: dict) -> None:
+        with self._engine.begin() as conn:
+            conn.execute(
+                sa.text(
+                    "UPDATE normalization_clone_jobs SET data = :data WHERE job_id = :jid"
+                ),
+                {"jid": job_id, "data": json.dumps(data)},
+            )
+
+    def get_clone_job(self, job_id: str) -> dict | None:
+        with self._engine.begin() as conn:
+            row = conn.execute(
+                sa.text("SELECT data FROM normalization_clone_jobs WHERE job_id = :jid"),
+                {"jid": job_id},
+            ).first()
+        return json.loads(row[0]) if row is not None else None
+
+    def list_clone_jobs(self) -> list[dict]:
+        with self._engine.begin() as conn:
+            rows = conn.execute(sa.text("SELECT data FROM normalization_clone_jobs")).all()
+        return [json.loads(r[0]) for r in rows]
+
+    def claim_clone_job(self, job_id: str) -> bool:
+        """Atomic SCHEMA_READY|RUNNING -> RUNNING transition, same
+        conditional-UPDATE-with-rowcount pattern as `claim_run_for_execution`
+        — RUNNING is an allowed source state too (not just SCHEMA_READY)
+        so re-clicking start on an orphaned (crashed) job can resume it,
+        per decision #10; the executor's own re-stream-and-skip logic is
+        what makes that resume safe, not this claim."""
+        with self._engine.begin() as conn:
+            result = conn.execute(
+                sa.text(
+                    "UPDATE normalization_clone_jobs SET data = "
+                    "jsonb_set(data::jsonb, '{status}', '\"RUNNING\"')::text "
+                    "WHERE job_id = :jid AND (data::jsonb ->> 'status') IN ('SCHEMA_READY', 'RUNNING')"
+                ),
+                {"jid": job_id},
+            )
+        return result.rowcount > 0
+
+    def save_clone_job_errors(self, job_id: str, errors: Sequence[dict]) -> None:
+        """Chunked insert, mirroring `save_execution`'s row-per-value
+        writes — bounds peak memory the same way."""
+        for start in range(0, len(errors), _ROW_CHUNK_SIZE):
+            chunk = errors[start : start + _ROW_CHUNK_SIZE]
+            rows = [
+                {
+                    "jid": job_id,
+                    "idx": e["row_index"],
+                    "table": e["table_name"],
+                    "field": e["field"],
+                    "orig": e["original"],
+                    "err": e["error"],
+                }
+                for e in chunk
+            ]
+            with self._engine.begin() as conn:
+                conn.execute(
+                    sa.text(
+                        "INSERT INTO normalization_clone_job_errors "
+                        "(job_id, row_index, table_name, field, original, error) "
+                        "VALUES (:jid, :idx, :table, :field, :orig, :err) "
+                        "ON CONFLICT (job_id, row_index, table_name, field) DO NOTHING"
+                    ),
+                    rows,
+                )
+
+    def load_clone_job_errors_page(
+        self, job_id: str, *, limit: int, offset: int
+    ) -> list[dict]:
+        with self._engine.begin() as conn:
+            rows = conn.execute(
+                sa.text(
+                    "SELECT row_index, table_name, field, original, error "
+                    "FROM normalization_clone_job_errors WHERE job_id = :jid "
+                    "ORDER BY table_name, row_index LIMIT :limit OFFSET :offset"
+                ),
+                {"jid": job_id, "limit": limit, "offset": offset},
+            ).all()
+        return [
+            {
+                "row_index": row_index,
+                "table_name": table_name,
+                "field": field,
+                "original": original,
+                "error": error,
+            }
+            for row_index, table_name, field, original, error in rows
+        ]
+
+
+def _connection_row_to_dict(row: sa.Row) -> dict:
+    connection_id, engine, host, port, username, encrypted_password, created_at = row
+    return {
+        "connection_id": connection_id,
+        "engine": engine,
+        "host": host,
+        "port": port,
+        "username": username,
+        "encrypted_password": encrypted_password,
+        "created_at": created_at,
+    }
 
 
 def rehydrate_invariant_report(raw: dict) -> InvariantSampleReport:

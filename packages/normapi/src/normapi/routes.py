@@ -37,6 +37,7 @@ are all wired to real logic — no remaining 501 stubs on the §98 surface.
 
 from __future__ import annotations
 
+import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Body, Depends, HTTPException
@@ -54,14 +55,25 @@ from normanalysis import (
     suggest_profile,
     suggest_semantic_type,
 )
+from normapi import clone_executor, secrets
+from normapi.clone_executor import CloneJobNotFoundError, CloneJobStateError
 from normapi.dependencies import (
+    get_cache,
+    get_connections,
     get_custom_dictionary_store,
     get_dictionary_loader,
     get_dispatcher,
     get_store,
 )
+from normapi.pg_persistence import PgPersistence
 from normapi.scaffold_profile import SCAFFOLD_PROFILE
 from normapi.schemas import (
+    CloneJobCreateRequest,
+    CloneJobCreateResponse,
+    ColumnInfoResponse,
+    Connection,
+    ConnectionCreateRequest,
+    DatabaseDiscoveryRequest,
     DetectTypeRequest,
     DictionaryCreateRequest,
     DictionaryRollbackRequest,
@@ -84,6 +96,7 @@ from normapi.store import (
     RunTooLargeError,
 )
 from normcore import (
+    CloneJobStatus,
     Dispatcher,
     FieldSemanticType,
     NormalizationContext,
@@ -101,6 +114,7 @@ from normdict import (
     DictionaryLoader,
     DictionaryNotFoundError,
 )
+from normexec.cache import NormalizationCache
 
 router = APIRouter(prefix="/normalization")
 
@@ -733,3 +747,248 @@ def get_quality(store: Annotated[InMemoryStore, Depends(get_store)]) -> dict[str
             run_batches.append((execution.semantic_type, execution.results))
     report = compute_quality_report(run_batches)
     return report.model_dump(mode="json")
+
+
+# --- DB-clone-and-normalize: saved connections ------------------------------
+# Server-level credentials (decisions #2, #13); the password is encrypted
+# at rest (decision #12) and never returned in a response.
+
+
+@router.post("/connections", response_model=Connection, status_code=201)
+def create_connection(
+    body: ConnectionCreateRequest,
+    connections: Annotated[PgPersistence, Depends(get_connections)],
+) -> Connection:
+    connection_id = str(uuid.uuid4())
+    row = connections.save_connection(
+        connection_id,
+        engine=body.engine,
+        host=body.host,
+        port=body.port,
+        username=body.username,
+        password=body.password,
+    )
+    return Connection(**{k: v for k, v in row.items() if k != "encrypted_password"})
+
+
+@router.get("/connections", response_model=list[Connection])
+def list_connections(
+    connections: Annotated[PgPersistence, Depends(get_connections)],
+) -> list[Connection]:
+    return [
+        Connection(**{k: v for k, v in row.items() if k != "encrypted_password"})
+        for row in connections.list_connections()
+    ]
+
+
+@router.delete("/connections/{connection_id}", status_code=204)
+def delete_connection(
+    connection_id: str,
+    connections: Annotated[PgPersistence, Depends(get_connections)],
+) -> None:
+    connections.delete_connection(connection_id)
+
+
+def _resolve_connection(
+    connection_id: str,
+    body: DatabaseDiscoveryRequest | None,
+    connections: PgPersistence,
+) -> dict:
+    """Unifies the "saved connection" and "not-yet-saved, ad-hoc inline
+    credentials" cases (§4) behind one shape — both end up as a dict with
+    an `encrypted_password` field, so every downstream connector-builder
+    (`clone_executor.build_source_connector`) only has one code path to
+    handle regardless of which case produced it."""
+    if connection_id == "adhoc":
+        if body is None or not (body.engine and body.host and body.port and body.username and body.password):
+            raise HTTPException(
+                status_code=422,
+                detail="adhoc discovery requires engine, host, port, username, and password",
+            )
+        return {
+            "connection_id": "adhoc",
+            "engine": body.engine,
+            "host": body.host,
+            "port": body.port,
+            "username": body.username,
+            "encrypted_password": secrets.encrypt(body.password),
+        }
+    conn = connections.get_connection(connection_id)
+    if conn is None:
+        raise HTTPException(status_code=404, detail=f"No such connection: {connection_id}")
+    return conn
+
+
+# --- DB-clone-and-normalize: discovery ---------------------------------------
+# Decision #1: the app queries the server itself for its list of
+# databases/tables/columns — never a network port scan.
+
+
+@router.post("/connections/{connection_id}/databases", response_model=list[str])
+def discover_databases(
+    connection_id: str,
+    connections: Annotated[PgPersistence, Depends(get_connections)],
+    body: Annotated[DatabaseDiscoveryRequest | None, Body()] = None,
+) -> list[str]:
+    conn = _resolve_connection(connection_id, body, connections)
+    source = clone_executor.build_source_connector(conn, clone_executor.bootstrap_database(conn["engine"]))
+    try:
+        return list(source.list_databases())
+    finally:
+        source.close()
+
+
+@router.get("/connections/{connection_id}/databases/{database}/tables", response_model=list[str])
+def discover_tables(
+    connection_id: str,
+    database: str,
+    connections: Annotated[PgPersistence, Depends(get_connections)],
+) -> list[str]:
+    conn = _resolve_connection(connection_id, None, connections)
+    source = clone_executor.build_source_connector(conn, database)
+    try:
+        return list(source.list_tables())
+    finally:
+        source.close()
+
+
+_MAX_COLUMNS_PAGE_SIZE = 1000
+
+
+@router.get(
+    "/connections/{connection_id}/databases/{database}/tables/{table}/columns",
+    response_model=list[ColumnInfoResponse],
+)
+def discover_columns(
+    connection_id: str,
+    database: str,
+    table: str,
+    connections: Annotated[PgPersistence, Depends(get_connections)],
+    limit: int = 100,
+    offset: int = 0,
+) -> list[ColumnInfoResponse]:
+    """Paginated — same query-param names and capped page size as
+    `GET /runs/{run_id}/values`."""
+    limit = max(1, min(limit, _MAX_COLUMNS_PAGE_SIZE))
+    offset = max(0, offset)
+    conn = _resolve_connection(connection_id, None, connections)
+    source = clone_executor.build_source_connector(conn, database)
+    try:
+        columns = source.get_columns(table)
+    finally:
+        source.close()
+    page = columns[offset : offset + limit]
+    return [ColumnInfoResponse(name=c.name, native_type=c.native_type) for c in page]
+
+
+# --- DB-clone-and-normalize: clone jobs --------------------------------------
+
+
+@router.post("/clone-jobs", response_model=CloneJobCreateResponse, status_code=201)
+def create_clone_job(
+    body: CloneJobCreateRequest,
+    connections: Annotated[PgPersistence, Depends(get_connections)],
+) -> CloneJobCreateResponse:
+    try:
+        job = clone_executor.create_clone_job(
+            connections,
+            request={
+                "source_connection_id": body.source_connection_id,
+                "source_database": body.source_database,
+                "destination_connection_id": body.destination_connection_id,
+                "destination_database": body.destination_database,
+                "field_configs": {
+                    table: {column: (t.value if t is not None else None) for column, t in cols.items()}
+                    for table, cols in body.field_configs.items()
+                },
+            },
+        )
+    except CloneJobNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return CloneJobCreateResponse(
+        job_id=job["job_id"],
+        status=CloneJobStatus(job["status"]),
+        create_database_sql=clone_executor.create_database_sql(body.destination_database),
+    )
+
+
+@router.get("/clone-jobs/{job_id}")
+def get_clone_job(
+    job_id: str,
+    connections: Annotated[PgPersistence, Depends(get_connections)],
+) -> dict:
+    job = connections.get_clone_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"No such clone job: {job_id}")
+    return job
+
+
+@router.post("/clone-jobs/{job_id}/verify-database")
+def verify_clone_job_database(
+    job_id: str,
+    connections: Annotated[PgPersistence, Depends(get_connections)],
+) -> dict:
+    """Decision #6: verifies the user has run the `CREATE DATABASE`
+    command shown by `POST /clone-jobs`, then runs Phase 1 DDL (schema
+    clone, every table completely empty) for every table."""
+    try:
+        return clone_executor.verify_and_create_schema(connections, job_id)
+    except CloneJobNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=f"No such clone job: {job_id}") from exc
+    except CloneJobStateError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post("/clone-jobs/{job_id}/start")
+def start_clone_job(
+    job_id: str,
+    connections: Annotated[PgPersistence, Depends(get_connections)],
+    dispatcher: Annotated[Dispatcher, Depends(get_dispatcher)],
+    cache: Annotated[NormalizationCache, Depends(get_cache)],
+) -> dict:
+    """Phase 2 (decision #4: background, pollable — not a blocking
+    request). Also the resume entry point (decision #10): calling this
+    again on an orphaned RUNNING job re-streams and skips already-
+    committed rows rather than redoing the whole table."""
+    started = clone_executor.start_phase2(connections, dispatcher, cache, job_id)
+    if not started:
+        job = connections.get_clone_job(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail=f"No such clone job: {job_id}")
+        raise HTTPException(
+            status_code=409,
+            detail=f"Clone job {job_id} is {job['status']}, expected SCHEMA_READY or RUNNING",
+        )
+    return connections.get_clone_job(job_id)
+
+
+_MAX_CLONE_ERRORS_PAGE_SIZE = 1000
+
+
+@router.get("/clone-jobs/{job_id}/errors", response_model=list[NormalizationError])
+def get_clone_job_errors(
+    job_id: str,
+    connections: Annotated[PgPersistence, Depends(get_connections)],
+    limit: int = 100,
+    offset: int = 0,
+) -> list[NormalizationError]:
+    """Decision #9: a complete, paginated error/warning report. Same
+    `NormalizationError`-shaped response as `GET /runs/{run_id}/errors`."""
+    limit = max(1, min(limit, _MAX_CLONE_ERRORS_PAGE_SIZE))
+    offset = max(0, offset)
+    if connections.get_clone_job(job_id) is None:
+        raise HTTPException(status_code=404, detail=f"No such clone job: {job_id}")
+    rows = connections.load_clone_job_errors_page(job_id, limit=limit, offset=offset)
+    return [
+        NormalizationError(
+            field=f"{row['table_name']}.{row['field']}",
+            record_ref=str(row["row_index"]),
+            operation="clone-normalize",
+            error=row["error"],
+            severity="error",
+            safe_preview=safe_preview(row["original"]) if row["original"] is not None else "null",
+            rule_id=None,
+            library_version=None,
+        )
+        for row in rows
+    ]

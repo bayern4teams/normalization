@@ -183,6 +183,11 @@ def create_app(
     app.state.dictionary_loader = loader
     app.state.custom_dictionary_store = custom_store
     app.state.cache = cache
+    # DB-clone-and-normalize feature (saved connections + clone jobs) —
+    # requires durable storage (crash-resumability, decision #10), so it's
+    # only available when NORM_PG_DSN is configured; normapi.dependencies.
+    # get_connections turns None here into a clean 503, not a crash.
+    app.state.connections = persistence
 
     app.include_router(router)
 
