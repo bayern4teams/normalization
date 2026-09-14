@@ -133,6 +133,19 @@ class RunStatus(StrEnum):
     PARTIAL = "PARTIAL"
 
 
+class CloneJobStatus(StrEnum):
+    """DB-clone-and-normalize job lifecycle (normio wiring plan) — distinct
+    from RunStatus: a clone job has an extra "waiting on the user to run
+    CREATE DATABASE by hand" phase before Phase 1 DDL, since the app never
+    issues CREATE DATABASE itself (decision #6)."""
+
+    PENDING_DB_CREATE = "PENDING_DB_CREATE"
+    SCHEMA_READY = "SCHEMA_READY"
+    RUNNING = "RUNNING"
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
+
+
 class OnErrorAction(StrEnum):
     """Per-step error handling within a pipeline (distinct from the
     field-level ErrorPolicy, which governs the field's overall outcome —

@@ -15,6 +15,7 @@ from normcore.contract import (
 )
 from normcore.dispatch import Dispatcher, NoNormalizerRegisteredError, NormalizerRegistry
 from normcore.enums import (
+    CloneJobStatus,
     ErrorPolicy,
     FieldSemanticType,
     MissingKind,
@@ -56,6 +57,7 @@ from normcore.unicode_policy import (
 __all__ = [
     "DEFAULT_FORM",
     "NORMALIZED_VALUE_ARROW_SCHEMA",
+    "CloneJobStatus",
     "ComponentVersionInfo",
     "Dispatcher",
     "ErrorPolicy",
