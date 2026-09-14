@@ -27,16 +27,28 @@ from pymongo import MongoClient
 from pymongo.errors import OperationFailure
 from pymysql.err import OperationalError
 
-POSTGRES_DSN = os.environ.get(
-    "TEST_PG_DSN", "postgresql://readonly_user:readonly_pass@localhost:5434/source_demo"
-)
-MYSQL_DSN = os.environ.get(
-    "TEST_MYSQL_DSN", "mysql://readonly_user:readonly_pass@localhost:3307/source_demo"
-)
-MONGO_URI = os.environ.get(
-    "TEST_MONGO_URI", "mongodb://readonly_user:readonly_pass@localhost:27018/source_demo"
-)
+# Host/port pairs, not a single hardcoded DSN/port per connector — same
+# TEST_*_HOST/TEST_*_PORT pattern as tests/integration/test_clone_pipeline.py,
+# so this file passes identically whether pytest runs from the host
+# (default: the host-mapped compose.yaml ports) or from a container on the
+# `normalization_default` compose network (override to the service name +
+# the container's own internal port, e.g. TEST_CLICKHOUSE_HOST=demo-clickhouse
+# TEST_CLICKHOUSE_PORT=8123). Previously ClickHouse's port and MySQL's raw
+# (non-connector) pymysql.connect() host/port were hardcoded literals —
+# real gaps that only ever surfaced as a failure when run from anywhere but
+# the host.
+PG_HOST = os.environ.get("TEST_PG_HOST", "localhost")
+PG_PORT = int(os.environ.get("TEST_PG_PORT", "5434"))
+MYSQL_HOST = os.environ.get("TEST_MYSQL_HOST", "localhost")
+MYSQL_PORT = int(os.environ.get("TEST_MYSQL_PORT", "3307"))
+MONGO_HOST = os.environ.get("TEST_MONGO_HOST", "localhost")
+MONGO_PORT = int(os.environ.get("TEST_MONGO_PORT", "27018"))
 CLICKHOUSE_HOST = os.environ.get("TEST_CLICKHOUSE_HOST", "localhost")
+CLICKHOUSE_PORT = int(os.environ.get("TEST_CLICKHOUSE_PORT", "8124"))
+
+POSTGRES_DSN = f"postgresql://readonly_user:readonly_pass@{PG_HOST}:{PG_PORT}/source_demo"
+MYSQL_DSN = f"mysql://readonly_user:readonly_pass@{MYSQL_HOST}:{MYSQL_PORT}/source_demo"
+MONGO_URI = f"mongodb://readonly_user:readonly_pass@{MONGO_HOST}:{MONGO_PORT}/source_demo"
 
 
 @pytest.mark.integration
@@ -84,8 +96,8 @@ def test_mysql_read_succeeds_and_write_is_rejected() -> None:
         connector.close()
 
     conn = pymysql.connect(
-        host="localhost",
-        port=3307,
+        host=MYSQL_HOST,
+        port=MYSQL_PORT,
         user="readonly_user",
         password="readonly_pass",
         database="source_demo",
@@ -125,7 +137,7 @@ def test_clickhouse_read_succeeds_and_write_is_rejected() -> None:
     connector = ClickHouseConnector(
         "demo_clickhouse",
         CLICKHOUSE_HOST,
-        port=8124,
+        port=CLICKHOUSE_PORT,
         username="readonly_user",
         password="readonly_pass",
         database="default",
@@ -141,7 +153,7 @@ def test_clickhouse_read_succeeds_and_write_is_rejected() -> None:
         connector.close()
 
     client = clickhouse_connect.get_client(
-        host=CLICKHOUSE_HOST, port=8124, username="readonly_user", password="readonly_pass"
+        host=CLICKHOUSE_HOST, port=CLICKHOUSE_PORT, username="readonly_user", password="readonly_pass"
     )
     try:
         with pytest.raises(DatabaseError):
