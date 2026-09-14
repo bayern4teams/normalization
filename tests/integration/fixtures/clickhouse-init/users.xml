@@ -4,6 +4,11 @@
   non-SELECT query for connections using this profile — enforced
   server-side, not by our connector code). Mounted at
   /etc/clickhouse-server/users.d/ so it merges into the default config.
+
+  `writable_user` is the DB-clone-and-normalize feature's clone
+  DESTINATION credential (decision #2 — never the same credential as
+  `readonly_user` above): the plain `default` profile, no readonly
+  restriction, so it can CREATE DATABASE/TABLE and INSERT.
 -->
 <clickhouse>
     <profiles>
@@ -20,5 +25,13 @@
             <profile>readonly_profile</profile>
             <quota>default</quota>
         </readonly_user>
+        <writable_user>
+            <password>writable_pass</password>
+            <networks>
+                <ip>::/0</ip>
+            </networks>
+            <profile>default</profile>
+            <quota>default</quota>
+        </writable_user>
     </users>
 </clickhouse>
