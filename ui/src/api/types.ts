@@ -282,6 +282,52 @@ export interface ProfileSuggestion {
   real_steps: string[];
 }
 
+// --- DB-clone-and-normalize (normio wiring) ---------------------------------
+
+export type ConnectionEngine = "postgres" | "clickhouse";
+
+export interface Connection {
+  connection_id: string;
+  engine: ConnectionEngine;
+  host: string;
+  port: number;
+  username: string;
+  created_at: string;
+}
+
+export interface ColumnInfo {
+  name: string;
+  native_type: string;
+}
+
+export type CloneJobStatus = "PENDING_DB_CREATE" | "SCHEMA_READY" | "RUNNING" | "COMPLETED" | "FAILED";
+
+export interface CloneJobProgress {
+  current_table: string | null;
+  tables_completed: string[];
+  rows_done: number;
+  checkpoints: Record<string, number>;
+}
+
+export interface CloneJob {
+  job_id: string;
+  status: CloneJobStatus;
+  source_connection_id: string;
+  source_database: string;
+  destination_connection_id: string;
+  destination_database: string;
+  tables: string[];
+  field_configs: Record<string, Record<string, FieldSemanticType | null>>;
+  progress: CloneJobProgress;
+  error: string | null;
+}
+
+export interface CloneJobCreateResponse {
+  job_id: string;
+  status: CloneJobStatus;
+  create_database_sql: string;
+}
+
 export const FIELD_SEMANTIC_TYPES: FieldSemanticType[] = [
   "FREE_TEXT",
   "PERSON_NAME",

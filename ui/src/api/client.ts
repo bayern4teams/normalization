@@ -5,7 +5,12 @@
 
 import type {
   AbComparisonReport,
+  CloneJob,
+  CloneJobCreateResponse,
   CollisionGroup,
+  ColumnInfo,
+  Connection,
+  ConnectionEngine,
   DictionarySummary,
   ErrorPolicy,
   FieldNormalizationConfig,
@@ -294,4 +299,75 @@ export function rollbackDictionary(
 export function deleteDictionary(dictionaryId: string, by: string): Promise<void> {
   const params = new URLSearchParams({ by });
   return request(`/dictionaries/${dictionaryId}?${params.toString()}`, { method: "DELETE" });
+}
+
+// --- DB-clone-and-normalize: saved connections -------------------------------
+
+export function listConnections(): Promise<Connection[]> {
+  return request("/connections");
+}
+
+export function createConnection(body: {
+  engine: ConnectionEngine;
+  host: string;
+  port: number;
+  username: string;
+  password: string;
+}): Promise<Connection> {
+  return request("/connections", { method: "POST", body: JSON.stringify(body) });
+}
+
+export function deleteConnection(connectionId: string): Promise<void> {
+  return request(`/connections/${connectionId}`, { method: "DELETE" });
+}
+
+// --- DB-clone-and-normalize: discovery ---------------------------------------
+
+export function listDatabases(connectionId: string): Promise<string[]> {
+  return request(`/connections/${connectionId}/databases`, { method: "POST" });
+}
+
+export function listTables(connectionId: string, database: string): Promise<string[]> {
+  return request(`/connections/${connectionId}/databases/${database}/tables`);
+}
+
+export function listColumns(
+  connectionId: string,
+  database: string,
+  table: string,
+): Promise<ColumnInfo[]> {
+  return request(`/connections/${connectionId}/databases/${database}/tables/${table}/columns?limit=1000`);
+}
+
+// --- DB-clone-and-normalize: clone jobs --------------------------------------
+
+export function createCloneJob(body: {
+  source_connection_id: string;
+  source_database: string;
+  destination_connection_id: string;
+  destination_database: string;
+  field_configs: Record<string, Record<string, FieldSemanticType | null>>;
+}): Promise<CloneJobCreateResponse> {
+  return request("/clone-jobs", { method: "POST", body: JSON.stringify(body) });
+}
+
+export function verifyCloneJobDatabase(jobId: string): Promise<CloneJob> {
+  return request(`/clone-jobs/${jobId}/verify-database`, { method: "POST" });
+}
+
+export function startCloneJob(jobId: string): Promise<CloneJob> {
+  return request(`/clone-jobs/${jobId}/start`, { method: "POST" });
+}
+
+export function getCloneJob(jobId: string): Promise<CloneJob> {
+  return request(`/clone-jobs/${jobId}`);
+}
+
+export function getCloneJobErrors(
+  jobId: string,
+  limit = 50,
+  offset = 0,
+): Promise<NormalizationError[]> {
+  const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+  return request(`/clone-jobs/${jobId}/errors?${params.toString()}`);
 }

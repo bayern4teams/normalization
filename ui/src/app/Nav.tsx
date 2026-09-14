@@ -13,6 +13,8 @@ const NAV_ITEMS: { to: string; label: string }[] = [
   { to: "/collisions", label: "Collisions" },
   { to: "/dictionaries", label: "Dictionaries" },
   { to: "/quality", label: "Quality" },
+  { to: "/connections", label: "Connections" },
+  { to: "/clone", label: "Clone" },
   { to: "/settings", label: "Settings" },
 ];
 

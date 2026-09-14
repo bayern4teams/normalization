@@ -296,6 +296,15 @@ button:disabled {
   margin: 12px 0;
 }
 
+.code-block {
+  font-family: monospace;
+  background: var(--bg-alt);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 12px;
+  overflow-x: auto;
+}
+
 .kv-list {
   display: grid;
   grid-template-columns: max-content 1fr;

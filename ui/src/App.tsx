@@ -3,8 +3,11 @@ import { useMemo } from "react";
 import { HashRouter, Route, Routes } from "react-router-dom";
 import { Layout } from "./app/Layout";
 import { ModeProvider } from "./app/ModeContext";
+import { CloneJobDetailPage } from "./pages/CloneJobDetailPage";
+import { CloneJobNewPage } from "./pages/CloneJobNewPage";
 import { CollisionsPage } from "./pages/CollisionsPage";
 import { ComparisonPage } from "./pages/ComparisonPage";
+import { ConnectionsPage } from "./pages/ConnectionsPage";
 import { DictionariesPage } from "./pages/DictionariesPage";
 import { FieldDetailPage } from "./pages/FieldDetailPage";
 import { FieldsPage } from "./pages/FieldsPage";
@@ -42,6 +45,9 @@ export default function App() {
               <Route path="compare" element={<ComparisonPage />} />
               <Route path="dictionaries" element={<DictionariesPage />} />
               <Route path="quality" element={<QualityPage />} />
+              <Route path="connections" element={<ConnectionsPage />} />
+              <Route path="clone" element={<CloneJobNewPage />} />
+              <Route path="clone/:jobId" element={<CloneJobDetailPage />} />
               <Route path="settings" element={<SettingsPage />} />
             </Route>
           </Routes>
