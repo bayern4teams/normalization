@@ -1,7 +1,10 @@
 # Dependency Inventory
 
 Status: living document, regenerated/reviewed at every milestone gate.
-Last updated: M0 (2026-08-17).
+Last updated: M0 (2026-08-17); `cryptography` added 2026-09-15 for the
+DB-clone-and-normalize feature (see `docs/adr/ADR-017-clone-normalize-engine-scope.md`) —
+the rest of this table was not re-audited against the current `uv.lock`
+for this pass.
 
 Satisfies `Source.txt` §124. This is the human-readable companion to the
 machine-enforced `scripts/license_policy.toml` (checked by
@@ -50,6 +53,7 @@ bug to fix immediately.
 | fastapi | >=0.115,<1 | MIT | PyPI | API layer | Low | — |
 | sqlalchemy | >=2.0,<3 | MIT | PyPI | Metadata store ORM, connector reflection | Low | — |
 | httpx | >=0.27,<1 | BSD-3-Clause | PyPI | libpostal sidecar client | Low | — |
+| cryptography | >=42,<44 | Apache-2.0 OR BSD-3-Clause (dual) | [github.com/pyca/cryptography](https://github.com/pyca/cryptography) | `Fernet` symmetric encryption for saved DB-clone-and-normalize connection passwords at rest | Low — widely-used, actively maintained; ships prebuilt wheels for all target platforms | New dependency, added for the DB-clone-and-normalize feature (ADR-017); nothing in this repo did encryption before it |
 
 ## Rejected dependencies (do not (re-)add without a superseding ADR)
 

@@ -13,7 +13,9 @@ key discovery, entity extraction, canonical dataset construction, or Splink.
 
 ## Status
 
-Milestone **M0 — Research, evaluation, and decisions** in progress. See:
+All 8 gated milestones (M0–M8) of the original `Source.txt` implementation
+plan are complete — engine, dictionaries, batch execution, analysis, API,
+and UI. See:
 
 - [`docs/normalization-architecture.md`](docs/normalization-architecture.md) — system design
 - [`docs/normalization-tool-evaluation.md`](docs/normalization-tool-evaluation.md) — library evaluation matrix
@@ -25,6 +27,21 @@ Milestone **M0 — Research, evaluation, and decisions** in progress. See:
 The full implementation plan (8 gated milestones, 18 phases) lives in the planning
 document that produced this repository; `docs/traceability-matrix.md` is the
 canonical live mapping going forward.
+
+### DB-clone-and-normalize
+
+A second, separately-scoped feature (not part of `Source.txt`, not in the
+milestone/traceability system above): point the app at a real origin
+database — Postgres or ClickHouse, strictly read-only, never modified —
+and have it build a schema-cloned, normalized-in-place destination next
+to it on the same server, driven from the UI (`Connections`/`Clone` nav
+items), as a background/pollable job with crash-resume. No admin/`CREATE
+DATABASE` rights are required by the app itself. See
+[`docs/adr/ADR-017-clone-normalize-engine-scope.md`](docs/adr/ADR-017-clone-normalize-engine-scope.md)
+(why MySQL/Mongo/File are documentation-only for now) and
+[`docs/verification/clone-normalize-verification-pack.md`](docs/verification/clone-normalize-verification-pack.md).
+Requires `NORM_SECRET_KEY` (see `.env.example`) to encrypt saved
+connection passwords at rest.
 
 ## Development
 

@@ -1,6 +1,9 @@
 # Normalization Engine Architecture
 
-Status: living document. Last updated: M0 (2026-08-17).
+Status: living document. Last updated: M0 (2026-08-17); §13
+(DB-clone-and-normalize) added 2026-09-15 — §§1-12 still describe the
+`Source.txt`-scoped M0-era system shape and were not re-audited for this
+pass (that content is unaffected by §13's addition).
 
 Satisfies `Source.txt` §126. This is the canonical description of the
 system's shape; per-domain rationale lives in `docs/adr/`, and the
@@ -75,7 +78,11 @@ normalization/
 │   ├── normalizers/    the Normalizer adapters (§99)
 │   ├── normdict/       versioned dictionary subsystem (§58, §59)
 │   ├── normexec/       Polars/DuckDB batch engine, distinct-value planner, cache
-│   ├── normio/         read-only source connectors + sidecar store writer
+│   ├── normio/         read-only source connectors + sidecar store writer;
+│   │                   also write-capable destination connectors for the
+│   │                   DB-clone-and-normalize feature (§13) — a
+│   │                   deliberately separate class family, not part of
+│   │                   the read-only `SourceConnector` Protocol
 │   ├── normanalysis/   profiling, impact, collision, reversibility, A/B
 │   ├── normapi/        FastAPI application (§98)
 │   └── normcli/        batch/ops entrypoints, gate/pack generation
@@ -143,10 +150,17 @@ correspondingly-named ADR (`docs/adr/ADR-001` through `ADR-016`).
 
 ## 7. Storage strategy (§8, §105, §106) — see ADR-013
 
-Sources are read-only, always — no connector exposes a write path at the
-interface level. Output is a Parquet + DuckDB sidecar store, one Arrow
-struct column per normalized field, keyed to `source_row_key`. Metadata
-(profiles, runs, dictionaries, collisions, sign-offs) lives in PostgreSQL.
+Sources are read-only, always — the `SourceConnector` Protocol exposes no
+write path at the interface level. Output is a Parquet + DuckDB sidecar
+store, one Arrow struct column per normalized field, keyed to
+`source_row_key`. Metadata (profiles, runs, dictionaries, collisions,
+sign-offs) lives in PostgreSQL.
+
+(§13's DB-clone-and-normalize feature introduces a second, deliberately
+separate write-capable connector family for clone *destinations* — this
+does not weaken the guarantee above: an origin is always addressed
+through `SourceConnector`, never through a destination writer, and origin
+credentials are never reused for a destination.)
 
 ## 8. Reproducibility: the environment fingerprint (`env_id`) — see ADR-014
 
@@ -194,3 +208,52 @@ Traces store `blake3` hashes plus character-class masks, not raw values, by
 default. Raw previews require an explicit, role-gated, audited PII-visibility
 grant and are never written to logs, metrics, or default trace output. This
 is enforced by a dedicated PII-leak test at every gate from M1 onward.
+
+## 13. DB-clone-and-normalize (post-M8, not part of `Source.txt`)
+
+A separately-scoped feature wiring the previously-unwired `normio`
+package (confirmed zero `IMPORTS` edges into `normapi` before this work)
+into a real capability: point the app at a real origin database, clone
+its schema to a new destination on the same server, then
+stream+normalize+populate it. Full decision record: the approved plan's
+"Decisions already made" and `docs/adr/ADR-017-clone-normalize-engine-scope.md`.
+Live progress + verification evidence: `TODO.md` and
+`docs/verification/clone-normalize-verification-pack.md`.
+
+Scope: **Postgres and ClickHouse only**, both as origin and destination,
+always the same engine. MySQL/Mongo/File are documentation-only
+(ADR-017) — deferred, not built, until explicitly approved to continue.
+
+Shape, in brief:
+
+- **Origin is always read-only** — addressed via the existing
+  `SourceConnector`/`PostgresConnector`/`ClickHouseConnector`, never a
+  destination writer, and never the same credential as the destination.
+- **Destination writers** (`normio.connectors.postgres_destination.PostgresDestination`,
+  `.clickhouse_destination.ClickHouseDestination`) are a new, deliberately
+  separate class family — `database_exists`, `create_table` (empty-schema
+  DDL, replicating the origin's primary key on Postgres / `ORDER BY`+
+  engine on ClickHouse), `bulk_insert` (chunked, checkpoint-aligned).
+- **Two-phase execution**: Phase 1 (`normapi.clone_executor.verify_and_create_schema`)
+  creates every table in the origin database completely empty, only
+  after the app has verified the user ran `CREATE DATABASE` by hand — the
+  app never issues it itself, and never requires admin rights. Phase 2
+  (`start_phase2`) streams+normalizes+populates on a background thread,
+  reusing the existing `DistinctValuePlanner`/`Dispatcher`/cache — no
+  second normalization call path.
+- **Failure handling**: a failed value keeps its original raw value in
+  the destination cell (never blank, never skipped — `ErrorPolicy.RETURN_ORIGINAL`,
+  no new fallback logic needed), with a full-detail, paginated error
+  report (`normalization_clone_job_errors`, `GET /clone-jobs/{id}/errors`).
+- **Resumable**: a crashed/restarted job resumes from its last committed
+  `source_row_key` checkpoint rather than redoing a whole table — proven
+  live against a real 20,000-row table and a genuine `docker compose
+  restart api` mid-run (see the verification pack's §3.6).
+- **Credentials at rest**: encrypted via `normapi.secrets` (Fernet,
+  `NORM_SECRET_KEY`), decrypted only in memory at connect-time.
+
+New Postgres tables (`normapi.pg_persistence`, same single-JSONB-blob
+convention as `normalization_runs`): `normalization_connections`,
+`normalization_clone_jobs`, `normalization_clone_job_errors`. New UI
+pages: `ConnectionsPage`, `CloneJobNewPage`, `CloneJobDetailPage` (nav:
+Connections, Clone).
