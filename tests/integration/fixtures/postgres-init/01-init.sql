@@ -37,13 +37,19 @@ CREATE ROLE writable_user WITH LOGIN PASSWORD 'writable_pass' CREATEDB;
 -- this suite already assert on). One deliberately-invalid email exercises
 -- decision #8 (fallback-to-original + a recorded error), one valid email
 -- exercises real normalization producing a real destination-side diff.
+-- `founded` (text, deliberately not a real date on one row) reproduces a
+-- real bug found running this feature against messy real-world data: a
+-- failed DATE-configured value's fallback (decision #8) couldn't be
+-- inserted into a native DATE destination column, crashing the whole
+-- job — see SEMANTIC_TYPE_TO_PG_TYPE's docstring.
 CREATE TABLE IF NOT EXISTS clone_source (
     id SERIAL PRIMARY KEY,
-    email TEXT
+    email TEXT,
+    founded TEXT
 );
 
-INSERT INTO clone_source (email) VALUES
-    ('Valid.User@EXAMPLE.com'),
-    ('not-an-email');
+INSERT INTO clone_source (email, founded) VALUES
+    ('Valid.User@EXAMPLE.com', '1989-12-11'),
+    ('not-an-email', 'd1989-12-11');
 
 GRANT SELECT ON clone_source TO readonly_user;

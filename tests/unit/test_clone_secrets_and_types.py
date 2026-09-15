@@ -60,3 +60,23 @@ def test_every_semantic_type_has_a_clickhouse_type() -> None:
     missing = [t for t in FieldSemanticType if t.value not in SEMANTIC_TYPE_TO_CH_TYPE]
     assert not missing, f"Missing ClickHouse type mapping for: {missing}"
     assert PASSTHROUGH_CH_TYPE
+
+
+@pytest.mark.unit
+def test_every_configured_column_type_is_text_compatible() -> None:
+    """Regression for a real bug found running this feature against messy
+    real-world data: a failed value's ORIGINAL raw string (decision #8's
+    fallback) must always be insertable into a configured column's
+    destination type — and there is no per-row column typing in SQL, so
+    the type is fixed at CREATE TABLE time, before any row's success/
+    failure is known. A native DATE/NUMERIC/UUID/BOOLEAN column rejects a
+    raw fallback string that isn't already well-formed for that type
+    (e.g. a source "d1989-12-11" DateNormalizer correctly flags INVALID
+    and falls back to — verbatim — a value no DATE column accepts),
+    crashing the whole insert (and therefore the whole job, and even the
+    error-report row for that exact value, which never got written).
+    Every mapped type must therefore be text-compatible on both engines."""
+    non_text_pg = {t: v for t, v in SEMANTIC_TYPE_TO_PG_TYPE.items() if v != "TEXT"}
+    assert not non_text_pg, f"Non-text Postgres types would reject decision #8's fallback: {non_text_pg}"
+    non_text_ch = {t: v for t, v in SEMANTIC_TYPE_TO_CH_TYPE.items() if v != "String"}
+    assert not non_text_ch, f"Non-text ClickHouse types would reject decision #8's fallback: {non_text_ch}"

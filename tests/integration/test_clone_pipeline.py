@@ -30,6 +30,7 @@ import clickhouse_connect
 import psycopg
 import pytest
 from cryptography.fernet import Fernet
+from normalizers.date import DateNormalizer
 from normalizers.email import EmailNormalizer
 from normalizers.passthrough import PassthroughNormalizer
 from normapi import clone_executor
@@ -63,6 +64,7 @@ def _dispatcher() -> Dispatcher:
     registry = NormalizerRegistry()
     registry.register(PassthroughNormalizer())
     registry.register(EmailNormalizer())
+    registry.register(DateNormalizer())
     return Dispatcher(registry, env_id="test-clone-pipeline")
 
 
@@ -97,7 +99,7 @@ def test_postgres_clone_pipeline_ddl_population_errors_and_resume(persistence: P
             "source_database": "source_demo",
             "destination_connection_id": dest_conn["connection_id"],
             "destination_database": dest_database,
-            "field_configs": {"clone_source": {"email": "EMAIL"}},
+            "field_configs": {"clone_source": {"email": "EMAIL", "founded": "DATE"}},
         },
     )
     job_id = job["job_id"]
@@ -123,6 +125,11 @@ def test_postgres_clone_pipeline_ddl_population_errors_and_resume(persistence: P
         ).fetchall()
         columns = dict(rows)
         assert columns["email"] == "text"  # EMAIL semantic type -> TEXT (SEMANTIC_TYPE_TO_PG_TYPE)
+        # DATE semantic type ALSO -> text, deliberately, not a native `date`
+        # column: a failed value's raw fallback (decision #8) must always be
+        # insertable, and no native type guarantees that. Regression for a
+        # real bug (see SEMANTIC_TYPE_TO_PG_TYPE's docstring).
+        assert columns["founded"] == "text"
         pk_cols = conn.execute(
             "SELECT a.attname FROM pg_index i "
             "JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey) "
@@ -140,17 +147,25 @@ def test_postgres_clone_pipeline_ddl_population_errors_and_resume(persistence: P
     assert sorted(job["progress"]["tables_completed"]) == sorted(job["tables"])
 
     with psycopg.connect(dest_dsn) as conn:
-        rows = dict(conn.execute("SELECT id, email FROM clone_source ORDER BY id").fetchall())
-        assert rows[1] != "Valid.User@EXAMPLE.com"  # real normalization happened
-        assert rows[1].endswith("@example.com")
-        assert rows[2] == "not-an-email"  # decision #8: failed value falls back to original
+        rows = conn.execute("SELECT id, email, founded FROM clone_source ORDER BY id").fetchall()
+        by_id = {r[0]: (r[1], r[2]) for r in rows}
+        email1, founded1 = by_id[1]
+        assert email1 != "Valid.User@EXAMPLE.com"  # real normalization happened
+        assert email1.endswith("@example.com")
+        assert founded1 == "1989-12-11"  # valid date, normalized cleanly
+        email2, founded2 = by_id[2]
+        assert email2 == "not-an-email"  # decision #8: failed value falls back to original
+        assert founded2 == "d1989-12-11"  # same, for the DATE column — this used to crash the job
         assert conn.execute("SELECT count(*) FROM customers").fetchone()[0] == 3
 
     errors = persistence.load_clone_job_errors_page(job_id, limit=100, offset=0)
-    bad_value_errors = [e for e in errors if e["table_name"] == "clone_source" and e["field"] == "email"]
-    assert len(bad_value_errors) == 1
-    assert bad_value_errors[0]["original"] == "not-an-email"
-    assert bad_value_errors[0]["error"]
+    bad_value_errors = {
+        (e["field"], e["original"]): e["error"]
+        for e in errors
+        if e["table_name"] == "clone_source"
+    }
+    assert bad_value_errors.get(("email", "not-an-email"))
+    assert bad_value_errors.get(("founded", "d1989-12-11"))
 
     # Resume proof (decision #10): simulate a crash by resetting an
     # already-fully-completed job back to RUNNING, then invoke the

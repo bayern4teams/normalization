@@ -18,36 +18,38 @@ if TYPE_CHECKING:
 
     from normio.connector import ColumnInfo
 
-# FieldSemanticType -> Postgres column type. 24 semantic types x 2 engines
-# is a lookup table, not a reason to pull in a SQL-DDL-generation library.
-# ponytail: plain dict + string-built DDL, not a schema library — revisit
-# only if a 3rd engine's type rules stop fitting a dict.
-SEMANTIC_TYPE_TO_PG_TYPE: dict[str, str] = {
-    "PERSON_NAME": "TEXT",
-    "GIVEN_NAME": "TEXT",
-    "FAMILY_NAME": "TEXT",
-    "COMPANY_NAME": "TEXT",
-    "EMAIL": "TEXT",
-    "PHONE": "TEXT",
-    "ADDRESS": "TEXT",
-    "POSTCODE": "TEXT",
-    "COUNTRY": "TEXT",
-    "LANGUAGE": "TEXT",
-    "SCRIPT": "TEXT",
-    "DATE": "DATE",
-    "DATETIME": "TIMESTAMPTZ",
-    "IDENTIFIER": "TEXT",
-    "UUID": "UUID",
-    "TAX_ID": "TEXT",
-    "URL": "TEXT",
-    "NUMERIC": "NUMERIC",
-    "CURRENCY": "NUMERIC",
-    "QUANTITY": "NUMERIC",
-    "BOOLEAN": "BOOLEAN",
-    "FREE_TEXT": "TEXT",
-    "CODE": "TEXT",
-    "UNKNOWN": "TEXT",
-}
+# FieldSemanticType -> Postgres column type. Every value is TEXT —
+# deliberately, not an oversight. Found via a real e2e run against messy
+# real-world data: decision #8 requires a failed value's ORIGINAL raw
+# string to always land in the cell, and a column typed e.g. DATE/
+# NUMERIC/UUID/BOOLEAN rejects any raw string that isn't already
+# well-formed for that type at INSERT time — which happens for exactly
+# the malformed values decision #8 exists to handle (e.g. a source
+# "foundingdate" of "d1989-12-11" correctly flagged INVALID by
+# DateNormalizer, correctly falls back to the original string, then
+# can't be inserted into a native DATE column — taking the whole chunk's
+# transaction, and therefore the whole job, down with it, since even the
+# error-report row for that value never got a chance to be written).
+# There is no per-row column typing in SQL — the type is fixed at CREATE
+# TABLE time, before any row's success/failure is known — so the only
+# type that can ALWAYS hold both a successful `display` and a failed
+# fallback is a text-compatible one. 24 semantic types x 2 engines is a
+# lookup table, not a reason to pull in a SQL-DDL-generation library.
+# ponytail: every value collapsed to TEXT for decision #8 safety, not
+# genuinely typed DATE/NUMERIC/etc — revisit only if the executor gains
+# real pre-insert type validation/casting (route a value that won't cast
+# through the same error-report path as a normalization failure, instead
+# of relying on the DB to reject it) that could safely re-differentiate
+# per type.
+SEMANTIC_TYPE_TO_PG_TYPE: dict[str, str] = dict.fromkeys(
+    (
+        "PERSON_NAME", "GIVEN_NAME", "FAMILY_NAME", "COMPANY_NAME", "EMAIL", "PHONE",
+        "ADDRESS", "POSTCODE", "COUNTRY", "LANGUAGE", "SCRIPT", "DATE", "DATETIME",
+        "IDENTIFIER", "UUID", "TAX_ID", "URL", "NUMERIC", "CURRENCY", "QUANTITY",
+        "BOOLEAN", "FREE_TEXT", "CODE", "UNKNOWN",
+    ),
+    "TEXT",
+)
 
 PASSTHROUGH_PG_TYPE = "TEXT"
 

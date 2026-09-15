@@ -16,41 +16,38 @@ if TYPE_CHECKING:
 
     from normio.connector import ColumnInfo
 
-# FieldSemanticType -> ClickHouse column type. Every column is wrapped in
-# Nullable(...) at create_table time (including ORDER BY columns) since
-# origin values can be null anywhere — ClickHouse recommends avoiding
-# Nullable in ORDER BY for performance; correctness for a clone target
-# comes first here.
-# ponytail: plain dict, same as the Postgres side — revisit only if a 3rd
-# engine's type rules stop fitting a dict.
-SEMANTIC_TYPE_TO_CH_TYPE: dict[str, str] = {
-    "PERSON_NAME": "String",
-    "GIVEN_NAME": "String",
-    "FAMILY_NAME": "String",
-    "COMPANY_NAME": "String",
-    "EMAIL": "String",
-    "PHONE": "String",
-    "ADDRESS": "String",
-    "POSTCODE": "String",
-    "COUNTRY": "String",
-    "LANGUAGE": "String",
-    "SCRIPT": "String",
-    "DATE": "Date",
-    "DATETIME": "DateTime",
-    "IDENTIFIER": "String",
-    "UUID": "UUID",
-    "TAX_ID": "String",
-    "URL": "String",
-    "NUMERIC": "Float64",
-    "CURRENCY": "Decimal(18,4)",
-    "QUANTITY": "Float64",
-    "BOOLEAN": "Bool",
-    "FREE_TEXT": "String",
-    "CODE": "String",
-    "UNKNOWN": "String",
-}
+# FieldSemanticType -> ClickHouse column type. Every value is String —
+# deliberately, not an oversight; same reasoning as
+# postgres_destination.SEMANTIC_TYPE_TO_PG_TYPE (found via a real e2e run
+# against messy real-world data): decision #8 requires a failed value's
+# ORIGINAL raw string to always land in the cell, and a column typed e.g.
+# Date/Float64/UUID/Bool rejects a raw string that isn't already
+# well-formed for that type — exactly the malformed values decision #8
+# exists to handle. There is no per-row column typing in SQL — the type
+# is fixed at CREATE TABLE time, before any row's success/failure is
+# known — so only a text-compatible type can always hold both a
+# successful `display` and a failed fallback.
+# ponytail: every value collapsed to String for decision #8 safety, not
+# genuinely typed Date/Float64/etc — revisit only if the executor gains
+# real pre-insert type validation/casting (route a value that won't cast
+# through the same error-report path as a normalization failure, instead
+# of relying on the DB to reject it) that could safely re-differentiate
+# per type.
+SEMANTIC_TYPE_TO_CH_TYPE: dict[str, str] = dict.fromkeys(
+    (
+        "PERSON_NAME", "GIVEN_NAME", "FAMILY_NAME", "COMPANY_NAME", "EMAIL", "PHONE",
+        "ADDRESS", "POSTCODE", "COUNTRY", "LANGUAGE", "SCRIPT", "DATE", "DATETIME",
+        "IDENTIFIER", "UUID", "TAX_ID", "URL", "NUMERIC", "CURRENCY", "QUANTITY",
+        "BOOLEAN", "FREE_TEXT", "CODE", "UNKNOWN",
+    ),
+    "String",
+)
 
 PASSTHROUGH_CH_TYPE = "String"
+# Every column is wrapped in Nullable(...) at create_table time
+# (including ORDER BY columns) since origin values can be null anywhere —
+# ClickHouse recommends avoiding Nullable in ORDER BY for performance;
+# correctness for a clone target comes first here.
 
 
 class ClickHouseDestination:
