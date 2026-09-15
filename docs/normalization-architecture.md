@@ -218,7 +218,9 @@ its schema to a new destination on the same server, then
 stream+normalize+populate it. Full decision record: the approved plan's
 "Decisions already made" and `docs/adr/ADR-017-clone-normalize-engine-scope.md`.
 Live progress + verification evidence: `TODO.md` and
-`docs/verification/clone-normalize-verification-pack.md`.
+`docs/verification/clone-normalize-verification-pack.md`. Step-by-step
+how-to (repo demo containers or your own real database):
+`docs/clone-e2e-guide.md`.
 
 Scope: **Postgres and ClickHouse only**, both as origin and destination,
 always the same engine. MySQL/Mongo/File are documentation-only

@@ -36,10 +36,13 @@ database — Postgres or ClickHouse, strictly read-only, never modified —
 and have it build a schema-cloned, normalized-in-place destination next
 to it on the same server, driven from the UI (`Connections`/`Clone` nav
 items), as a background/pollable job with crash-resume. No admin/`CREATE
-DATABASE` rights are required by the app itself. See
-[`docs/adr/ADR-017-clone-normalize-engine-scope.md`](docs/adr/ADR-017-clone-normalize-engine-scope.md)
-(why MySQL/Mongo/File are documentation-only for now) and
-[`docs/verification/clone-normalize-verification-pack.md`](docs/verification/clone-normalize-verification-pack.md).
+DATABASE` rights are required by the app itself.
+
+- [`docs/clone-e2e-guide.md`](docs/clone-e2e-guide.md) — step-by-step: run
+  it against the repo's demo containers or your own real database
+- [`docs/adr/ADR-017-clone-normalize-engine-scope.md`](docs/adr/ADR-017-clone-normalize-engine-scope.md) — why MySQL/Mongo/File are documentation-only for now
+- [`docs/verification/clone-normalize-verification-pack.md`](docs/verification/clone-normalize-verification-pack.md) — evidence it works
+
 Requires `NORM_SECRET_KEY` (see `.env.example`) to encrypt saved
 connection passwords at rest.
 
