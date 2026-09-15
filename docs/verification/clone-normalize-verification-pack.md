@@ -220,6 +220,39 @@ corrected — see §3.8) and confirmed everything else as claimed.
 4. Scratch connections/clone-jobs created during testing purged from the
    live metadata Postgres (`TRUNCATE`, confirmed empty via the live API).
 
+### 3.9 A real, previously-undisclosed correctness bug — found on the first genuine e2e run against real data
+
+Everything above (§3.1-§3.8) ran against small, hand-picked fixture data.
+The first run against a real user's own database (13 tables, 52,828
+rows, origin data in a non-default Postgres schema) failed outright on
+the first chunk: a source `foundingdate` value like `"d1989-12-11"`
+correctly failed `DateNormalizer`, correctly fell back to its original
+raw value per decision #8 — and then couldn't be inserted into the
+destination's native `DATE` column. Because the insert is one
+transaction per chunk, this crashed the whole chunk, and with it the
+whole job, including the error-report row for that exact value, which
+never got written — the opposite of decision #9.
+
+Root cause: there is no per-row column typing in SQL — a configured
+column's destination type is fixed at `CREATE TABLE` time, before any
+row's success/failure is known, so decision #8's "always insertable
+fallback" guarantee is incompatible with any native (non-text) type.
+Fixed by collapsing `SEMANTIC_TYPE_TO_PG_TYPE`/`SEMANTIC_TYPE_TO_CH_TYPE`
+to map every semantic type to a text-compatible destination type,
+regression-tested (unit: every mapped type asserted text-compatible;
+integration: the exact `d`-prefixed-date scenario, against a real
+container), and re-verified against the same real database after
+rebuilding and redeploying the `api` image:
+
+```
+status: COMPLETED, rows_done: 52828, tables_completed: 13/13, error: None
+11,218 errors recorded (foundingdate parse failures, bare-domain website
+values with no URL scheme — real source data quality, not app bugs),
+each with its original value intact. Real normalization visible on
+clean data (double-space collapsing, curly->straight quotes). Origin
+re-verified byte-unchanged and still write-rejecting.
+```
+
 ## 4. Known, disclosed gaps (not blocking, tracked via `ponytail:` comments in the code)
 
 - Resumed inserts are idempotent via `ON CONFLICT DO NOTHING` on Postgres
