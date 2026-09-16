@@ -109,15 +109,40 @@ class ClickHouseConnector:
             column_list = "*"
         query = f"SELECT {column_list} FROM `{table}`"
 
-        arrow_table = self._client.query_arrow(query)
-        row_offset = 0
-        for batch in arrow_table.to_batches(max_chunksize=batch_size):
-            keys = pa.array(
-                [f"{table}:{row_offset + i}" for i in range(batch.num_rows)],
-                type=pa.large_string(),
-            )
-            yield batch.append_column("source_row_key", keys)
-            row_offset += batch.num_rows
+        # query_arrow() (what this used to call) materializes the ENTIRE
+        # result set as one in-memory Arrow table before yielding the first
+        # batch — the `batch_size` below then only sliced an
+        # already-fully-resident table, and the generator frame held it
+        # alive for the whole iteration. Measured at 962 MiB for a single
+        # 1.27M-row table, on top of everything else in a 4g container.
+        # query_arrow_stream() yields one block per ClickHouse block
+        # (max_block_size, ~65k rows), so peak is one block, not one table.
+        # Measured A/B, same 1.27M-row table, same 200k rows consumed, same
+        # 4g container: 1,595 MB peak RSS via query_arrow() vs. 318 MB via
+        # the stream (81 MB interpreter baseline in both). The old peak was
+        # also independent of how many rows the caller actually consumed —
+        # the whole table was paid for before the first batch came out.
+        #
+        # Blocks are re-sliced to `batch_size` here rather than consumed
+        # whole, so this still honors the caller's chunk size (which is
+        # also the clone executor's checkpoint-commit boundary). `.slice()`
+        # is zero-copy. It is used instead of `.to_batches(max_chunksize=)`
+        # because the driver's docstring claims this yields pa.Table but it
+        # actually yields pa.RecordBatch, which has no `.to_batches` —
+        # found by running it, not by reading the docs. Slicing works
+        # identically on both types, so this needs no isinstance branch and
+        # survives the driver settling on either one.
+        with self._client.query_arrow_stream(query) as stream:
+            row_offset = 0
+            for block in stream:
+                for start in range(0, block.num_rows, batch_size):
+                    batch = block.slice(start, batch_size)
+                    keys = pa.array(
+                        [f"{table}:{row_offset + i}" for i in range(batch.num_rows)],
+                        type=pa.large_string(),
+                    )
+                    yield batch.append_column("source_row_key", keys)
+                    row_offset += batch.num_rows
 
     def close(self) -> None:
         self._client.close()
