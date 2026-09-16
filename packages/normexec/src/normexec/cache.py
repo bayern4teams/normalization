@@ -107,6 +107,19 @@ class NormalizationCache:
     def __init__(self, duckdb_path: str | Path = ":memory:", *, lru_capacity: int = 50_000) -> None:
         self._lru = _LruCache(lru_capacity)
         self._conn = duckdb.connect(str(duckdb_path))
+        # DuckDB sizes its buffer pool at 80% of DETECTED SYSTEM RAM, which
+        # inside a container is the host's RAM, not the cgroup limit — a
+        # real clone run measured `memory_limit` at 21.7 GiB inside a
+        # container capped at 4g (compose.yaml api.mem_limit), so DuckDB
+        # never felt pressure, never spilled, and the kernel OOM-killed the
+        # process at 4.15GB RSS while DuckDB still thought it had 17GB of
+        # headroom. An explicit cap makes it spill to disk instead.
+        # ponytail: one hardcoded number, not an env var — 512MB is a small
+        # fraction of the smallest container this runs in (4g) and the LRU
+        # tier above is what absorbs hot lookups anyway. Make it
+        # configurable only if a deployment actually needs a different
+        # cache/normalizer memory split.
+        self._conn.execute("SET memory_limit='512MB'")
         self._conn.execute(
             "CREATE TABLE IF NOT EXISTS normalization_cache ("
             "  cache_key VARCHAR PRIMARY KEY,"
