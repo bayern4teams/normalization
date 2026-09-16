@@ -255,7 +255,23 @@ def _run_phase2(
     dest_conn = persistence.get_connection(job["destination_connection_id"])
     source = build_source_connector(source_conn, job["source_database"])
     dest = build_destination_writer(dest_conn)
-    planner = DistinctValuePlanner(dispatcher, cache)
+    # `cache` is deliberately NOT passed to the planner. The persistent
+    # (DuckDB) tier stores one row per distinct value forever, which the
+    # distinct-value architecture assumes is far smaller than the row count
+    # (normexec/planner.py's spike: 100k rows / 500 distinct values).
+    # Measured on real clone data (testzoominfo.Company, 1.27M rows):
+    # website 96.4% unique, companyName 97.0%, companyPhone 79.8% — so the
+    # cache stored ~1 entry per row, reached 3.87GB / 1.2M rows mid-run,
+    # and bought back ~3% of dispatcher calls. Pure cost at this
+    # cardinality. The planner already treats None as "no cache tiers"
+    # (normexec/planner.py), and the per-chunk `set()` of distinct values
+    # below still dedups within a chunk, which is where the cheap win is.
+    # ponytail: unconditional None, not a cardinality-adaptive switch —
+    # genuinely low-cardinality columns (COUNTRY, BOOLEAN) now re-dispatch
+    # once per chunk instead of once per job. Add the adaptive version
+    # (sample the first chunk, keep the cache below ~50% uniqueness) only
+    # if that re-dispatch volume shows up in a real run's timings.
+    planner = DistinctValuePlanner(dispatcher, None)
     progress = job["progress"]
     tables_completed = set(progress["tables_completed"])
 
