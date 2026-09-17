@@ -49,3 +49,6 @@ ui/blob-report/
 
 .DS_Store
 Thumbs.db
+
+# Ground-truth run credentials — never commit
+.env.groundtruth
