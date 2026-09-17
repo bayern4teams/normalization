@@ -1,0 +1,61 @@
+{
+  "env_id": "48a2921d96398a496762349cc8d539f638cbfa8a40f98aeeed163acc92f10613",
+  "config_file": "ground_truth/column_config.json",
+  "total_rows": 52828,
+  "total_errors": 2,
+  "status": "COMPLETED",
+  "tables": {
+    "company": {
+      "rows": 3940,
+      "errors": 0
+    },
+    "companycontact": {
+      "rows": 5330,
+      "errors": 2
+    },
+    "companyemployeecategory": {
+      "rows": 5134,
+      "errors": 0
+    },
+    "companyexperience": {
+      "rows": 1230,
+      "errors": 0
+    },
+    "companyfinancials": {
+      "rows": 198,
+      "errors": 0
+    },
+    "companyindustry": {
+      "rows": 3940,
+      "errors": 0
+    },
+    "companyinvestmentround": {
+      "rows": 470,
+      "errors": 0
+    },
+    "companyinvestor": {
+      "rows": 1260,
+      "errors": 0
+    },
+    "companyrelation": {
+      "rows": 6174,
+      "errors": 0
+    },
+    "companytechnographics": {
+      "rows": 20092,
+      "errors": 0
+    },
+    "industryclassification": {
+      "rows": 339,
+      "errors": 0
+    },
+    "location": {
+      "rows": 3506,
+      "errors": 0
+    },
+    "person": {
+      "rows": 1215,
+      "errors": 0
+    }
+  }
+}

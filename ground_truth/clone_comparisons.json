@@ -1,0 +1,54 @@
+{
+  "company": {
+    "hash2": "911a41b01cea8df5f57e8fa993732a25",
+    "hash3": "911a41b01cea8df5f57e8fa993732a25"
+  },
+  "companycontact": {
+    "hash2": "406fcf486d671a18f498b2396a380357",
+    "hash3": "406fcf486d671a18f498b2396a380357"
+  },
+  "companyemployeecategory": {
+    "hash2": "3b23eeb9bfa2ded97e5bb5fea0b40707",
+    "hash3": "3b23eeb9bfa2ded97e5bb5fea0b40707"
+  },
+  "companyexperience": {
+    "hash2": "526d269a5a85a257b4c3bae290e6c805",
+    "hash3": "526d269a5a85a257b4c3bae290e6c805"
+  },
+  "companyfinancials": {
+    "hash2": "c4d5d54bd83cb921c8d71b64f003e383",
+    "hash3": "c4d5d54bd83cb921c8d71b64f003e383"
+  },
+  "companyindustry": {
+    "hash2": "7e94a33866913f2490b06e18c9b2ede9",
+    "hash3": "7e94a33866913f2490b06e18c9b2ede9"
+  },
+  "companyinvestmentround": {
+    "hash2": "f99d528e50343c4d79b54ed7350f0c55",
+    "hash3": "f99d528e50343c4d79b54ed7350f0c55"
+  },
+  "companyinvestor": {
+    "hash2": "1d76c53c4c9e1e351a509783b625d817",
+    "hash3": "1d76c53c4c9e1e351a509783b625d817"
+  },
+  "companyrelation": {
+    "hash2": "580add20931adc4479c3a6c0321cb768",
+    "hash3": "580add20931adc4479c3a6c0321cb768"
+  },
+  "companytechnographics": {
+    "hash2": "0f43cc202c71af484cb59852f916ce28",
+    "hash3": "0f43cc202c71af484cb59852f916ce28"
+  },
+  "industryclassification": {
+    "hash2": "7a36a59f37a16bc606615c451451d9bf",
+    "hash3": "7a36a59f37a16bc606615c451451d9bf"
+  },
+  "location": {
+    "hash2": "95917bbcdfae082aa6bc2029b4412b46",
+    "hash3": "95917bbcdfae082aa6bc2029b4412b46"
+  },
+  "person": {
+    "hash2": "212404238e29cce1d11a42bf77722fb7",
+    "hash3": "212404238e29cce1d11a42bf77722fb7"
+  }
+}

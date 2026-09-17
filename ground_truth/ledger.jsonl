@@ -1,0 +1,2 @@
+{"table": "companycontact", "row_index": 763, "field": "contactstring", "original": "+1646828766616198095707003994", "error": "(4) The string supplied is too long to be a phone number."}
+{"table": "companycontact", "row_index": 3324, "field": "contactstring", "original": "hello@bdnaerospace.com?__xts", "error": "The part after the @-sign contains invalid characters: '?', '_'."}

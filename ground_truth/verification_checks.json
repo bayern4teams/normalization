@@ -1,0 +1,347 @@
+{
+  "row_parity": {
+    "company": {
+      "origin": 3940,
+      "dest": 3940,
+      "match": true
+    },
+    "companycontact": {
+      "origin": 5330,
+      "dest": 5330,
+      "match": true
+    },
+    "companyemployeecategory": {
+      "origin": 5134,
+      "dest": 5134,
+      "match": true
+    },
+    "companyexperience": {
+      "origin": 1230,
+      "dest": 1230,
+      "match": true
+    },
+    "companyfinancials": {
+      "origin": 198,
+      "dest": 198,
+      "match": true
+    },
+    "companyindustry": {
+      "origin": 3940,
+      "dest": 3940,
+      "match": true
+    },
+    "companyinvestmentround": {
+      "origin": 470,
+      "dest": 470,
+      "match": true
+    },
+    "companyinvestor": {
+      "origin": 1260,
+      "dest": 1260,
+      "match": true
+    },
+    "companyrelation": {
+      "origin": 6174,
+      "dest": 6174,
+      "match": true
+    },
+    "companytechnographics": {
+      "origin": 20092,
+      "dest": 20092,
+      "match": true
+    },
+    "industryclassification": {
+      "origin": 339,
+      "dest": 339,
+      "match": true
+    },
+    "location": {
+      "origin": 3506,
+      "dest": 3506,
+      "match": true
+    },
+    "person": {
+      "origin": 1215,
+      "dest": 1215,
+      "match": true
+    }
+  },
+  "column_lists": {
+    "company": {
+      "origin_cols": 25,
+      "dest_cols": 25,
+      "match": true,
+      "origin": [
+        "companyid",
+        "entityname",
+        "fullname",
+        "sourcecategory",
+        "description"
+      ],
+      "dest": [
+        "companyid",
+        "entityname",
+        "fullname",
+        "sourcecategory",
+        "description"
+      ]
+    },
+    "companycontact": {
+      "origin_cols": 7,
+      "dest_cols": 7,
+      "match": true,
+      "origin": [
+        "contactid",
+        "contactstring",
+        "contacttype",
+        "confidence",
+        "companyid"
+      ],
+      "dest": [
+        "contactid",
+        "contactstring",
+        "contacttype",
+        "confidence",
+        "companyid"
+      ]
+    },
+    "companyemployeecategory": {
+      "origin_cols": 7,
+      "dest_cols": 7,
+      "match": true,
+      "origin": [
+        "empcatid",
+        "category",
+        "firsthiredate",
+        "confidence",
+        "companyid"
+      ],
+      "dest": [
+        "empcatid",
+        "category",
+        "firsthiredate",
+        "confidence",
+        "companyid"
+      ]
+    },
+    "companyexperience": {
+      "origin_cols": 8,
+      "dest_cols": 8,
+      "match": true,
+      "origin": [
+        "companyid",
+        "personid",
+        "personname",
+        "role",
+        "confidence"
+      ],
+      "dest": [
+        "companyid",
+        "personid",
+        "personname",
+        "role",
+        "confidence"
+      ]
+    },
+    "companyfinancials": {
+      "origin_cols": 9,
+      "dest_cols": 9,
+      "match": true,
+      "origin": [
+        "financialid",
+        "year",
+        "amount",
+        "currency",
+        "iscurrent"
+      ],
+      "dest": [
+        "financialid",
+        "year",
+        "amount",
+        "currency",
+        "iscurrent"
+      ]
+    },
+    "companyindustry": {
+      "origin_cols": 4,
+      "dest_cols": 4,
+      "match": true,
+      "origin": [
+        "companyid",
+        "classificationid",
+        "created_at",
+        "_version"
+      ],
+      "dest": [
+        "companyid",
+        "classificationid",
+        "created_at",
+        "_version"
+      ]
+    },
+    "companyinvestmentround": {
+      "origin_cols": 9,
+      "dest_cols": 9,
+      "match": true,
+      "origin": [
+        "investmentid",
+        "date",
+        "amount",
+        "currency",
+        "confidence"
+      ],
+      "dest": [
+        "investmentid",
+        "date",
+        "amount",
+        "currency",
+        "confidence"
+      ]
+    },
+    "companyinvestor": {
+      "origin_cols": 8,
+      "dest_cols": 8,
+      "match": true,
+      "origin": [
+        "investmentid",
+        "investorcompanyid",
+        "surfaceform",
+        "summary",
+        "types"
+      ],
+      "dest": [
+        "investmentid",
+        "investorcompanyid",
+        "surfaceform",
+        "summary",
+        "types"
+      ]
+    },
+    "companyrelation": {
+      "origin_cols": 10,
+      "dest_cols": 10,
+      "match": true,
+      "origin": [
+        "companyid",
+        "relatedcompanyid",
+        "surfaceform",
+        "summary",
+        "types"
+      ],
+      "dest": [
+        "companyid",
+        "relatedcompanyid",
+        "surfaceform",
+        "summary",
+        "types"
+      ]
+    },
+    "companytechnographics": {
+      "origin_cols": 8,
+      "dest_cols": 8,
+      "match": true,
+      "origin": [
+        "techid",
+        "technologyname",
+        "technologytype",
+        "categories",
+        "confidence"
+      ],
+      "dest": [
+        "techid",
+        "technologyname",
+        "technologytype",
+        "categories",
+        "confidence"
+      ]
+    },
+    "industryclassification": {
+      "origin_cols": 6,
+      "dest_cols": 6,
+      "match": true,
+      "origin": [
+        "classificationid",
+        "name",
+        "isprimary",
+        "confidence",
+        "created_at"
+      ],
+      "dest": [
+        "classificationid",
+        "name",
+        "isprimary",
+        "confidence",
+        "created_at"
+      ]
+    },
+    "location": {
+      "origin_cols": 15,
+      "dest_cols": 15,
+      "match": true,
+      "origin": [
+        "locationid",
+        "street",
+        "addressfull",
+        "city",
+        "region"
+      ],
+      "dest": [
+        "locationid",
+        "street",
+        "addressfull",
+        "city",
+        "region"
+      ]
+    },
+    "person": {
+      "origin_cols": 8,
+      "dest_cols": 8,
+      "match": true,
+      "origin": [
+        "personid",
+        "name",
+        "summary",
+        "role",
+        "types"
+      ],
+      "dest": [
+        "personid",
+        "name",
+        "summary",
+        "role",
+        "types"
+      ]
+    }
+  },
+  "quality_checks": {
+    "foundingdate_iso": {
+      "non_iso_count": 1472,
+      "explanation": "Rows with non-ISO foundingdate after d-XX repair: 1472 (expected ~1,472 partial dates with XX placeholders)"
+    },
+    "website_schemes": {
+      "non_scheme_qualified": 2591,
+      "explanation": "Non-scheme website URLs after pre-repair: 2591"
+    },
+    "boolean_ispublic": {
+      "non_bool_count": 0
+    },
+    "boolean_isnonprofit": {
+      "non_bool_count": 0
+    },
+    "boolean_isacquired": {
+      "non_bool_count": 0
+    },
+    "boolean_isdissolved": {
+      "non_bool_count": 0
+    },
+    "person_name_empty": {
+      "count": 0
+    },
+    "location_empty_streets": {
+      "count": 686
+    },
+    "ct_confidence": {
+      "non_100": 7878
+    }
+  }
+}
