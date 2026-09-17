@@ -1,0 +1,152 @@
+{
+  "company": {
+    "companyid": "PASSTHROUGH",
+    "entityname": "COMPANY_NAME",
+    "fullname": "COMPANY_NAME",
+    "sourcecategory": "CODE",
+    "description": "FREE_TEXT",
+    "summary": "FREE_TEXT",
+    "alldescriptions": "FREE_TEXT",
+    "types": "CODE",
+    "motto": "FREE_TEXT",
+    "website": "URL",
+    "logo": "URL",
+    "descriptors": "FREE_TEXT",
+    "foundingdate": "DATE",
+    "totalinvestment": "PASSTHROUGH",
+    "totalinvestmentcurrency": "CURRENCY",
+    "ispublic": "BOOLEAN",
+    "isnonprofit": "BOOLEAN",
+    "isacquired": "BOOLEAN",
+    "isdissolved": "BOOLEAN",
+    "ceoname": "PERSON_NAME",
+    "foundername": "PERSON_NAME",
+    "metadata_confidence": "CODE",
+    "explicit_origins": "PASSTHROUGH",
+    "created_at": "PASSTHROUGH",
+    "_version": "PASSTHROUGH"
+  },
+  "person": {
+    "personid": "PASSTHROUGH",
+    "name": "PERSON_NAME",
+    "summary": "FREE_TEXT",
+    "role": "CODE",
+    "types": "CODE",
+    "confidence": "CODE",
+    "created_at": "PASSTHROUGH",
+    "_version": "PASSTHROUGH"
+  },
+  "companycontact": {
+    "contactid": "PASSTHROUGH",
+    "contactstring": null,
+    "contacttype": "CODE",
+    "confidence": "CODE",
+    "companyid": "PASSTHROUGH",
+    "created_at": "PASSTHROUGH",
+    "_version": "PASSTHROUGH"
+  },
+  "companyemployeecategory": {
+    "empcatid": "PASSTHROUGH",
+    "category": "FREE_TEXT",
+    "firsthiredate": "DATE",
+    "confidence": "CODE",
+    "companyid": "PASSTHROUGH",
+    "created_at": "PASSTHROUGH",
+    "_version": "PASSTHROUGH"
+  },
+  "companyexperience": {
+    "companyid": "PASSTHROUGH",
+    "personid": "PASSTHROUGH",
+    "personname": "PERSON_NAME",
+    "role": "CODE",
+    "confidence": "CODE",
+    "types": "CODE",
+    "created_at": "PASSTHROUGH",
+    "_version": "PASSTHROUGH"
+  },
+  "companyfinancials": {
+    "financialid": "PASSTHROUGH",
+    "year": "PASSTHROUGH",
+    "amount": "PASSTHROUGH",
+    "currency": "CURRENCY",
+    "iscurrent": "BOOLEAN",
+    "confidence": "CODE",
+    "companyid": "PASSTHROUGH",
+    "created_at": "PASSTHROUGH",
+    "_version": "PASSTHROUGH"
+  },
+  "companyindustry": {
+    "companyid": "PASSTHROUGH",
+    "classificationid": "PASSTHROUGH",
+    "created_at": "PASSTHROUGH",
+    "_version": "PASSTHROUGH"
+  },
+  "companyinvestmentround": {
+    "investmentid": "PASSTHROUGH",
+    "date": "DATE",
+    "amount": "PASSTHROUGH",
+    "currency": "CURRENCY",
+    "confidence": "CODE",
+    "explicit_origin": "PASSTHROUGH",
+    "companyid": "PASSTHROUGH",
+    "created_at": "PASSTHROUGH",
+    "_version": "PASSTHROUGH"
+  },
+  "companyinvestor": {
+    "investmentid": "PASSTHROUGH",
+    "investorcompanyid": "PASSTHROUGH",
+    "surfaceform": "COMPANY_NAME",
+    "summary": "FREE_TEXT",
+    "types": "CODE",
+    "confidence": "CODE",
+    "created_at": "PASSTHROUGH",
+    "_version": "PASSTHROUGH"
+  },
+  "companyrelation": {
+    "companyid": "PASSTHROUGH",
+    "relatedcompanyid": "PASSTHROUGH",
+    "surfaceform": "COMPANY_NAME",
+    "summary": "FREE_TEXT",
+    "types": "CODE",
+    "confidence": "CODE",
+    "explicit_origin": "PASSTHROUGH",
+    "relationtype": "CODE",
+    "created_at": "PASSTHROUGH",
+    "_version": "PASSTHROUGH"
+  },
+  "companytechnographics": {
+    "techid": "PASSTHROUGH",
+    "technologyname": "FREE_TEXT",
+    "technologytype": "CODE",
+    "categories": "FREE_TEXT",
+    "confidence": "CODE",
+    "companyid": "PASSTHROUGH",
+    "created_at": "PASSTHROUGH",
+    "_version": "PASSTHROUGH"
+  },
+  "industryclassification": {
+    "classificationid": "PASSTHROUGH",
+    "name": "FREE_TEXT",
+    "isprimary": "BOOLEAN",
+    "confidence": "CODE",
+    "created_at": "PASSTHROUGH",
+    "_version": "PASSTHROUGH"
+  },
+  "location": {
+    "locationid": "PASSTHROUGH",
+    "street": "ADDRESS",
+    "addressfull": "ADDRESS",
+    "city": "FREE_TEXT",
+    "region": "FREE_TEXT",
+    "postalcode": "POSTCODE",
+    "country": "FREE_TEXT",
+    "latitude": "PASSTHROUGH",
+    "longitude": "PASSTHROUGH",
+    "precision": "NUMERIC",
+    "isprimary": "BOOLEAN",
+    "iscurrent": "BOOLEAN",
+    "companyid": "PASSTHROUGH",
+    "created_at": "PASSTHROUGH",
+    "_version": "PASSTHROUGH"
+  }
+}
