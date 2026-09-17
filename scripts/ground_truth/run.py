@@ -190,7 +190,7 @@ def main():
     with dest._engine_for(dest_db).begin() as conn:
         conn.execute(sa.text("""
             CREATE TABLE IF NOT EXISTS _norm_errors (
-                row_index INTEGER, table_name TEXT, field TEXT, original TEXT, error TEXT
+                row_index TEXT, table_name TEXT, field TEXT, original TEXT, error TEXT
             )
         """))
     print("✓ Phase C complete.\n")
@@ -249,14 +249,17 @@ def main():
 
         for batch in origin.read_table(table, batch_size=ROW_CHUNK_SIZE):
             rows = batch.to_pylist()
-            pending: list[tuple[int, dict]] = []
+            first_col = cols[0].name
+            pending: list[tuple[str, dict]] = []
+            row_num = 0
             for r in rows:
                 try:
-                    off = int(r["source_row_key"].rsplit(":", 1)[1])
+                    row_key = str(r[first_col])
                 except (KeyError, ValueError):
                     continue
-                if off > ckpt:
-                    pending.append((off, r))
+                row_num += 1
+                if ckpt == -1 or row_num > ckpt:
+                    pending.append((row_key, r))
             if not pending:
                 continue
 
@@ -287,7 +290,7 @@ def main():
                         errs += 1
                         ledger.append({
                             "table": table,
-                            "row_index": int(row["source_row_key"].rsplit(":", 1)[1]),
+                            "row_index": row[first_col],
                             "field": col,
                             "original": str(orig),
                             "error": "; ".join(rv.errors),
@@ -305,7 +308,7 @@ def main():
                         errs += 1
                         ledger.append({
                             "table": "companycontact",
-                            "row_index": int(row["source_row_key"].rsplit(":", 1)[1]),
+                            "row_index": row[first_col],
                             "field": "contactstring",
                             "original": str(orig),
                             "error": err,
@@ -318,8 +321,7 @@ def main():
             ]
             dest.bulk_insert(dest_db, table, dest_rows, primary_key=pk)
 
-            for off, _ in pending:
-                ckpt_off = max(ckpt_off, off)
+            ckpt_off = row_num
             rows_done += len(pending)
 
         checkpoints[table] = ckpt_off

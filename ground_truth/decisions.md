@@ -177,3 +177,21 @@ After applying all four pre-repair rules, the ledger dropped from **9,483 → 2 
 - **4 pre-repair rules** applied before normalization (d-stripping, XX→01, https://, email trailing-query)
 - **2 residual errors** — both source-data corruption, explicitly documented
 - **Deterministic engine**: re-running with same config + env_id produces byte-identical output (verified in Phase F)
+
+## Phase E Fix — Ledger row_index: batch offset → actual PK
+
+**Bug:** The driver stored chunk offsets (763, 3324) in `ledger.row_index`
+instead of actual row PKs. Root cause: `_sql_base.py:94-95` generates
+`source_row_key` as `f"{table}:{batch_offset}"` — a batch position, not
+a row identifier. Both ledger append sites parsed this as `int()`.
+
+**Fix:** Extract `cols[0].name` (the `*id` column) from each row as the
+row identifier. Changed `pending: list[tuple[int, dict]]` to
+`list[tuple[str, dict]]`, `row_index` field from `INTEGER` to `TEXT`
+in `_norm_errors` DDL.
+
+**Before:** `{"row_index": 763, "original": "+1646828766616198095707003994"}`
+**After:**  `{"row_index": "d00fc465b255bf5e", "original": "+1646828766616198095707003994"}`
+
+The corrected PKs trace to exact rows in both origin (`diffbot.companycontact`)
+and clone (`public.companycontact`), verified via `WHERE contactid = 'd00fc465b255bf5e'`.
