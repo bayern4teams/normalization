@@ -24,10 +24,14 @@ that method would silently lose, for the identical dispatcher-call cost
 
 from __future__ import annotations
 
+import multiprocessing
+import os
 import threading
 import uuid
+from concurrent.futures import ProcessPoolExecutor
 from typing import TYPE_CHECKING, Any
 
+from normexec.planner import DistinctValuePlanner
 from normio.connectors import (
     ClickHouseConnector,
     ClickHouseDestination,
@@ -39,7 +43,6 @@ from normio.connectors._sql_base import ROW_CHUNK_SIZE
 from normapi import secrets
 from normapi.scaffold_profile import SCAFFOLD_PROFILE
 from normcore import CloneJobStatus, ErrorPolicy, FieldSemanticType, NormalizationContext
-from normexec.planner import DistinctValuePlanner
 
 if TYPE_CHECKING:
     from normexec.cache import NormalizationCache
@@ -246,6 +249,139 @@ def start_phase2(
 
 
 
+# --- Parallel normalization (process pool) --------------------------------
+#
+# Phase 2 was one thread doing read -> normalize -> write serially, and
+# after the cache was dropped normalization is ~80% of wall clock
+# (measured stage breakdown: normalize 79.6%, err_write 9.6%, insert
+# 6.8%). That work is CPU-bound Python, so it needs PROCESSES, not
+# threads — the GIL makes a thread pool worthless here.
+#
+# MEMORY IS THE BINDING CONSTRAINT, not CPU. The container this runs in
+# is capped (compose.yaml api.mem_limit) and has already been OOM-killed
+# once by an unbounded cache. Three things keep this bounded:
+#   1. `NORM_CLONE_WORKERS` caps worker count. Each worker is a full
+#      interpreter with its own normalizer registry and dictionaries.
+#      MEASURED (real testzoominfo.Company values, COMPANY_NAME, inside a
+#      4096MB container, cgroup memory.peak so parent AND workers count):
+#
+#        workers   peak     throughput    speedup
+#          1       217MB    18,732/s      -          (serial baseline)
+#          2       573MB    22,167/s      1.18x
+#          3       744MB    29,751/s      1.59x
+#          4       911MB    34,717/s      1.85x
+#
+#      That is a flat ~175MB per worker. The default of 3 is 18% of a 4g
+#      container, leaving ~3.3GB for the DuckDB cap (512MB), the Arrow
+#      read block, and the per-chunk row dicts. Raise it only after
+#      measuring your own container the way DEFAULT_MAX_RUN_ROWS was —
+#      note the speedup is sublinear (46% efficiency at 4), so the memory
+#      buys less than it looks like it should.
+#   2. Each task carries at most one chunk's distinct values for ONE
+#      column (<= ROW_CHUNK_SIZE strings), and returns that many
+#      NormalizedValues. Nothing accumulates across chunks in a worker.
+#   3. The pool is created per job and shut down in `_run_phase2`'s
+#      finally, so an idle app holds no worker processes at all.
+#
+# "spawn", not "fork": the parent is a live multi-threaded uvicorn
+# process with open DB connections and httpx clients. Forking that copies
+# locks other threads may hold, which deadlocks the child. spawn costs a
+# fresh interpreter per worker (hence the memory note above) and is the
+# only safe option here.
+# Also capped by CPU count: more workers than cores buys nothing and
+# costs ~175MB each, which is the exact trade this whole block exists to
+# avoid getting wrong.
+_WORKER_COUNT = min(int(os.environ.get("NORM_CLONE_WORKERS", "3")), os.cpu_count() or 1)
+
+# Below this many distinct values, the pickle round-trip costs more than
+# the normalization it parallelizes. A full chunk of a high-cardinality
+# column is ~ROW_CHUNK_SIZE values, so this only skips genuinely small
+# batches (low-cardinality columns, or the tail chunk of a table).
+_PARALLEL_MIN_VALUES = 500
+
+_worker_planner: DistinctValuePlanner | None = None
+
+
+def _init_clone_worker(env_id: str) -> None:
+    """ProcessPoolExecutor initializer — runs once per worker process.
+
+    Builds the registry via `build_normalizer_registry()` with no
+    arguments so the worker resolves the SAME dictionaries dir and
+    libpostal URL from the environment that the parent did, instead of
+    carrying a second copy of that logic. Imported inside the function
+    because it is only ever needed in a worker.
+    """
+    global _worker_planner  # noqa: PLW0603 - the pool initializer contract is a module global
+    from normapi.app import build_normalizer_registry  # noqa: PLC0415 - worker-only import
+    from normcore import Dispatcher  # noqa: PLC0415 - worker-only import
+
+    _worker_planner = DistinctValuePlanner(
+        Dispatcher(build_normalizer_registry(), env_id=env_id), None
+    )
+
+
+def _normalize_slice(
+    payload: tuple[list[str], FieldSemanticType, NormalizationContext, Any],
+) -> dict[str, Any]:
+    """Runs in a worker. Goes through the planner (not the dispatcher
+    directly) so a slice still gets the planner's `prepare_batch` hook —
+    an ADDRESS slice makes one batched libpostal call for its own values
+    rather than one HTTP round-trip per address."""
+    values, semantic_type, context, profile = payload
+    if _worker_planner is None:
+        # Cannot happen while the pool is built with our initializer, but
+        # a bare RuntimeError beats an AttributeError here: the caller
+        # catches it and finishes the batch serially.
+        msg = "clone worker used before _init_clone_worker ran"
+        raise RuntimeError(msg)
+    return _worker_planner.distinct_value_results(values, semantic_type, context, profile)
+
+
+def _normalize_distinct(
+    pool: ProcessPoolExecutor | None,
+    planner: DistinctValuePlanner,
+    distinct_values: list[str],
+    *,
+    semantic_type: FieldSemanticType,
+    context: NormalizationContext,
+    profile: Any,
+) -> dict[str, Any]:
+    """Distinct-value normalization, fanned across the pool when there is
+    enough work to pay for the IPC. Falls back to the in-process planner
+    for a missing pool, a small batch, or ANY worker failure — a pool
+    problem must degrade this job to "slower", never to "failed"."""
+    if pool is None or len(distinct_values) < _PARALLEL_MIN_VALUES:
+        return planner.distinct_value_results(distinct_values, semantic_type, context, profile)
+
+    workers = pool._max_workers
+    size = (len(distinct_values) + workers - 1) // workers
+    slices = [distinct_values[i : i + size] for i in range(0, len(distinct_values), size)]
+    try:
+        merged: dict[str, Any] = {}
+        for part in pool.map(
+            _normalize_slice, [(sl, semantic_type, context, profile) for sl in slices]
+        ):
+            merged.update(part)
+    except Exception:  # see docstring: degrade to serial, never fail the job
+        return planner.distinct_value_results(distinct_values, semantic_type, context, profile)
+    return merged
+
+
+def _make_pool(env_id: str) -> ProcessPoolExecutor | None:
+    if _WORKER_COUNT <= 1:
+        return None
+    try:
+        return ProcessPoolExecutor(
+            max_workers=_WORKER_COUNT,
+            mp_context=multiprocessing.get_context("spawn"),
+            initializer=_init_clone_worker,
+            initargs=(env_id,),
+        )
+    except (OSError, ValueError):
+        # No process pool available (restricted container, fd limits).
+        # Serial normalization is correct, just slower.
+        return None
+
 
 def _run_phase2(
     persistence: PgPersistence, dispatcher: Dispatcher, cache: NormalizationCache | None, job_id: str
@@ -272,6 +408,7 @@ def _run_phase2(
     # (sample the first chunk, keep the cache below ~50% uniqueness) only
     # if that re-dispatch volume shows up in a real run's timings.
     planner = DistinctValuePlanner(dispatcher, None)
+    pool = _make_pool(dispatcher.env_id)
     progress = job["progress"]
     tables_completed = set(progress["tables_completed"])
 
@@ -317,12 +454,26 @@ def _run_phase2(
                         table=table,
                         source=job["source_connection_id"],
                         error_policy=ErrorPolicy.RETURN_ORIGINAL,
+                        # This loop reads exactly two things off each
+                        # result — `.display` (below) and `.errors` (for
+                        # the decision #9 error report) — and throws the
+                        # rest away, including the per-step trace. The
+                        # trace is 36% of COMPANY_NAME normalize time
+                        # (cProfile, real data), so building it here is
+                        # pure waste. Every interactive path keeps it:
+                        # the default is True, only bulk clone opts out.
+                        include_trace=False,
                     )
                     distinct_values = list(
                         {row[column] for _, row in pending if row[column] is not None}
                     )
-                    by_value = planner.distinct_value_results(
-                        distinct_values, semantic_type, ctx, SCAFFOLD_PROFILE
+                    by_value = _normalize_distinct(
+                        pool,
+                        planner,
+                        distinct_values,
+                        semantic_type=semantic_type,
+                        context=ctx,
+                        profile=SCAFFOLD_PROFILE,
                     )
                     for offset, row in pending:
                         original = row[column]
@@ -372,5 +523,9 @@ def _run_phase2(
         job["error"] = str(exc)
         persistence.save_clone_job(job_id, job)
     finally:
+        # Workers are real processes holding real memory — never leave
+        # them alive past the job, on any exit path.
+        if pool is not None:
+            pool.shutdown(wait=False, cancel_futures=True)
         source.close()
         dest.close()

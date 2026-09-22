@@ -115,6 +115,51 @@ _DEFAULT_PG_DSN = os.environ.get("NORM_PG_DSN")
 _DEFAULT_MAX_RUN_ROWS = int(os.environ.get("NORM_MAX_RUN_ROWS", str(DEFAULT_MAX_RUN_ROWS)))
 
 
+def build_normalizer_registry(
+    loader: DictionaryLoader | None = None, *, libpostal_url: str | None = None
+) -> NormalizerRegistry:
+    """Every real normalizer, registered. Extracted from `create_app` so a
+    clone-job worker PROCESS can build the same registry without also
+    building a FastAPI app, a Postgres pool and a DuckDB cache it will
+    never use — see clone_executor's process pool.
+
+    Both arguments default to the same env-driven values `create_app` uses,
+    so a worker can call this with no arguments at all and be guaranteed
+    the same dictionaries and sidecar as the parent, with no second copy
+    of the default-resolution logic to drift.
+
+    PassthroughNormalizer registers first (covers every type as a
+    placeholder), then real adapters register after it and win for the
+    specific types they support — NormalizerRegistry.register() simply
+    overwrites the dict entry per semantic type, so registration order is
+    the mechanism, not a special-cased "prefer real over placeholder"
+    rule.
+    """
+    if loader is None:
+        loader = DictionaryLoader(_DEFAULT_DICTIONARIES_DIR)
+    registry = NormalizerRegistry()
+    registry.register(PassthroughNormalizer())
+    registry.register(GenericTextNormalizer(loader))
+    registry.register(NameNormalizer(loader))
+    registry.register(CompanyNormalizer(loader))
+    registry.register(PhoneNormalizer())
+    registry.register(EmailNormalizer())
+    registry.register(AddressNormalizer(LibpostalClient(libpostal_url or _DEFAULT_LIBPOSTAL_URL)))
+    registry.register(PostcodeNormalizer())
+    registry.register(DateNormalizer())
+    registry.register(CountryNormalizer())
+    registry.register(LanguageNormalizer())
+    registry.register(ScriptNormalizer())
+    registry.register(IdentifierNormalizer())
+    registry.register(UuidNormalizer())
+    registry.register(NumericNormalizer())
+    registry.register(CurrencyNormalizer())
+    registry.register(UnitNormalizer())
+    registry.register(BooleanNormalizer())
+    registry.register(URLNormalizer())
+    return registry
+
+
 def create_app(
     *,
     dictionaries_dir: Path | None = None,
@@ -141,32 +186,7 @@ def create_app(
         custom_dictionaries_dir or _DEFAULT_CUSTOM_DICTIONARIES_DIR, loader
     )
 
-    # PassthroughNormalizer registers first (covers every type as a
-    # placeholder), then real adapters register after it and win for the
-    # specific types they support — NormalizerRegistry.register() simply
-    # overwrites the dict entry per semantic type, so registration order
-    # is the mechanism, not a special-cased "prefer real over
-    # placeholder" rule.
-    registry = NormalizerRegistry()
-    registry.register(PassthroughNormalizer())
-    registry.register(GenericTextNormalizer(loader))
-    registry.register(NameNormalizer(loader))
-    registry.register(CompanyNormalizer(loader))
-    registry.register(PhoneNormalizer())
-    registry.register(EmailNormalizer())
-    registry.register(AddressNormalizer(LibpostalClient(_DEFAULT_LIBPOSTAL_URL)))
-    registry.register(PostcodeNormalizer())
-    registry.register(DateNormalizer())
-    registry.register(CountryNormalizer())
-    registry.register(LanguageNormalizer())
-    registry.register(ScriptNormalizer())
-    registry.register(IdentifierNormalizer())
-    registry.register(UuidNormalizer())
-    registry.register(NumericNormalizer())
-    registry.register(CurrencyNormalizer())
-    registry.register(UnitNormalizer())
-    registry.register(BooleanNormalizer())
-    registry.register(URLNormalizer())
+    registry = build_normalizer_registry(loader, libpostal_url=_DEFAULT_LIBPOSTAL_URL)
 
     cache = NormalizationCache(cache_path or _DEFAULT_CACHE_PATH)
 
