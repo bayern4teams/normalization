@@ -107,7 +107,36 @@ class ClickHouseConnector:
             column_list = ", ".join(f"`{c}`" for c in columns)
         else:
             column_list = "*"
-        query = f"SELECT {column_list} FROM `{table}`"
+        # ORDER BY the table's own sorting key, ALWAYS. ClickHouse gives no
+        # row-order guarantee for an unordered SELECT, and it genuinely
+        # varies: the same `SELECT companyID FROM Company LIMIT 5 OFFSET
+        # 300000` returned two completely disjoint row sets on consecutive
+        # runs against a real 1.27M-row table (parts are read in parallel,
+        # so arrival order follows whichever part finishes first).
+        #
+        # That is a correctness bug, not a cosmetic one, because
+        # `source_row_key` below is assigned by ARRIVAL POSITION and the
+        # clone executor's resume (decision #10) skips every row whose
+        # offset is <= the last checkpoint. With an unstable order, a
+        # resumed ClickHouse job skips an arbitrary set of rows and
+        # reprocesses a different arbitrary set — silently producing a
+        # clone with both duplicates and holes. The existing integration
+        # test misses this because its table is small enough to be one
+        # part read by one thread, which happens to be stable.
+        #
+        # Free in practice: EXPLAIN reports `Read type: InOrder` with a
+        # prefix sort description, i.e. ClickHouse streams the already-
+        # sorted parts and merges them rather than sorting anything, so
+        # there is no full-sort memory spike.
+        #
+        # The key comes from `get_table_engine_info`, the same source and
+        # the same comma-split that Phase 1 already uses to CREATE the
+        # destination table's ORDER BY — if that DDL was valid, this is.
+        _, order_by = self.get_table_engine_info(table)
+        order_clause = (
+            " ORDER BY " + ", ".join(f"`{c}`" for c in order_by) if order_by else ""
+        )
+        query = f"SELECT {column_list} FROM `{table}`{order_clause}"
 
         # query_arrow() (what this used to call) materializes the ENTIRE
         # result set as one in-memory Arrow table before yielding the first
