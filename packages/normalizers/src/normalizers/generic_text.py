@@ -167,7 +167,7 @@ class GenericTextNormalizer:
             # Hypothesis property testing in M3.
             return self._missing(value, MissingKind.EMPTY_STRING, ctx)
 
-        trace = build_unicode_trace(result)
+        trace = build_unicode_trace(result, enabled=ctx.include_trace)
         comparison, _ = text_ops.casefold(display, ctx.locale)
         search_base = result.accent_stripped if result.accent_stripped is not None else display
         search, _ = text_ops.casefold(search_base, ctx.locale)

@@ -207,12 +207,23 @@ def _build_step(operation: str, output: str, changed: bool) -> AppliedStep:
     )
 
 
-def build_unicode_trace(result: UnicodeProcessingResult) -> list[TraceStep]:
+def build_unicode_trace(
+    result: UnicodeProcessingResult, *, enabled: bool = True
+) -> list[TraceStep]:
     """Converts a `UnicodeProcessingResult`'s applied steps into
     `TraceStep`s (PII-safe hashes/masks, per normcore.pii) — shared by
     every adapter that runs `UnicodeNormalizer.process()` as its first
     stage (`GenericTextNormalizer`, `NameNormalizer`, and later adapters),
-    so trace assembly for the Unicode layer is implemented once."""
+    so trace assembly for the Unicode layer is implemented once.
+
+    `enabled=False` (from `NormalizationContext.include_trace`) skips the
+    whole thing and returns []. This is where the suppression lives rather
+    than in each adapter because all four callers funnel through here, and
+    this loop — two content_hash and two character_class_mask calls per
+    applied step — is the measured cost, not the adapters' own one-or-two
+    extra steps. Default True so every existing caller is unchanged."""
+    if not enabled:
+        return []
     trace: list[TraceStep] = []
     current_input = result.original
     for order, step in enumerate(result.steps, start=1):

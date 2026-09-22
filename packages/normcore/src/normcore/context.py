@@ -9,6 +9,7 @@ inside a normalizer.
 from __future__ import annotations
 
 import json
+from functools import cached_property
 from typing import Any
 
 import blake3
@@ -35,12 +36,35 @@ class NormalizationContext(BaseModel):
     default_region: str | None = None
     error_policy: ErrorPolicy = ErrorPolicy.RETURN_ORIGINAL
     pii_visibility: str = "masked"
+    # Whether normalizers build the per-step `trace` (Source.txt §65).
+    # Default True — every interactive path (/preview, /field-test, /runs)
+    # needs it, and §65 is not optional for them. Bulk clone jobs set it
+    # False: clone_executor reads only `.display` and `.errors` off each
+    # result and discards the trace entirely, while building it costs 36%
+    # of COMPANY_NAME normalize time (cProfile on real data — the masks
+    # and content hashes behind each step run ~16 character_class_mask
+    # calls and ~328 unicodedata.category lookups PER VALUE).
+    #
+    # Deliberately NOT excluded from context_hash below (unlike
+    # pii_visibility): a traceless result is a different result, and must
+    # never be served from cache to a caller that asked for a traced one.
+    include_trace: bool = True
 
-    @property
+    @cached_property
     def context_hash(self) -> str:
         """Stable hash of everything that can change normalization behavior
         for a given value — used as part of cache keys (never includes the
         raw value itself, see ADR-016).
+
+        Cached, not recomputed per access: the model is frozen, so the
+        inputs to this hash cannot change over the instance's life. It was
+        a plain @property, which cost a full model_dump + json.dumps +
+        blake3 (measured 6.5us) on EVERY access — and a single value is
+        hashed 2-3 times (planner cache key, Dispatcher's context_hash
+        assertion, and the normalizer stamping it onto its NormalizedValue)
+        while one context is reused across an entire column's distinct
+        values. cached_property does not appear in model_dump/model_fields,
+        so serialization and the hash payload below are unaffected.
         """
         payload = self.model_dump(mode="json", exclude={"pii_visibility"})
         canonical = _canonical_json(payload)

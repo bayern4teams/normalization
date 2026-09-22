@@ -152,7 +152,7 @@ class NameNormalizer:
             raise NormalizerFailure(msg, operation="unicode_process") from exc
 
         cleaned = unicode_result.final_value
-        trace = build_unicode_trace(unicode_result)
+        trace = build_unicode_trace(unicode_result, enabled=ctx.include_trace)
 
         if ctx.semantic_type in (FieldSemanticType.GIVEN_NAME, FieldSemanticType.FAMILY_NAME):
             return _normalize_single_component(value, cleaned, trace, unicode_result, ctx)
