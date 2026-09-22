@@ -64,6 +64,8 @@ class DistinctValuePlanner:
         hook in here rather than timing at the row level, where duplicate
         rows sharing one deduped result would corrupt the percentiles.
         """
+        self._prepare_batch(distinct_values, semantic_type, context)
+
         if self._cache is None:
             results: dict[str, NormalizedValue] = {}
             for value in distinct_values:
@@ -116,6 +118,34 @@ class DistinctValuePlanner:
             self._cache.put_many(pending_writes)
 
         return results
+
+    def _prepare_batch(
+        self,
+        distinct_values: list[str],
+        semantic_type: FieldSemanticType,
+        context: NormalizationContext,
+    ) -> None:
+        """Give a normalizer one shot at the whole distinct-value list
+        before it is asked for them one at a time.
+
+        This exists for normalizers whose real cost is a per-value round
+        trip to something external: `AddressNormalizer` was issuing ONE
+        HTTP request per address to the libpostal sidecar, even though
+        that sidecar's /parse endpoint has always accepted a list. The
+        planner is the only place that holds the full distinct set, so
+        the hook belongs here.
+
+        Probed with getattr rather than declared on the Normalizer
+        Protocol: exactly one normalizer implements it, every other one
+        (and every test double) is unaffected, and a normalizer that
+        cannot batch should not be forced to define a no-op. Failures are
+        the hook's own problem to swallow — it is an optimization, and
+        the per-value path below stays correct on its own.
+        """
+        normalizer = self._dispatcher.registry.get(semantic_type)
+        prepare = getattr(normalizer, "prepare_batch", None)
+        if prepare is not None:
+            prepare(distinct_values, context)
 
     def normalize_column(
         self,

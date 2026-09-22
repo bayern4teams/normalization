@@ -103,6 +103,29 @@ class LibpostalClient:
         components = results[0]["components"]
         return [(c["value"], c["label"]) for c in components]
 
+    def parse_many(self, addresses: Sequence[str]) -> list[list[tuple[str, str]]]:
+        """One sidecar round-trip for a whole batch. The /parse endpoint
+        already took a LIST (`{"addresses": [...]}`) — `parse` above was
+        sending exactly one item per request, so a column of N addresses
+        cost N serial HTTP round-trips. Same wire format, same response
+        shape, N times fewer requests.
+
+        Deliberately not part of `LibpostalParser`: the Protocol is
+        satisfied by lightweight test doubles that implement only `parse`,
+        and `AddressNormalizer` probes for this method rather than
+        requiring it, so those doubles keep working unchanged.
+        """
+        if not addresses:
+            return []
+        try:
+            resp = self._client.post("/parse", json={"addresses": list(addresses)})
+            resp.raise_for_status()
+        except httpx.HTTPError as exc:
+            msg = f"libpostal sidecar batch request failed: {exc}"
+            raise LibpostalUnavailableError(msg) from exc
+        results = resp.json()
+        return [[(c["value"], c["label"]) for c in r["components"]] for r in results]
+
     def health(self) -> dict[str, object]:
         resp = self._client.get("/health")
         resp.raise_for_status()
@@ -168,9 +191,54 @@ class AddressNormalizer:
         self._circuit = _CircuitBreaker(
             threshold=_CIRCUIT_FAILURE_THRESHOLD, cooldown_seconds=_CIRCUIT_COOLDOWN_SECONDS
         )
+        # Filled by prepare_batch, read by normalize. Keyed by the RAW
+        # input value, holding that value's own unicode result and parsed
+        # components, so a concurrent caller replacing this dict can only
+        # ever cost a cache miss (-> the per-value path below), never hand
+        # one value's components to a different value. Replaced wholesale
+        # per batch, so it is bounded by one chunk's distinct values and
+        # cannot grow across a run.
+        self._primed: dict[str, tuple[object, list[tuple[str, str]]]] = {}
 
     def can_handle(self, field_type: FieldSemanticType, ctx: NormalizationContext) -> bool:
         return field_type in self.supported_types
+
+    def prepare_batch(self, values: Sequence[str], ctx: NormalizationContext) -> None:
+        """Optional batch hook (DistinctValuePlanner probes for it): does
+        the unicode pass plus ONE batched sidecar call for every distinct
+        value up front, so the per-value `normalize` below becomes pure
+        assembly with no network in it.
+
+        The unicode result is memoized alongside the components precisely
+        so this is a MOVE of work, not a duplicate of it — `normalize`
+        reuses both. Any failure here is swallowed: the memo just stays
+        empty and every value takes the original per-value path, which
+        still has its own circuit breaker and fallback.
+        """
+        parse_many = getattr(self._libpostal, "parse_many", None)
+        if parse_many is None or self._circuit.is_open():
+            return
+        uniq = [v for v in dict.fromkeys(values) if v is not None and v.strip() != ""]
+        if not uniq:
+            return
+        options = UnicodeProcessingOptions(
+            form=UnicodeForm.NFC, include_accent_stripped=True, include_confusables=False
+        )
+        unicode_results = [self._unicode.process(v, options) for v in uniq]
+        try:
+            batched = parse_many([r.final_value for r in unicode_results])
+        except LibpostalUnavailableError:
+            self._circuit.record_failure()
+            self._primed = {}
+            return
+        if len(batched) != len(uniq):
+            # A short/over-long response means the sidecar did not answer
+            # per-address in order; trusting it would silently misattribute
+            # components. Drop the batch and let every value go per-value.
+            self._primed = {}
+            return
+        self._circuit.record_success()
+        self._primed = dict(zip(uniq, zip(unicode_results, batched, strict=True), strict=True))
 
     def normalize(self, value: str | None, ctx: NormalizationContext) -> NormalizedValue:
         if value is None:
@@ -178,23 +246,29 @@ class AddressNormalizer:
         if value.strip() == "":
             return _missing(value, MissingKind.EMPTY_STRING, ctx)
 
-        options = UnicodeProcessingOptions(
-            form=UnicodeForm.NFC, include_accent_stripped=True, include_confusables=False
-        )
-        unicode_result = self._unicode.process(value, options)
-        cleaned = unicode_result.final_value
-        trace = build_unicode_trace(unicode_result)
+        primed = self._primed.get(value)
+        if primed is not None:
+            unicode_result, raw_components = primed
+            cleaned = unicode_result.final_value
+            trace = build_unicode_trace(unicode_result, enabled=ctx.include_trace)
+        else:
+            options = UnicodeProcessingOptions(
+                form=UnicodeForm.NFC, include_accent_stripped=True, include_confusables=False
+            )
+            unicode_result = self._unicode.process(value, options)
+            cleaned = unicode_result.final_value
+            trace = build_unicode_trace(unicode_result, enabled=ctx.include_trace)
 
-        if self._circuit.is_open():
-            return _fallback(value, cleaned, ctx, trace, reason="circuit breaker open")
+            if self._circuit.is_open():
+                return _fallback(value, cleaned, ctx, trace, reason="circuit breaker open")
 
-        try:
-            raw_components = self._libpostal.parse(cleaned)
-        except LibpostalUnavailableError as exc:
-            self._circuit.record_failure()
-            return _fallback(value, cleaned, ctx, trace, reason=str(exc))
+            try:
+                raw_components = self._libpostal.parse(cleaned)
+            except LibpostalUnavailableError as exc:
+                self._circuit.record_failure()
+                return _fallback(value, cleaned, ctx, trace, reason=str(exc))
 
-        self._circuit.record_success()
+            self._circuit.record_success()
 
         structured = _build_component_structure(raw_components)
         postcode_valid = _validate_postcode(structured, ctx)
