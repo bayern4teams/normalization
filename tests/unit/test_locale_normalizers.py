@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import pytest
 from normalizers.country import CountryNormalizer
+from normalizers.country_codes import resolve_country_alpha2
 from normalizers.language import LanguageNormalizer
 from normalizers.script import ScriptNormalizer
 from normcore.context import NormalizationContext
@@ -159,3 +160,52 @@ class TestScriptNormalizer:
         ctx = _ctx(FieldSemanticType.SCRIPT)
         result = script_normalizer.normalize("12345 !@#", ctx)
         assert result.structured["script"] is None
+
+
+@pytest.mark.unit
+class TestEmpiricalCountryAliases:
+    """Every alias here was found by running a real 1.76M-row CountryCode
+    column through the normalizer, not chosen speculatively — the module
+    docstring asks for exactly that. Most are ISO renames that pycountry
+    no longer resolves under the old name."""
+
+    @pytest.mark.parametrize(
+        ("value", "expected"),
+        [
+            ("Turkey", "TR"),  # ISO renamed it Türkiye in 2022
+            ("Turkiye", "TR"),
+            ("Macedonia, the Former Yugoslav Republic of", "MK"),  # renamed 2019
+            ("Macedonia", "MK"),
+            ("Russia", "RU"),
+            ("US Virgin Islands", "VI"),
+            ("U.S. Virgin Islands", "VI"),  # via the dotless alias retry
+            ("Democratic Republic of the Congo", "CD"),
+            ("Cape Verde", "CV"),  # renamed Cabo Verde
+            ("Swaziland", "SZ"),  # renamed Eswatini 2018
+            ("The Bahamas", "BS"),
+            ("Ivory Coast", "CI"),
+            ("Bosnia and Herzegowina", "BA"),  # misspelling seen in the data
+        ],
+    )
+    def test_renamed_and_common_names_resolve(self, value: str, expected: str) -> None:
+        assert resolve_country_alpha2(value) == expected
+
+    def test_the_two_congos_stay_distinct(self) -> None:
+        # The most dangerous possible mistake in this table: CD is
+        # Kinshasa, CG is Brazzaville. The DRC alias must not shadow the
+        # Republic of the Congo, which pycountry resolves on its own.
+        assert resolve_country_alpha2("Democratic Republic of the Congo") == "CD"
+        assert resolve_country_alpha2("Republic of the Congo") == "CG"
+
+    def test_diacritic_spelling_still_resolves_without_an_alias(self) -> None:
+        # "Türkiye" already resolves via pycountry, so it is deliberately
+        # NOT in the alias table — a dead alias is worse than none.
+        assert resolve_country_alpha2("Türkiye") == "TR"
+
+    @pytest.mark.parametrize("value", ["Kosovo", "Virgin Islands", "Oo", "Moscow", "122006"])
+    def test_genuinely_unresolvable_values_stay_unresolved(self, value: str) -> None:
+        # Kosovo has no ISO 3166-1 code; a bare "Virgin Islands" is
+        # ambiguous (US=VI, British=VG); the rest are real values from the
+        # column that simply are not countries. Guessing here would be
+        # worse than returning None.
+        assert resolve_country_alpha2(value) is None
