@@ -57,6 +57,40 @@ if TYPE_CHECKING:
     from normcore.interfaces import ComponentVersion, Explanation, StepSpec, ValidationResult
 
 _VERSION = "0.1.0"
+
+# Scheme assumed for a bare host. https, not http: every major browser
+# address bar and every modern site defaults there, so guessing http
+# would be the less-correct guess, not the more-conservative one.
+_ASSUMED_SCHEME = "https"
+
+
+def _looks_like_bare_host(value: str) -> bool:
+    """Is this a hostname someone wrote without a scheme?
+
+    Real website columns are full of `www.example.com` — a perfectly
+    valid site address that `urlsplit` reports as a bare *path* with no
+    scheme and no host, which used to make it INVALID. Measured on a real
+    1.27M-row website column: 1,227,979 of 1,266,268 values (97%) were
+    rejected this way.
+
+    Deliberately conservative, and deliberately not a TLD list (which
+    would need perpetual updating). Requires: no whitespace, at least two
+    dot-separated labels, all non-empty, and a final label that is purely
+    alphabetic and at least two characters. That accepts `example.com`
+    and `example.com/path`, and rejects `3.14`, `192.168.1.1` and
+    `hello world`. A syntactically host-shaped non-host like
+    `notes.txt` does slip through — it is indistinguishable from a real
+    hostname without a TLD list, and the result is still flagged and
+    reported as an assumption rather than presented as fact.
+    """
+    host = value.split("/", 1)[0].split("?", 1)[0].split("#", 1)[0]
+    if not host or any(c.isspace() for c in host):
+        return False
+    labels = host.rsplit("@", 1)[-1].split(".")
+    if len(labels) < 2 or not all(labels):
+        return False
+    tld = labels[-1].split(":", 1)[0]  # drop any :port
+    return len(tld) >= 2 and tld.isalpha()
 _PARSE_PARAMS_HASH = blake3.blake3(b"{}").hexdigest()
 
 _DEFAULT_PORTS = {"http": "80", "https": "443", "ftp": "21"}
@@ -119,12 +153,43 @@ class URLNormalizer:
         except ValueError as exc:
             return _invalid(value, ctx, reason=str(exc))
 
+        # No scheme AND no host means urlsplit found only a path — either
+        # genuine garbage, or a bare hostname written without a scheme.
+        # Try the repair before rejecting; `_looks_like_bare_host` is what
+        # keeps this from turning arbitrary text into a URL.
+        #
+        # Requiring an absent scheme matters: `mailto:a@b.com` also has an
+        # empty netloc, and its "b.com" IS host-shaped, so testing the
+        # netloc alone rewrote it to `https://mailto:a@b.com`. Caught by
+        # running the case, not by reading the code. The cost of this
+        # stricter test is that `example.com:8080` (which urlsplit reads
+        # as scheme "example.com") is not repaired — it stays INVALID
+        # exactly as it was before, so nothing regresses.
+        scheme_assumed = False
+        if not parts.scheme and not parts.netloc and _looks_like_bare_host(cleaned):
+            candidate = f"{_ASSUMED_SCHEME}://{cleaned}"
+            try:
+                repaired_parts = urlsplit(candidate)
+            except ValueError:
+                repaired_parts = None
+            if repaired_parts is not None and repaired_parts.netloc:
+                cleaned, parts, scheme_assumed = candidate, repaired_parts, True
+
         if not parts.scheme or not parts.netloc:
             return _invalid(value, ctx, reason="not an absolute URL (missing scheme or host)")
 
         scheme = parts.scheme.lower()
         flags: list[QualityFlag] = []
         warnings: list[str] = []
+        if scheme_assumed:
+            # The scheme is our inference, not the source's data — flagged
+            # so a caller can tell a guessed URL from a stated one, and
+            # surfaced in `repaired` (§0's distinct value types) so the
+            # exact repaired string is inspectable, not just its effect.
+            flags.append(QualityFlag.PARSER_FALLBACK)
+            warnings.append(
+                f"no scheme in input; assumed {_ASSUMED_SCHEME!r} for a bare hostname"
+            )
 
         host, idn_ok = _normalize_host(parts.hostname or "")
         if not idn_ok:
@@ -164,17 +229,19 @@ class URLNormalizer:
             "fragment": fragment,
             "is_idn": host != (parts.hostname or "").lower(),
             "tracking_params_detected": tracking_params,
+            "scheme_assumed": scheme_assumed,
         }
 
         return NormalizedValue(
             original=value,
+            repaired=cleaned if scheme_assumed else None,
             display=display,
             comparison=comparison,
             search=comparison,
             structured=structured,
             validation_status="VALID",
             normalization_status=NormalizationStatus.NORMALIZED,
-            confidence=1.0 if idn_ok else 0.7,
+            confidence=min(1.0 if idn_ok else 0.7, 0.8 if scheme_assumed else 1.0),
             flags=flags,
             warnings=warnings,
             trace=[_normalize_trace_step(value, changed=(display != cleaned))],

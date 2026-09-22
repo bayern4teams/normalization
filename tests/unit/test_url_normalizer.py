@@ -141,3 +141,56 @@ class TestOriginalNeverMutated:
         raw = "HTTP://Example.COM:80/Path/"
         result = normalizer.normalize(raw, _ctx())
         assert result.original == raw
+
+
+@pytest.mark.unit
+class TestBareHostnameRepair:
+    """A real 1.27M-row website column rejected 97% of its values as "not
+    an absolute URL" because they were written `www.example.com`. The
+    repair must fix those without turning arbitrary text into a URL."""
+
+    def test_bare_hostname_gets_the_assumed_scheme(self, normalizer: URLNormalizer) -> None:
+        result = normalizer.normalize("www.boutrosfonts.com", _ctx())
+        assert result.normalization_status is NormalizationStatus.NORMALIZED
+        assert result.display == "https://www.boutrosfonts.com"
+
+    def test_bare_hostname_with_path_and_query(self, normalizer: URLNormalizer) -> None:
+        result = normalizer.normalize("example.com/path?a=1", _ctx())
+        assert result.display == "https://example.com/path?a=1"
+
+    def test_assumption_is_disclosed_not_silent(self, normalizer: URLNormalizer) -> None:
+        result = normalizer.normalize("www.example.com", _ctx())
+        assert result.structured["scheme_assumed"] is True
+        assert result.repaired == "https://www.example.com"
+        assert QualityFlag.PARSER_FALLBACK in result.flags
+        assert result.warnings
+        assert result.confidence < 1.0
+
+    def test_explicit_scheme_is_untouched_and_unflagged(self, normalizer: URLNormalizer) -> None:
+        result = normalizer.normalize("http://example.com", _ctx())
+        assert result.display == "http://example.com"
+        assert result.structured["scheme_assumed"] is False
+        assert QualityFlag.PARSER_FALLBACK not in result.flags
+        assert result.confidence == 1.0
+
+    @pytest.mark.parametrize(
+        "value",
+        [
+            "mailto:a@b.com",  # real scheme, empty netloc, host-shaped tail
+            "tel:+15551234",
+            "3.14",
+            "192.168.1.1",
+            "hello world",
+            "not a url",
+            "//example.com",
+        ],
+    )
+    def test_non_hostnames_are_still_invalid(
+        self, normalizer: URLNormalizer, value: str
+    ) -> None:
+        result = normalizer.normalize(value, _ctx())
+        assert result.normalization_status is NormalizationStatus.INVALID
+
+    def test_original_is_preserved_through_a_repair(self, normalizer: URLNormalizer) -> None:
+        result = normalizer.normalize("www.example.com", _ctx())
+        assert result.original == "www.example.com"
