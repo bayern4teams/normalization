@@ -30,7 +30,9 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from normcore.context import NormalizationContext
-from normcore.enums import FieldSemanticType
+from normcore.enums import FieldSemanticType, QualityFlag
+
+from normcore import multivalue
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -39,6 +41,29 @@ if TYPE_CHECKING:
 
 _MAX_SAMPLE_VALUES_CHECKED = 20
 _MIN_SAMPLE_MATCH_RATIO_TO_CONFIRM = 0.6
+
+# Detection used to be name-first with values only ever CONFIRMING or
+# demoting a name match, so a column whose name matched nothing was never
+# offered to any validator at all — a `logo` column full of perfectly
+# well-formed URLs stayed unrecognised purely because "logo" is not in the
+# keyword table, and no keyword table is ever going to be complete.
+#
+# So: when the name yields nothing confident, ask the data instead. The bar
+# is deliberately much higher than for confirming a name match (essentially
+# every sampled value must validate), and the resulting confidence is
+# capped so a real name match always outranks it.
+_MIN_VALUE_ONLY_RATIO = 0.95
+_VALUE_ONLY_CONFIDENCE = 0.9
+
+# A value-only match is only evidence if the validator can actually say no.
+# `PassthroughNormalizer` declares every semantic type and accepts anything,
+# so wherever it is the registered handler for a type, 100% of any sample
+# "validates" and every column would be detected as that type. Probing with
+# a string no real type accepts proves the validator discriminates before
+# its agreement is believed. (The name-match path never needed this: a
+# permissive validator there can only CONFIRM a guess the name already
+# made.)
+_NEGATIVE_CONTROL = "zz~not~a~value~zz"
 
 
 @dataclass(frozen=True)
@@ -84,7 +109,11 @@ _FIELD_NAME_PATTERNS: tuple[tuple[re.Pattern[str], FieldSemanticType, float], ..
         ),
         (r"\b(tax[-_]?id|vat[-_]?number|ein)\b", FieldSemanticType.TAX_ID, 0.9),
         (r"\bcurrency\b", FieldSemanticType.CURRENCY, 0.85),
-        (r"\b(is|has)[-_]|[-_]flag\b", FieldSemanticType.BOOLEAN, 0.8),
+        # The separator is optional: `is_public`, `isPublic` and the very
+        # common flat `ispublic` are the same convention. `\b` still keeps
+        # this from firing inside a word (no boundary before "is" in
+        # "this"), and a wrong guess is demoted by real sample values below.
+        (r"\b(is|has)[-_]?[a-z]|[-_]flag\b", FieldSemanticType.BOOLEAN, 0.8),
         (r"\b(quantity|qty|weight|height|length|volume)\b", FieldSemanticType.QUANTITY, 0.75),
         (r"\b(price|amount|cost|total|balance|count|number|num)\b", FieldSemanticType.NUMERIC, 0.6),
     )
@@ -106,6 +135,33 @@ _SAMPLE_VALIDATORS: dict[FieldSemanticType, FieldSemanticType] = {
 }
 
 
+# Flat, separator-free column names (`firsthiredate`, `postalcode`) carry no
+# word boundary for `\b` to find, so the curated patterns above miss them
+# entirely. A second pass drops the boundaries and matches as a substring —
+# which is genuinely loose ("candidate" contains "date"), so it is allowed
+# ONLY for types whose guess can be checked against real values below, and
+# it starts well under any sane apply threshold. A relaxed name match on its
+# own is never enough; it has to be confirmed by the data.
+_RELAXED_CONFIDENCE_FACTOR = 0.6
+
+_RELAXED_NAME_PATTERNS: tuple[tuple[re.Pattern[str], FieldSemanticType, float], ...] = tuple(
+    (
+        re.compile(pattern.pattern.replace(r"\b", ""), re.IGNORECASE),
+        semantic_type,
+        confidence * _RELAXED_CONFIDENCE_FACTOR,
+    )
+    for pattern, semantic_type, confidence in _FIELD_NAME_PATTERNS
+    if semantic_type in _SAMPLE_VALIDATORS
+)
+
+
+def _name_variants(field_name: str) -> tuple[str, ...]:
+    """`firstHireDate` also matched as `first_Hire_Date`, so camelCase gets
+    the same word boundaries snake_case already has."""
+    snaked = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "_", field_name)
+    return (field_name,) if snaked == field_name else (field_name, snaked)
+
+
 def suggest_semantic_type(
     field_name: str,
     *,
@@ -118,16 +174,27 @@ def suggest_semantic_type(
     not an error."""
     candidates: dict[FieldSemanticType, TypeSuggestion] = {}
 
-    for pattern, semantic_type, confidence in _FIELD_NAME_PATTERNS:
-        if pattern.search(field_name) and semantic_type not in candidates:
+    variants = _name_variants(field_name)
+    for patterns, exact in ((_FIELD_NAME_PATTERNS, True), (_RELAXED_NAME_PATTERNS, False)):
+        for pattern, semantic_type, confidence in patterns:
+            if semantic_type in candidates:
+                continue
+            if not any(pattern.search(variant) for variant in variants):
+                continue
             candidates[semantic_type] = TypeSuggestion(
                 semantic_type=semantic_type,
                 confidence=confidence,
-                reason=f"field name matches /{pattern.pattern}/",
+                reason=(
+                    f"field name matches /{pattern.pattern}/"
+                    if exact
+                    else f"field name contains /{pattern.pattern}/ (no word boundary)"
+                ),
             )
 
     if sample_values is not None and registry is not None:
         _refine_with_sample_values(candidates, sample_values, registry)
+        if not any(c.confidence >= _VALUE_ONLY_CONFIDENCE for c in candidates.values()):
+            _suggest_from_values_alone(candidates, sample_values, registry)
 
     if not candidates:
         candidates[FieldSemanticType.FREE_TEXT] = TypeSuggestion(
@@ -139,12 +206,90 @@ def suggest_semantic_type(
     return sorted(candidates.values(), key=lambda s: s.confidence, reverse=True)
 
 
+def _parses_cleanly(normalizer: object, value: str, ctx: NormalizationContext) -> bool:
+    """Valid AND not arrived at by repair. `validate` alone is too weak
+    here: URL repairs a bare host, so `report.txt` is "valid" and a column
+    of filenames would be rewritten to https://report.txt."""
+    if not normalizer.validate(value, ctx).is_valid:  # type: ignore[attr-defined]
+        return False
+    result = normalizer.normalize(value, ctx)  # type: ignore[attr-defined]
+    return QualityFlag.PARSER_FALLBACK not in result.flags and result.original_kind is None
+
+
+def _discriminates(normalizer: object, ctx: NormalizationContext) -> bool:
+    """Whether this validator can say no at all. One that accepts a string
+    no real type would accept proves nothing by accepting real values
+    either, so its verdict is ignored entirely — it neither confirms nor
+    demotes."""
+    return not normalizer.validate(_NEGATIVE_CONTROL, ctx).is_valid  # type: ignore[attr-defined]
+
+
+def _flatten_sample(sample_values: Sequence[str | None]) -> list[str]:
+    """A list-shaped sample is validated element by element, the same way
+    Dispatcher.normalize will actually process it. Validating the raw
+    `['a@b.com']` instead would demote every correct guess about a column
+    that happens to hold lists."""
+    return [
+        element
+        for value in sample_values
+        if value
+        for element in (multivalue.split(value) or ([value], ""))[0]
+        if element
+    ][:_MAX_SAMPLE_VALUES_CHECKED]
+
+
+def _suggest_from_values_alone(
+    candidates: dict[FieldSemanticType, TypeSuggestion],
+    sample_values: Sequence[str | None],
+    registry: NormalizerRegistry,
+) -> None:
+    non_null_sample = _flatten_sample(sample_values)
+    if not non_null_sample:
+        return
+    matched: list[tuple[FieldSemanticType, int]] = []
+    for semantic_type, validator_type in _SAMPLE_VALIDATORS.items():
+        if semantic_type in candidates:
+            continue
+        normalizer = registry.get(validator_type)
+        if normalizer is None:
+            continue
+        ctx = NormalizationContext(
+            field_name="__type_detection_sample__", semantic_type=validator_type
+        )
+        if not _discriminates(normalizer, ctx):
+            continue
+        # Only CLEANLY parsed values are evidence here. A normalizer that
+        # had to repair the value accepted it on a guess, and a guess is
+        # not proof of what the column is: URL repairs a bare host, so a
+        # column of `report.txt` / `v1.2.tar` filenames would otherwise
+        # "validate" as URLs and get rewritten to https://report.txt. A
+        # name match may still be confirmed by a repaired value — there the
+        # column name already said what the type was.
+        matches = sum(1 for v in non_null_sample if _parses_cleanly(normalizer, v, ctx))
+        if matches / len(non_null_sample) >= _MIN_VALUE_ONLY_RATIO:
+            matched.append((semantic_type, matches))
+
+    # With no name to break the tie, two types both claiming the column is
+    # not evidence for either — say nothing rather than let dict order pick.
+    if len(matched) != 1:
+        return
+    semantic_type, matches = matched[0]
+    candidates[semantic_type] = TypeSuggestion(
+        semantic_type=semantic_type,
+        confidence=_VALUE_ONLY_CONFIDENCE,
+        reason=(
+            f"field name matched nothing, but {matches}/{len(non_null_sample)} "
+            "sample values validate as this type"
+        ),
+    )
+
+
 def _refine_with_sample_values(
     candidates: dict[FieldSemanticType, TypeSuggestion],
     sample_values: Sequence[str | None],
     registry: NormalizerRegistry,
 ) -> None:
-    non_null_sample = [v for v in sample_values if v][:_MAX_SAMPLE_VALUES_CHECKED]
+    non_null_sample = _flatten_sample(sample_values)
     if not non_null_sample:
         return
 
@@ -159,6 +304,8 @@ def _refine_with_sample_values(
         ctx = NormalizationContext(
             field_name="__type_detection_sample__", semantic_type=validator_type
         )
+        if not _discriminates(normalizer, ctx):
+            continue
         matches = sum(1 for v in non_null_sample if normalizer.validate(v, ctx).is_valid)
         ratio = matches / len(non_null_sample)
 

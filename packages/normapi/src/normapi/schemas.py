@@ -197,6 +197,16 @@ class CloneJobCreateRequest(BaseModel):
     source_database: str
     destination_connection_id: str
     destination_database: str
+    # Columns absent from `field_configs` get their semantic type detected
+    # from the column name plus a sample of real values; an explicit entry
+    # always overrides the guess. Off means "clone anything I did not list
+    # verbatim", which is what this did before detection existed.
+    autodetect_field_types: bool = True
+    # Sweep every remaining textual column into FREE_TEXT (unicode
+    # normalization, zero-width strip, whitespace collapse, punctuation
+    # folding). Off by default: folding is lossy, so it is the operator's
+    # call rather than something inference should decide.
+    normalize_unconfigured_text: bool = False
     # ponytail: stored inside normalization_clone_jobs.data's JSON blob,
     # not a separate table — consumed exactly twice (Phase 1 DDL, Phase 2
     # normalization) by the job that owns it. Promote to its own table

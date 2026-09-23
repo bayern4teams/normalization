@@ -31,6 +31,7 @@ import uuid
 from concurrent.futures import ProcessPoolExecutor
 from typing import TYPE_CHECKING, Any
 
+from normanalysis.type_detection import suggest_semantic_type
 from normexec.planner import DistinctValuePlanner
 from normio.connectors import (
     ClickHouseConnector,
@@ -45,6 +46,7 @@ from normapi.scaffold_profile import SCAFFOLD_PROFILE
 from normcore import CloneJobStatus, ErrorPolicy, FieldSemanticType, NormalizationContext
 
 if TYPE_CHECKING:
+    from normcore.dispatch import NormalizerRegistry
     from normexec.cache import NormalizationCache
 
     from normapi.pg_persistence import PgPersistence
@@ -110,7 +112,117 @@ def build_destination_writer(conn: dict) -> PostgresDestination | ClickHouseDest
     raise ValueError(msg)
 
 
-def create_clone_job(persistence: PgPersistence, *, request: dict) -> dict:
+# --- automatic field-type detection ---------------------------------------
+#
+# Without this, a column the operator did not explicitly list in
+# `field_configs` is cloned verbatim, so the quality of a clone is capped
+# by how exhaustively somebody hand-wrote its configuration. On a real
+# 13-table source, a hand-written config covered 10 columns out of 114;
+# every boolean, every date outside those 10, and every URL outside them
+# was copied unnormalized even though this codebase has had working
+# normalizers for all three the whole time.
+#
+# `suggest_semantic_type` (normanalysis, §61) already does the detection and
+# already checks its own guess against real values. This just calls it for
+# the columns nobody configured. Three properties make that safe:
+#   - an explicit config ALWAYS wins; inference only fills gaps,
+#   - only a guess confirmed by real sampled values clears the threshold,
+#   - what was inferred is written to the job as `inferred_field_configs`,
+#     so the decision is inspectable rather than silent (§85).
+_AUTODETECT_MIN_CONFIDENCE = float(os.environ.get("NORM_CLONE_AUTODETECT_MIN_CONFIDENCE", "0.9"))
+_AUTODETECT_SAMPLE_ROWS = int(os.environ.get("NORM_CLONE_AUTODETECT_SAMPLE_ROWS", "200"))
+
+# FREE_TEXT is the "nothing matched" fallback, and applying it would rewrite
+# arbitrary prose (punctuation folding, whitespace collapse) in every column
+# nobody configured — far too broad to do on a guess. An operator who wants
+# it can still ask for it explicitly.
+_NEVER_INFERRED = frozenset({FieldSemanticType.FREE_TEXT, FieldSemanticType.UNKNOWN})
+
+# Detection only applies to columns the SOURCE stores as text. A column the
+# source already types as timestamp/boolean/numeric/uuid has no
+# normalization problem to solve — the database itself guarantees the
+# format — and configuring one is actively harmful, because a configured
+# column's destination type becomes TEXT (see SEMANTIC_TYPE_TO_PG_TYPE), so
+# auto-detecting `created_at` would silently downgrade a real timestamp
+# column to a string. An operator can still force a semantic type onto any
+# column explicitly; this only governs what is inferred.
+#
+# An allow-list of substrings rather than a deny-list of typed names, so an
+# unrecognised type fails toward "leave it alone" instead of toward
+# rewriting it. Covers postgres text/varchar/char, ClickHouse
+# String/Nullable(String)/LowCardinality(String), MySQL longtext, etc.
+_TEXTUAL_NATIVE_TYPE_MARKERS = ("char", "text", "string", "clob", "enum", "json")
+
+
+def _is_textual(native_type: str) -> bool:
+    lowered = native_type.lower()
+    return any(marker in lowered for marker in _TEXTUAL_NATIVE_TYPE_MARKERS)
+
+
+def _sample_column_values(source: Any, table: str, columns: list[str]) -> dict[str, list[str]]:
+    """First batch only — one bounded read per table, not a scan."""
+    try:
+        for batch in source.read_table(
+            table, columns=columns, batch_size=_AUTODETECT_SAMPLE_ROWS
+        ):
+            # Arrow hands back native types (datetime, int, bool) for
+            # non-text columns; `suggest_semantic_type` is defined over the
+            # string form a normalizer would actually see.
+            return {
+                column: [str(v) for v in batch.column(column).to_pylist() if v is not None]
+                for column in columns
+            }
+    except Exception:
+        # cannot sample simply falls back to name-only evidence, which is
+        # exactly what happens for an empty table anyway. Never fail job
+        # creation because a sample read did not work.
+        return {}
+    return {}
+
+
+def _infer_field_configs(
+    source: Any,
+    tables: list[str],
+    explicit: dict[str, dict[str, str | None]],
+    registry: NormalizerRegistry,
+    *,
+    fallback_free_text: bool = False,
+) -> dict[str, dict[str, str]]:
+    """`fallback_free_text` sweeps every remaining textual column into
+    FREE_TEXT: unicode normalization, zero-width strip, whitespace collapse,
+    punctuation folding. Off by default because folding is lossy — an en
+    dash becomes a hyphen, and `(2018–present)` was not wrong to begin with
+    — so it is an operator's call, not a guess this can make. Measured
+    against an independently produced reference of a 13-table source, it
+    accounted for every remaining prose difference."""
+    inferred: dict[str, dict[str, str]] = {}
+    for table in tables:
+        configured = explicit.get(table, {})
+        unconfigured = [
+            c.name
+            for c in source.get_columns(table)
+            if not configured.get(c.name) and _is_textual(c.native_type)
+        ]
+        if not unconfigured:
+            continue
+        samples = _sample_column_values(source, table, unconfigured)
+        for column in unconfigured:
+            best = suggest_semantic_type(
+                column, sample_values=samples.get(column), registry=registry
+            )[0]
+            if (
+                best.confidence >= _AUTODETECT_MIN_CONFIDENCE
+                and best.semantic_type not in _NEVER_INFERRED
+            ):
+                inferred.setdefault(table, {})[column] = best.semantic_type.value
+            elif fallback_free_text:
+                inferred.setdefault(table, {})[column] = FieldSemanticType.FREE_TEXT.value
+    return inferred
+
+
+def create_clone_job(
+    persistence: PgPersistence, *, request: dict, registry: NormalizerRegistry | None = None
+) -> dict:
     """Creates the job PENDING_DB_CREATE (decision #6). `request.tables`
     is captured NOW, at creation — every table in the chosen origin
     database is cloned automatically (decision #3), so the job's table
@@ -121,10 +233,26 @@ def create_clone_job(persistence: PgPersistence, *, request: dict) -> dict:
         msg = f"No such connection: {request['source_connection_id']}"
         raise CloneJobNotFoundError(msg)
     source = build_source_connector(source_conn, request["source_database"])
+    explicit_configs = request["field_configs"]
+    inferred_configs: dict[str, dict[str, str]] = {}
     try:
         tables = list(source.list_tables())
+        if registry is not None and request.get("autodetect_field_types", True):
+            inferred_configs = _infer_field_configs(
+                source,
+                tables,
+                explicit_configs,
+                registry,
+                fallback_free_text=request.get("normalize_unconfigured_text", False),
+            )
     finally:
         source.close()
+
+    # Explicit always wins, per column — inference only fills the gaps.
+    field_configs = {
+        table: {**inferred_configs.get(table, {}), **explicit_configs.get(table, {})}
+        for table in set(inferred_configs) | set(explicit_configs)
+    }
 
     job_id = str(uuid.uuid4())
     job = {
@@ -135,7 +263,8 @@ def create_clone_job(persistence: PgPersistence, *, request: dict) -> dict:
         "destination_connection_id": request["destination_connection_id"],
         "destination_database": request["destination_database"],
         "tables": tables,
-        "field_configs": request["field_configs"],
+        "field_configs": field_configs,
+        "inferred_field_configs": inferred_configs,
         "progress": {
             "current_table": None,
             "tables_completed": [],
@@ -518,7 +647,7 @@ def _run_phase2(
         job["progress"] = progress
         job["status"] = CloneJobStatus.COMPLETED.value
         persistence.save_clone_job(job_id, job)
-    except Exception as exc:  # noqa: BLE001 - a job-level failure is recorded, not silently swallowed
+    except Exception as exc:
         job["status"] = CloneJobStatus.FAILED.value
         job["error"] = str(exc)
         persistence.save_clone_job(job_id, job)

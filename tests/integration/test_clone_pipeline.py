@@ -155,7 +155,7 @@ def test_postgres_clone_pipeline_ddl_population_errors_and_resume(persistence: P
         assert founded1 == "1989-12-11"  # valid date, normalized cleanly
         email2, founded2 = by_id[2]
         assert email2 == "not-an-email"  # decision #8: failed value falls back to original
-        assert founded2 == "d1989-12-11"  # same, for the DATE column — this used to crash the job
+        assert founded2 == "no-date-here"  # same, for the DATE column — this used to crash the job
         assert conn.execute("SELECT count(*) FROM customers").fetchone()[0] == 3
 
     errors = persistence.load_clone_job_errors_page(job_id, limit=100, offset=0)
@@ -165,7 +165,7 @@ def test_postgres_clone_pipeline_ddl_population_errors_and_resume(persistence: P
         if e["table_name"] == "clone_source"
     }
     assert bad_value_errors.get(("email", "not-an-email"))
-    assert bad_value_errors.get(("founded", "d1989-12-11"))
+    assert bad_value_errors.get(("founded", "no-date-here"))
 
     # Resume proof (decision #10): simulate a crash by resetting an
     # already-fully-completed job back to RUNNING, then invoke the

@@ -41,7 +41,10 @@ CREATE ROLE writable_user WITH LOGIN PASSWORD 'writable_pass' CREATEDB;
 -- real bug found running this feature against messy real-world data: a
 -- failed DATE-configured value's fallback (decision #8) couldn't be
 -- inserted into a native DATE destination column, crashing the whole
--- job — see SEMANTIC_TYPE_TO_PG_TYPE's docstring.
+-- job — see SEMANTIC_TYPE_TO_PG_TYPE's docstring. The value has to be one
+-- DateNormalizer genuinely cannot read: a sentinel letter glued to a real
+-- date (`d1989-12-11`) is now repaired, so it no longer exercises the
+-- failure path this row exists for.
 CREATE TABLE IF NOT EXISTS clone_source (
     id SERIAL PRIMARY KEY,
     email TEXT,
@@ -50,6 +53,6 @@ CREATE TABLE IF NOT EXISTS clone_source (
 
 INSERT INTO clone_source (email, founded) VALUES
     ('Valid.User@EXAMPLE.com', '1989-12-11'),
-    ('not-an-email', 'd1989-12-11');
+    ('not-an-email', 'no-date-here');
 
 GRANT SELECT ON clone_source TO readonly_user;

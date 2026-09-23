@@ -10,6 +10,9 @@ re-implemented per normalizer.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+
+from normcore import multivalue
 from normcore.context import NormalizationContext
 from normcore.enums import FieldSemanticType, NormalizationStatus, Reversibility
 from normcore.errors import NormalizerFailure, apply_error_policy
@@ -112,6 +115,106 @@ class Dispatcher:
 
         normalizer = self._registry.require(semantic_type)
 
+        # One cell, many values. Sources routinely park a serialized list
+        # in a text column; without this every such row fails as a single
+        # malformed value, which is both wrong and drowns the real errors.
+        # Handled here rather than in each normalizer because this is the
+        # one place every call path converges (direct dispatch and the
+        # distinct-value planner's cache miss alike), so every semantic
+        # type gets it for free and none of them has to know about it.
+        if value is not None:
+            elements = multivalue.split(value)
+            if elements is not None:
+                return self._normalize_elements(
+                    value,
+                    elements,
+                    normalizer=normalizer,
+                    semantic_type=semantic_type,
+                    context=context,
+                    profile=profile,
+                )
+
+        return self._normalize_one(
+            value,
+            normalizer=normalizer,
+            semantic_type=semantic_type,
+            context=context,
+            profile=profile,
+        )
+
+    def _normalize_elements(
+        self,
+        value: str,
+        elements: tuple[list[str | None], str],
+        *,
+        normalizer: Normalizer,
+        semantic_type: FieldSemanticType,
+        context: NormalizationContext,
+        profile: NormalizationProfile,
+    ) -> NormalizedValue:
+        items, style = elements
+        results = [
+            self._normalize_one(
+                item,
+                normalizer=normalizer,
+                semantic_type=semantic_type,
+                context=context,
+                profile=profile,
+            )
+            for item in items
+        ]
+
+        def view(field: str) -> str | None:
+            values = [getattr(r, field) for r in results]
+            # A view no element produced stays absent, rather than becoming
+            # a list of nulls that looks like real content.
+            if values and all(v is None for v in values):
+                return None
+            return multivalue.join(values, style)
+
+        confidences = [r.confidence for r in results if r.confidence is not None]
+        trace = [
+            step.model_copy(update={"step_order": order})
+            for order, step in enumerate(
+                (step for r in results for step in r.trace), start=1
+            )
+        ]
+        return NormalizedValue(
+            original=value,
+            display=view("display"),
+            comparison=view("comparison"),
+            search=view("search"),
+            structured={
+                "element_count": len(results),
+                "elements": [r.structured for r in results],
+            },
+            validation_status=_worst(r.validation_status for r in results),
+            normalization_status=_worst_status(r.normalization_status for r in results),
+            confidence=min(confidences) if confidences else None,
+            flags=list(dict.fromkeys(flag for r in results for flag in r.flags)),
+            warnings=[w for r in results for w in r.warnings],
+            errors=[
+                f"element {i}: {error}"
+                for i, r in enumerate(results)
+                for error in r.errors
+            ],
+            trace=trace,
+            lossiness=_worst_lossiness(r.lossiness for r in results),
+            profile_version=profile.version,
+            env_id=self._env_id,
+            semantic_type=semantic_type,
+            context_hash=context.context_hash,
+        )
+
+    def _normalize_one(
+        self,
+        value: str | None,
+        *,
+        normalizer: Normalizer,
+        semantic_type: FieldSemanticType,
+        context: NormalizationContext,
+        profile: NormalizationProfile,
+    ) -> NormalizedValue:
         try:
             result = normalizer.normalize(value, context)
         except NormalizerFailure as exc:
@@ -163,3 +266,43 @@ class Dispatcher:
         return result.model_copy(
             update={"profile_version": profile.version, "env_id": self._env_id}
         )
+
+
+# Aggregating a list-shaped cell: the cell is only as good as its worst
+# element, so each of these collapses the elements by severity rather than
+# by majority — a list with one unparseable member is not a clean cell.
+_STATUS_SEVERITY: tuple[NormalizationStatus, ...] = (
+    NormalizationStatus.UNCHANGED,
+    NormalizationStatus.NORMALIZED,
+    NormalizationStatus.REPAIRED,
+    NormalizationStatus.PARSED,
+    NormalizationStatus.PARTIAL,
+    NormalizationStatus.NEEDS_REVIEW,
+    NormalizationStatus.AMBIGUOUS,
+    NormalizationStatus.INVALID,
+    NormalizationStatus.FAILED,
+)
+_VALIDATION_SEVERITY: tuple[str, ...] = ("VALID", "MISSING", "UNKNOWN", "AMBIGUOUS", "INVALID")
+_LOSSINESS_SEVERITY: tuple[Reversibility, ...] = (
+    Reversibility.LOSSLESS,
+    Reversibility.REVERSIBLE,
+    Reversibility.PARTIALLY_REVERSIBLE,
+    Reversibility.LOSSY,
+)
+
+
+def _worst_by(order: tuple[object, ...], values: Iterable[object], default: object) -> object:
+    ranked = [v for v in values if v in order]
+    return max(ranked, key=order.index) if ranked else default
+
+
+def _worst_status(values: Iterable[NormalizationStatus]) -> NormalizationStatus:
+    return _worst_by(_STATUS_SEVERITY, values, NormalizationStatus.NORMALIZED)
+
+
+def _worst(values: Iterable[str | None]) -> str | None:
+    return _worst_by(_VALIDATION_SEVERITY, values, None)
+
+
+def _worst_lossiness(values: Iterable[Reversibility]) -> Reversibility:
+    return _worst_by(_LOSSINESS_SEVERITY, values, Reversibility.LOSSLESS)

@@ -42,6 +42,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Body, Depends, HTTPException
 from normcore.pii import safe_preview
+from normexec.cache import NormalizationCache
 
 from normanalysis import (
     HandoffArtifact,
@@ -114,7 +115,6 @@ from normdict import (
     DictionaryLoader,
     DictionaryNotFoundError,
 )
-from normexec.cache import NormalizationCache
 
 router = APIRouter(prefix="/normalization")
 
@@ -888,6 +888,7 @@ def discover_columns(
 def create_clone_job(
     body: CloneJobCreateRequest,
     connections: Annotated[PgPersistence, Depends(get_connections)],
+    dispatcher: Annotated[Dispatcher, Depends(get_dispatcher)],
 ) -> CloneJobCreateResponse:
     try:
         job = clone_executor.create_clone_job(
@@ -901,7 +902,10 @@ def create_clone_job(
                     table: {column: (t.value if t is not None else None) for column, t in cols.items()}
                     for table, cols in body.field_configs.items()
                 },
+                "autodetect_field_types": body.autodetect_field_types,
+                "normalize_unconfigured_text": body.normalize_unconfigured_text,
             },
+            registry=dispatcher.registry,
         )
     except CloneJobNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
