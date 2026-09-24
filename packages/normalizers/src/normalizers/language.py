@@ -4,12 +4,27 @@ ISO 639 canonicalization via `pycountry.languages.lookup()`:
 `English / en / eng` all resolve to the same canonical `en` (alpha_2)
 code, falling back to alpha_3 for languages with no two-letter code.
 `source_value` is always retained alongside `canonical_code`.
+
+BCP 47 tags (`en-US`, `zh-Hans-CN`, `fr_FR`, `pt-BR`) are parsed before
+that lookup. Every one of them used to come back INVALID, because
+pycountry only knows bare ISO 639 codes and names — yet a region-tagged
+tag is one of the commonest real-world spellings of a language. The
+language subtag is what resolves; the script, territory and variant are
+NOT discarded but recorded in `structured`, so collapsing `en-US` and
+`en-GB` to `en` (which is the point, for matching) stays inspectable.
+
+Babel does the parsing and the deprecated-subtag mapping (`iw` -> `he`,
+`in` -> `id`, `mo` -> `ro`; 434 aliases). `langcodes` was evaluated for
+this and is not needed — Babel is already a dependency here and covers
+both jobs, so adding a second BCP 47 library would buy nothing.
 """
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, cast
 
+import babel.core
 import blake3
 import pyarrow as pa
 import pycountry
@@ -27,6 +42,12 @@ if TYPE_CHECKING:
 
 _VERSION = "0.1.0"
 _PARSE_PARAMS_HASH = blake3.blake3(b"{}").hexdigest()
+
+# BCP 47 allows "-"; real data (and POSIX locale strings) also use "_".
+_TAG_SEPARATORS = ("-", "_")
+
+# Deprecated ISO 639 subtags CLDR maps to their modern equivalent.
+_LANGUAGE_ALIASES: Mapping[str, str] = babel.core.get_global("language_aliases")
 
 
 class _StaticStepSpec:
@@ -57,7 +78,8 @@ class LanguageNormalizer:
             return _missing(value, MissingKind.EMPTY_STRING, ctx)
 
         cleaned = value.strip()
-        language = _resolve_language(cleaned)
+        subtag, tag_parts = _split_language_tag(cleaned)
+        language = _resolve_language(subtag)
         if language is None:
             return _unresolved(value, ctx)
 
@@ -67,6 +89,9 @@ class LanguageNormalizer:
             "source_value": cleaned,
             "canonical_code": canonical_code,
             "language_name": language.name,
+            # Present (and non-null) only for a tag that actually carried
+            # them — what "en-US" means beyond "en" is not thrown away.
+            **tag_parts,
         }
 
         return NormalizedValue(
@@ -133,6 +158,43 @@ class LanguageNormalizer:
         return None
 
 
+def _split_language_tag(cleaned: str) -> tuple[str, dict[str, str]]:
+    """Split a BCP 47 tag into its language subtag and the rest.
+
+    Returns the value unchanged when it is not tag-shaped, so plain codes
+    and names ("en", "English") take exactly the path they always did.
+    Parsing is syntactic only — Babel happily parses "xx-YY" — so the
+    subtag is still validated against ISO 639 by `_resolve_language`.
+    """
+    if not any(sep in cleaned for sep in _TAG_SEPARATORS):
+        return cleaned, {}
+
+    for separator in _TAG_SEPARATORS:
+        if separator not in cleaned:
+            continue
+        try:
+            parsed = babel.core.parse_locale(cleaned, sep=separator)
+        except (ValueError, TypeError):
+            continue
+        # Babel returns a 4-tuple, or a 5-tuple when the tag carries a
+        # modifier ("ca_ES@valencia"). Indexing rather than unpacking
+        # keeps both shapes working.
+        language, territory, script, variant = parsed[0], parsed[1], parsed[2], parsed[3]
+        if not language:
+            continue
+        # An alias may itself carry a script ("sh" -> "sr_Latn").
+        alias = _LANGUAGE_ALIASES.get(language, language)
+        alias_language, _, alias_script = alias.partition("_")
+        parts = {
+            "tag_script": script or alias_script or None,
+            "tag_territory": territory,
+            "tag_variant": variant,
+        }
+        return alias_language, {k: v for k, v in parts.items() if v}
+
+    return cleaned, {}
+
+
 def _resolve_language(cleaned: str) -> pycountry.db.Data | None:
     """Tries exact ISO 639 code fields FIRST, before falling back to
     `pycountry.languages.lookup()`'s generic (code-or-name) search.
@@ -159,7 +221,22 @@ def _resolve_language(cleaned: str) -> pycountry.db.Data | None:
     try:
         return cast("pycountry.db.Data", pycountry.languages.lookup(cleaned))
     except LookupError:
-        return None
+        pass
+
+    # Deprecated subtag, last. pycountry stays the authority, so a code it
+    # still recognizes keeps its own answer ("sh" is a live pycountry
+    # entry and is NOT rewritten to CLDR's "sr_Latn"). Without this a
+    # bare "iw" was INVALID while "iw-IL" resolved, purely because only
+    # the tagged form went through the alias map.
+    alias = _LANGUAGE_ALIASES.get(lowered)
+    if alias is not None:
+        alias_language, _, _ = alias.partition("_")
+        resolved = pycountry.languages.get(alpha_2=alias_language) or pycountry.languages.get(
+            alpha_3=alias_language
+        )
+        if resolved is not None:
+            return cast("pycountry.db.Data", resolved)
+    return None
 
 
 def _unresolved(value: str, ctx: NormalizationContext) -> NormalizedValue:

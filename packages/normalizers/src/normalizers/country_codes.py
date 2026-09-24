@@ -7,13 +7,27 @@ case-insensitively — including, somewhat surprisingly, "USA" (a
 registered pycountry alias) but NOT the equally common "UK" or "Great
 Britain" (neither is an ISO code or a registered pycountry alias; the
 ISO code for both, per §33's own worked example, is "GB").
-`_KNOWN_NON_ISO_ALIASES` closes exactly that kind of gap, curated from
-real values (`libpostal`'s country component, and §33's own named
-examples) — extend it as new gaps are found empirically, not
-speculatively. "Great Britain" resolving via `pycountry.countries.
-search_fuzzy()` was considered and rejected: fuzzy search is unreliable
-for short strings (`search_fuzzy("uk")` ranks Uganda first), so it is not
-used as a fallback anywhere in this module.
+Two authoritative CLDR-derived sources back pycountry up, so the
+hand-curated table no longer has to grow one empirically-found name at a
+time (it went from 14 entries to 5 when they were added):
+
+- `_cldr_country_names.CLDR_COUNTRY_NAMES` — every country name CLDR
+  knows, in every locale it ships (~35k). This is what resolves endonyms
+  ("Deutschland", "日本", "россия") and ISO renames ("Turkey",
+  "Swaziland", "Cape Verde", "Ivory Coast") without anyone listing them.
+  A name that different languages give to DIFFERENT territories is
+  excluded at generation time rather than resolved by first-seen locale.
+- CLDR `territoryAlias` — deprecated/withdrawn ISO codes ("SU", "ZR",
+  "BU", "TP"). Only aliases with exactly ONE successor are used: "SU"
+  maps to all 15 post-Soviet states and "YU" to both RS and ME, and
+  picking one of those would be a guess, not a resolution.
+
+`_KNOWN_NON_ISO_ALIASES` now holds only what neither source covers —
+a colloquial name CLDR has no entry for, or an outright misspelling.
+"Great Britain" resolving via `pycountry.countries.search_fuzzy()` was
+considered and rejected: fuzzy search is unreliable for short strings
+(`search_fuzzy("uk")` ranks Uganda first), so it is not used as a
+fallback anywhere in this module.
 
 Used by both `AddressNormalizer` (to resolve a postal-code validation
 country from libpostal's raw `country` component) and `CountryNormalizer`
@@ -23,37 +37,37 @@ drifting implementations.
 
 from __future__ import annotations
 
+import babel.core
 import pycountry
 
 from normalizers import text_ops
+from normalizers._cldr_country_names import CLDR_COUNTRY_NAMES
+
+_ALPHA2_LEN = 2
 
 _KNOWN_NON_ISO_ALIASES: dict[str, str] = {
-    "uk": "GB",
+    # Only names that neither pycountry nor CLDR resolves. Nine former
+    # entries ("uk", "turkey", "turkiye", "russia", "us virgin islands",
+    # "democratic republic of the congo", "cape verde", "swaziland",
+    # "ivory coast") were deleted when CLDR was added — it covers them,
+    # and a duplicate alias is one more thing to keep in step.
     "great britain": "GB",
-    # Everything below was found empirically, per this module's own rule,
-    # in a real 1.76M-row CountryCode column: these are the values that
-    # actually appeared and that pycountry 24.6.1 returns nothing for.
-    # Trailing counts are rows in that column. Together they account for
-    # ~95% of that column's 17,102 resolution failures; the rest of the
-    # tail is genuinely not country data (postcodes, city names, "Oo").
-    #
-    # Most are ISO renames the old name no longer resolves under. Note
-    # "Türkiye" with the diacritic ALREADY resolves, so it is deliberately
-    # not listed — a dead alias is worse than none.
-    "turkey": "TR",  # 14,707 — ISO renamed it Türkiye in 2022
-    "turkiye": "TR",  # 5 — the new name, undiacriticked
-    "macedonia, the former yugoslav republic of": "MK",  # 682 — renamed 2019
-    "macedonia": "MK",  # 17
-    "russia": "RU",  # 250 — only the formal "Russian Federation" resolves
-    "us virgin islands": "VI",  # 198 (+54 as "U.S. Virgin Islands")
-    "democratic republic of the congo": "CD",  # 136 — CD (Kinshasa), NOT CG (Brazzaville)
-    "cape verde": "CV",  # 67 — renamed Cabo Verde
-    "swaziland": "SZ",  # 63 — renamed Eswatini in 2018
-    "the bahamas": "BS",  # 19
-    "ivory coast": "CI",  # 11 — ISO lists only "Côte d'Ivoire"
-    "bosnia and herzegowina": "BA",  # 9 — misspelling of Herzegovina
+    "macedonia": "MK",  # renamed North Macedonia in 2019
+    "macedonia, the former yugoslav republic of": "MK",
+    "the bahamas": "BS",
+    "bosnia and herzegowina": "BA",  # misspelling of Herzegovina, seen in real data
     # Deliberately absent: "Kosovo" (has no ISO 3166-1 code at all) and a
     # bare "Virgin Islands" (ambiguous — US is VI, British is VG).
+}
+
+# Deprecated ISO codes with exactly one successor. Multi-successor
+# aliases ("SU" -> 15 states, "YU" -> RS+ME, "AN" -> CW+SX+BQ) are
+# excluded: there is no single right answer, so the resolver returns None
+# and the caller treats it as unresolved.
+_SINGLE_SUCCESSOR_ALIASES: dict[str, str] = {
+    code: successors[0]
+    for code, successors in babel.core.get_global("territory_aliases").items()
+    if len(successors) == 1 and len(successors[0]) == _ALPHA2_LEN
 }
 
 
@@ -64,8 +78,17 @@ def resolve_country_alpha2(raw: str) -> str | None:
     never guess further (§33's own country-vs-alias caution applies
     equally to normalization inputs, not just outputs).
 
-    Each spelling variant is tried against the alias table first, then
-    pycountry. The variants, and why each earns its place:
+    Each spelling variant is tried against every source, in the order
+    below, before the next variant is tried. pycountry stays FIRST so the
+    ISO standard always wins: "nga" is Nigeria's ISO alpha-3, and is also
+    some locale's CLDR name for Russia — consulting CLDR first would
+    silently change an existing, correct answer.
+
+    Sources, in order: the hand table, pycountry, CLDR names, then CLDR's
+    deprecated-code aliases (tried last, and only on code-shaped input,
+    so a country NAME can never be read as a retired code).
+
+    The variants, and why each earns its place:
 
     - as written.
     - dots removed: "U.S." and "U.S.A." fail pycountry's lookup outright
@@ -77,7 +100,9 @@ def resolve_country_alpha2(raw: str) -> str | None:
       resolve once the accents are folded. Found empirically in a real
       1.76M-row column. Folding here is a LOOKUP KEY only — it never
       touches the value a caller sees, so §15's prohibition on universal
-      accent stripping is not in play.
+      accent stripping is not in play. CLDR names are matched on the
+      unfolded variant first, so a name whose accents are meaningful
+      ("Türkiye") resolves without relying on the fold.
 
     A loop over variants rather than nested try/except: each new variant
     was otherwise another level of nesting, and the three are tried by
@@ -93,11 +118,31 @@ def resolve_country_alpha2(raw: str) -> str | None:
         if not variant or variant in seen:
             continue
         seen.add(variant)
-        alias = _KNOWN_NON_ISO_ALIASES.get(variant.casefold())
-        if alias is not None:
-            return alias
-        try:
-            return str(pycountry.countries.lookup(variant).alpha_2)
-        except LookupError:
-            continue
+        resolved = _resolve_variant(variant)
+        if resolved is not None:
+            return resolved
+    return None
+
+
+def _resolve_variant(variant: str) -> str | None:
+    folded = variant.casefold()
+
+    alias = _KNOWN_NON_ISO_ALIASES.get(folded)
+    if alias is not None:
+        return alias
+
+    try:
+        return str(pycountry.countries.lookup(variant).alpha_2)
+    except LookupError:
+        pass
+
+    cldr_name = CLDR_COUNTRY_NAMES.get(folded)
+    if cldr_name is not None:
+        return cldr_name
+
+    # Retired codes last, and only for input actually shaped like a code.
+    # Without the shape guard a real country name that happens to match a
+    # retired code would be rewritten to that code's successor.
+    if len(variant) == _ALPHA2_LEN and variant.isalpha():
+        return _SINGLE_SUCCESSOR_ALIASES.get(variant.upper())
     return None
