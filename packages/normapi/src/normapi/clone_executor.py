@@ -441,12 +441,9 @@ def _init_clone_worker(env_id: str) -> None:
     because it is only ever needed in a worker.
     """
     global _worker_planner  # noqa: PLW0603 - the pool initializer contract is a module global
-    from normapi.app import build_normalizer_registry  # noqa: PLC0415 - worker-only import
-    from normcore import Dispatcher  # noqa: PLC0415 - worker-only import
+    from normapi.app import build_dispatcher  # noqa: PLC0415 - worker-only import
 
-    _worker_planner = DistinctValuePlanner(
-        Dispatcher(build_normalizer_registry(), env_id=env_id), None
-    )
+    _worker_planner = DistinctValuePlanner(build_dispatcher(env_id=env_id), None)
 
 
 def _normalize_slice(

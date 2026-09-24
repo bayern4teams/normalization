@@ -10,11 +10,16 @@ re-implemented per normalizer.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 
 from normcore import multivalue
 from normcore.context import NormalizationContext
-from normcore.enums import FieldSemanticType, NormalizationStatus, Reversibility
+from normcore.enums import (
+    FieldSemanticType,
+    MissingKind,
+    NormalizationStatus,
+    Reversibility,
+)
 from normcore.errors import NormalizerFailure, apply_error_policy
 from normcore.interfaces import Normalizer
 from normcore.models import NormalizedValue
@@ -66,9 +71,24 @@ class Dispatcher:
     per run/process, per ADR-014 — never recomputed per value).
     """
 
-    def __init__(self, registry: NormalizerRegistry, *, env_id: str) -> None:
+    def __init__(
+        self,
+        registry: NormalizerRegistry,
+        *,
+        env_id: str,
+        missing_sentinels: Mapping[str, str] | None = None,
+    ) -> None:
         self._registry = registry
         self._env_id = env_id
+        # Recognizing "N/A"/"unknown"/"-" as MISSING rather than INVALID
+        # was implemented only inside GenericTextNormalizer, so it applied
+        # to FREE_TEXT and nothing else — every other semantic type
+        # reported a sentinel as a hard parse failure. It belongs here
+        # instead: this is the one place every semantic type converges, so
+        # one check covers all of them. Injected rather than loaded,
+        # because normcore deliberately has no dependencies and the
+        # dictionary lives in normdict.
+        self._missing_sentinels = dict(missing_sentinels or {})
 
     @property
     def env_id(self) -> str:
@@ -215,6 +235,21 @@ class Dispatcher:
         context: NormalizationContext,
         profile: NormalizationProfile,
     ) -> NormalizedValue:
+        if value is not None:
+            sentinel_kind = self._missing_sentinels.get(value.strip().casefold())
+            if sentinel_kind is not None:
+                return NormalizedValue(
+                    original=value,
+                    original_kind=MissingKind(sentinel_kind),
+                    normalization_status=NormalizationStatus.NORMALIZED,
+                    validation_status="MISSING",
+                    confidence=1.0,
+                    profile_version=profile.version,
+                    env_id=self._env_id,
+                    semantic_type=semantic_type,
+                    context_hash=context.context_hash,
+                )
+
         try:
             result = normalizer.normalize(value, context)
         except NormalizerFailure as exc:

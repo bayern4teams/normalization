@@ -29,6 +29,7 @@ if TYPE_CHECKING:
 
 _VERSION = "0.1.0"
 _PARSE_PARAMS_HASH = blake3.blake3(b"{}").hexdigest()
+_ISO_CODE_LENGTH = 3
 
 # ISO 4217 codes are unambiguous by construction — recognizing one in the
 # text always resolves confidently, no context required. The regex alone
@@ -38,6 +39,18 @@ _PARSE_PARAMS_HASH = blake3.blake3(b"{}").hexdigest()
 # 1.0; a candidate that isn't real falls through to the other resolution
 # strategies below instead of being accepted blind.
 _ISO_CODE_RE = re.compile(r"\b([A-Z]{3})\b")
+
+# Lowercase codes ("usd") are just as unambiguous as uppercase ones, but
+# case-insensitive matching anywhere in the text would resolve ordinary
+# prose — "cup of tea" contains CUP, a real ISO 4217 code. Accepting a
+# case-insensitive code only when it is the value's ONLY alphabetic token
+# keeps "usd" and "1234.56 usd" working while leaving prose alone.
+_ALPHA_TOKEN_RE = re.compile(r"[^\W\d_]+")
+
+# ISO 4217 numeric codes ("840") are exactly 3 digits. Only matched when
+# they are the whole value, so a bare amount in a CURRENCY column is not
+# mistaken for a code.
+_NUMERIC_CODE_RE = re.compile(r"^\d{3}$")
 
 
 def _is_real_iso_code(code: str) -> bool:
@@ -175,7 +188,9 @@ class CurrencyNormalizer:
         return None
 
 
-def _resolve_currency(cleaned: str, ctx: NormalizationContext) -> tuple[str | None, float]:
+def _resolve_iso_code(cleaned: str) -> str | None:
+    """ISO 4217 codes, alphabetic or numeric — all unambiguous by
+    construction, so any hit here resolves at confidence 1.0."""
     # .finditer(), not .search(): a value can contain more than one
     # candidate 3-letter token ("SKU USD" has two) — check each for a real
     # ISO 4217 code rather than accepting or rejecting based on whichever
@@ -183,7 +198,26 @@ def _resolve_currency(cleaned: str, ctx: NormalizationContext) -> tuple[str | No
     for iso_match in _ISO_CODE_RE.finditer(cleaned):
         candidate = iso_match.group(1)
         if _is_real_iso_code(candidate):
-            return candidate, 1.0
+            return candidate
+
+    alpha_tokens = _ALPHA_TOKEN_RE.findall(cleaned)
+    if len(alpha_tokens) == 1:
+        candidate = str(alpha_tokens[0]).upper()
+        if len(candidate) == _ISO_CODE_LENGTH and _is_real_iso_code(candidate):
+            return candidate
+
+    if _NUMERIC_CODE_RE.match(cleaned):
+        by_numeric = pycountry.currencies.get(numeric=cleaned)
+        if by_numeric is not None:
+            return str(by_numeric.alpha_3)
+
+    return None
+
+
+def _resolve_currency(cleaned: str, ctx: NormalizationContext) -> tuple[str | None, float]:
+    iso_code = _resolve_iso_code(cleaned)
+    if iso_code is not None:
+        return iso_code, 1.0
 
     lowered = cleaned.casefold()
     if lowered in _NAME_MAP:

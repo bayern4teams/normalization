@@ -46,9 +46,15 @@ class TestNumericNormalizer:
     def test_european_dot_thousands_comma_decimal(
         self, numeric_normalizer: NumericNormalizer
     ) -> None:
-        """Source.txt §46's own worked example: "1.234,56"."""
+        """Source.txt §46's own worked example: "1.234,56".
+
+        Same amount as `test_us_thousands_dot_decimal` written the other
+        way round, so it must produce the same number. This previously
+        asserted "1.23456" — the US convention applied to a European
+        value, i.e. the 1000x error this pair exists to catch.
+        """
         result = numeric_normalizer.normalize("1.234,56", _ctx(FieldSemanticType.NUMERIC))
-        assert result.display == "1.23456"
+        assert result.display == "1234.56"
 
     def test_bare_thousands_grouping_is_ambiguous_without_context(
         self, numeric_normalizer: NumericNormalizer
@@ -231,3 +237,90 @@ class TestBooleanNormalizer:
     def test_original_preserved(self, boolean_normalizer: BooleanNormalizer) -> None:
         result = boolean_normalizer.normalize("YES", _ctx(FieldSemanticType.BOOLEAN))
         assert result.original == "YES"
+
+
+@pytest.mark.unit
+class TestNumericSeparatorDisambiguation:
+    """The module docstring's two context-free rules were documented but
+    never implemented — every value went to Babel under "en_US", so any
+    European-formatted amount came back silently wrong by a factor of
+    10^n with NORMALIZED status and no error.
+    """
+
+    @pytest.mark.parametrize(
+        ("value", "expected"),
+        [
+            # Rule 1: both separators present, the LAST one is decimal.
+            ("1.234,56", "1234.56"),
+            ("1,234.56", "1234.56"),
+            ("1.234.567,89", "1234567.89"),
+            ("1,234,567.89", "1234567.89"),
+            # Rule 2: a single separator with a trailing run that is not
+            # exactly 3 digits cannot be a thousands group.
+            ("1,23", "1.23"),
+            ("1,2345", "1.2345"),
+            ("1.23", "1.23"),
+            # A separator that repeats cannot be a decimal point.
+            ("1.234.567", "1234567"),
+            ("1,234,567", "1234567"),
+        ],
+    )
+    def test_context_free_shapes_resolve_to_the_same_number(
+        self, numeric_normalizer: NumericNormalizer, value: str, expected: str
+    ) -> None:
+        result = numeric_normalizer.normalize(value, _ctx(FieldSemanticType.NUMERIC))
+        assert result.display == expected
+
+    def test_genuinely_ambiguous_shape_still_refuses_to_guess(
+        self, numeric_normalizer: NumericNormalizer
+    ) -> None:
+        """The fix must not turn AMBIGUOUS into a guess: one separator
+        with exactly 3 trailing digits stays undecidable without a locale.
+        """
+        result = numeric_normalizer.normalize("1,234", _ctx(FieldSemanticType.NUMERIC))
+        assert result.normalization_status is NormalizationStatus.AMBIGUOUS
+
+    def test_scientific_notation_is_not_mistaken_for_grouping(
+        self, numeric_normalizer: NumericNormalizer
+    ) -> None:
+        """"1.5e3" has a 3-character trailing run, but it is not 3 DIGITS,
+        so it is not an ambiguous thousands group."""
+        result = numeric_normalizer.normalize("1.5e3", _ctx(FieldSemanticType.NUMERIC))
+        assert result.normalization_status is not NormalizationStatus.AMBIGUOUS
+
+    def test_currency_symbol_does_not_defeat_disambiguation(
+        self, numeric_normalizer: NumericNormalizer
+    ) -> None:
+        result = numeric_normalizer.normalize("$1.234,56", _ctx(FieldSemanticType.NUMERIC))
+        assert result.display == "1234.56"
+
+
+@pytest.mark.unit
+class TestCurrencyCodeRecognition:
+    @pytest.mark.parametrize("value", ["USD", "usd", "Usd", "  usd  "])
+    def test_iso_alpha_code_is_case_insensitive(self, value: str) -> None:
+        """COUNTRY has always been case-insensitive; CURRENCY matched
+        uppercase only, so a lowercase code came back AMBIGUOUS."""
+        result = CurrencyNormalizer().normalize(value, _ctx(FieldSemanticType.CURRENCY))
+        assert result.display == "USD"
+
+    @pytest.mark.parametrize(("value", "expected"), [("840", "USD"), ("978", "EUR")])
+    def test_iso_numeric_code_resolves(self, value: str, expected: str) -> None:
+        result = CurrencyNormalizer().normalize(value, _ctx(FieldSemanticType.CURRENCY))
+        assert result.display == expected
+
+    def test_lowercase_prose_is_not_read_as_a_code(self) -> None:
+        """"cup" IS a real ISO 4217 code (Cuban peso), so case-insensitive
+        matching anywhere in the text would resolve ordinary prose. Only a
+        value whose sole alphabetic token is the code may match.
+        """
+        result = CurrencyNormalizer().normalize("cup of tea", _ctx(FieldSemanticType.CURRENCY))
+        assert result.normalization_status is NormalizationStatus.AMBIGUOUS
+
+    def test_bare_amount_is_not_read_as_a_numeric_code(self) -> None:
+        result = CurrencyNormalizer().normalize("123", _ctx(FieldSemanticType.CURRENCY))
+        assert result.normalization_status is NormalizationStatus.AMBIGUOUS
+
+    def test_unreal_three_letter_token_still_ambiguous(self) -> None:
+        result = CurrencyNormalizer().normalize("XYZ", _ctx(FieldSemanticType.CURRENCY))
+        assert result.normalization_status is NormalizationStatus.AMBIGUOUS

@@ -20,7 +20,7 @@ from normalizers.country import CountryNormalizer
 from normalizers.currency import CurrencyNormalizer
 from normalizers.date import DateNormalizer
 from normalizers.email import EmailNormalizer
-from normalizers.generic_text import GenericTextNormalizer
+from normalizers.generic_text import GenericTextNormalizer, load_missing_value_sentinels
 from normalizers.identifier import IdentifierNormalizer, UuidNormalizer
 from normalizers.language import LanguageNormalizer
 from normalizers.name import NameNormalizer
@@ -160,6 +160,23 @@ def build_normalizer_registry(
     return registry
 
 
+def build_dispatcher(loader: DictionaryLoader | None = None, *, env_id: str) -> Dispatcher:
+    """Registry + the shared missing-value sentinel table, wired together.
+
+    Both Dispatcher construction sites (the app and the clone-job worker)
+    go through here so neither can end up with sentinel handling the other
+    lacks — the table is loaded from the same dictionary the FREE_TEXT
+    normalizer uses.
+    """
+    if loader is None:
+        loader = DictionaryLoader(_DEFAULT_DICTIONARIES_DIR)
+    return Dispatcher(
+        build_normalizer_registry(loader, libpostal_url=_DEFAULT_LIBPOSTAL_URL),
+        env_id=env_id,
+        missing_sentinels=load_missing_value_sentinels(loader),
+    )
+
+
 def create_app(
     *,
     dictionaries_dir: Path | None = None,
@@ -199,7 +216,11 @@ def create_app(
     app.state.store = InMemoryStore(
         cache, persistence, max_run_rows=max_run_rows or _DEFAULT_MAX_RUN_ROWS
     )
-    app.state.dispatcher = Dispatcher(registry, env_id=_SCAFFOLD_ENV_ID)
+    app.state.dispatcher = Dispatcher(
+        registry,
+        env_id=_SCAFFOLD_ENV_ID,
+        missing_sentinels=load_missing_value_sentinels(loader),
+    )
     app.state.dictionary_loader = loader
     app.state.custom_dictionary_store = custom_store
     app.state.cache = cache

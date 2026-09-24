@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import pytest
 from normalizers.passthrough import PassthroughNormalizer
+from normcore.enums import MissingKind
 from normcore.interfaces import Normalizer
 from normcore.models import NormalizedValue
 
@@ -187,3 +188,69 @@ def test_dispatcher_rejects_context_hash_mismatch_from_a_buggy_normalizer() -> N
 def test_registry_requires_normalizer_to_be_actual_normalizer_protocol() -> None:
     passthrough = PassthroughNormalizer()
     assert isinstance(passthrough, Normalizer)
+
+
+@pytest.mark.unit
+class TestMissingSentinels:
+    """Sentinel recognition ("N/A", "unknown", "-") lived inside
+    GenericTextNormalizer, so it applied to FREE_TEXT alone — every other
+    semantic type reported a sentinel as a hard parse failure. The
+    dispatcher is where all types converge, so the check belongs there.
+    """
+
+    @staticmethod
+    def _dispatcher(**kwargs: object) -> Dispatcher:
+        registry = NormalizerRegistry()
+        registry.register(PassthroughNormalizer())
+        return Dispatcher(registry, env_id="test-env", **kwargs)  # type: ignore[arg-type]
+
+    @classmethod
+    def _with_sentinels(cls) -> Dispatcher:
+        return cls._dispatcher(
+            missing_sentinels={"n/a": "NOT_APPLICABLE", "unknown": "UNKNOWN_VALUE"}
+        )
+
+    @pytest.mark.parametrize(
+        ("value", "kind"),
+        [
+            ("N/A", MissingKind.NOT_APPLICABLE),
+            ("n/a", MissingKind.NOT_APPLICABLE),
+            ("  N/A  ", MissingKind.NOT_APPLICABLE),
+            ("Unknown", MissingKind.UNKNOWN_VALUE),
+        ],
+    )
+    def test_sentinel_is_missing_not_invalid(self, value: str, kind: MissingKind) -> None:
+        result = self._with_sentinels().normalize(
+            value, FieldSemanticType.PERSON_NAME, _context(), _profile()
+        )
+        assert result.original_kind is kind
+        assert result.validation_status == "MISSING"
+
+    def test_ordinary_value_is_untouched(self) -> None:
+        result = self._with_sentinels().normalize(
+            "real value", FieldSemanticType.PERSON_NAME, _context(), _profile()
+        )
+        assert result.original_kind is None
+
+    def test_sentinel_inside_a_list_cell_is_per_element(self) -> None:
+        """The check sits in the per-value path, so a list cell gets it
+        element by element rather than only for the cell as a whole."""
+        result = self._with_sentinels().normalize(
+            '["N/A", "real"]', FieldSemanticType.PERSON_NAME, _context(), _profile()
+        )
+        assert result.structured["element_count"] == 2
+
+    def test_no_sentinels_configured_changes_nothing(self) -> None:
+        result = self._dispatcher().normalize(
+            "N/A", FieldSemanticType.PERSON_NAME, _context(), _profile()
+        )
+        assert result.original_kind is None
+
+    def test_sentinel_result_is_stamped_like_any_other(self) -> None:
+        """The early return must not skip the profile_version/env_id
+        stamping every other path gets."""
+        result = self._with_sentinels().normalize(
+            "N/A", FieldSemanticType.PERSON_NAME, _context(), _profile()
+        )
+        assert result.env_id == "test-env"
+        assert result.profile_version == "v3"

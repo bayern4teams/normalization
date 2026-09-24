@@ -93,8 +93,16 @@ class NumericNormalizer:
             leading_symbol, body = symbol_match.group(1), symbol_match.group(2)
 
         locale = _resolve_locale(ctx)
-        if locale is None and _is_ambiguous_number(body):
-            return _ambiguous(value, ctx)
+        if locale is None:
+            if _is_ambiguous_number(body):
+                return _ambiguous(value, ctx)
+            # Without a locale, Babel has to be told SOMETHING, and the
+            # "en_US" fallback below would silently apply US convention to
+            # a European value ("1.234,56" -> 1.23456, a 1000x error, and
+            # "1,23" -> 123, a 100x one). The two rules in the module
+            # docstring resolve those shapes without any locale at all, so
+            # they are applied here rather than merely documented.
+            body = _canonicalize_separators(body)
 
         # CLDR's grouping symbol for several locales (e.g. Swiss German,
         # "de_CH") is the TYPOGRAPHIC right single quotation mark
@@ -237,7 +245,35 @@ def _is_ambiguous_number(body: str) -> bool:
     if len(groups) != 2:
         return False
     trailing_digit_count = 3
-    return len(groups[1]) == trailing_digit_count
+    # `.isdigit()`, not length alone: only digits can form a thousands
+    # group, so "1.5e3" is scientific notation rather than an ambiguous
+    # grouping and must not be reported AMBIGUOUS.
+    return len(groups[1]) == trailing_digit_count and groups[1].isdigit()
+
+
+def _canonicalize_separators(body: str) -> str:
+    """Rewrite a context-free number to plain `1234.56` form.
+
+    Only reached when no locale is available AND the value is not
+    ambiguous, so every remaining shape is decidable from the value
+    itself by the two rules in the module docstring.
+    """
+    has_comma = "," in body
+    has_period = "." in body
+    if not has_comma and not has_period:
+        return body
+    if has_comma and has_period:
+        # Rule 1: whichever separator occurs LAST is the decimal one.
+        decimal_sep = "," if body.rfind(",") > body.rfind(".") else "."
+        grouping_sep = "." if decimal_sep == "," else ","
+        return body.replace(grouping_sep, "").replace(decimal_sep, ".")
+    # Rule 2: one separator type. Repeated means grouping ("1.234.567") —
+    # a decimal separator cannot repeat. A single one that reaches here
+    # already failed the ambiguity test, so it is decimal ("1,23").
+    separator = "," if has_comma else "."
+    if body.count(separator) > 1:
+        return body.replace(separator, "")
+    return body.replace(separator, ".")
 
 
 def _ambiguous(value: str, ctx: NormalizationContext) -> NormalizedValue:

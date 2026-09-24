@@ -83,7 +83,9 @@ def _build_static_steps() -> tuple[_StaticStepSpec, ...]:
 _STATIC_STEPS = _build_static_steps()
 
 
-def _load_missing_value_sentinels(loader: DictionaryLoader) -> dict[str, str]:
+def load_missing_value_sentinels(loader: DictionaryLoader) -> dict[str, str]:
+    """Public because the Dispatcher applies the same sentinel table to
+    every semantic type, not just FREE_TEXT — one table, one source."""
     try:
         dictionary = loader.load("missing-values.common")
     except DictionaryNotFoundError:
@@ -105,7 +107,7 @@ class GenericTextNormalizer:
         include_fingerprints: bool = False,
     ) -> None:
         self._unicode = UnicodeNormalizer()
-        self._sentinels = _load_missing_value_sentinels(dictionary_loader)
+        self._sentinels = load_missing_value_sentinels(dictionary_loader)
         self._include_ascii = include_ascii
         self._include_fingerprints = include_fingerprints
 

@@ -49,3 +49,7 @@ ui/blob-report/
 
 .DS_Store
 Thumbs.db
+
+# deep-research working files (not part of the engine)
+research_notes/
+reports/
