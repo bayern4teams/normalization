@@ -1,0 +1,20 @@
+{
+  "mcpServers": {
+    "codebase-memory-mcp": {
+      "command": "codebase-memory-mcp",
+      "args": []
+    },
+    "graft": {
+      "command": "graft",
+      "args": [
+        "mcp"
+      ]
+    },
+    "graphify": {
+      "command": "graphify-mcp",
+      "args": [
+        "graphify-out/graph.json"
+      ]
+    }
+  }
+}

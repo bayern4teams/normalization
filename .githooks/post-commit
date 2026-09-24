@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# Refresh the three code-intelligence indexes after every commit, so an
+# agent opening the repo queries the tree that is actually committed
+# rather than whatever was indexed days ago.
+#
+# SHALLOW ONLY — never deep mode. The deep variants (`graft build --deep`,
+# `graphify extract --mode deep`) call an LLM per symbol: they cost money,
+# take minutes, and need an API key, none of which belongs on the path
+# between `git commit` and your prompt. Run those by hand when you want
+# richer summaries.
+#
+# post-commit, not pre-commit, deliberately: this must never be able to
+# block or slow down a commit. It runs after the commit already exists,
+# so the worst case is a stale index, never a lost commit.
+#
+# Enable (once per clone):  git config core.hooksPath .githooks
+
+set -u
+
+# Never fail a commit because an index did not refresh, and never hold the
+# terminal: each tool is optional and independently skippable.
+run() {
+  command -v "$1" >/dev/null 2>&1 || return 0
+  "$@" >/dev/null 2>&1 || echo "post-commit: $1 index refresh failed (non-fatal)" >&2
+}
+
+if [ "${NORM_SKIP_INDEX_HOOK:-}" = "1" ]; then
+  exit 0
+fi
+
+# A rebase/merge replays many commits; refreshing on each one is pure
+# waste, so skip while one is in progress and let the final commit do it.
+git_dir=$(git rev-parse --git-dir 2>/dev/null) || exit 0
+for marker in rebase-merge rebase-apply MERGE_HEAD CHERRY_PICK_HEAD; do
+  [ -e "$git_dir/$marker" ] && exit 0
+done
+
+run graft build
+run graphify update .
+# repo_path (not path), and no explicit project name: the server derives
+# the name from the path, and passing a different one would build a second
+# index alongside the one every agent already queries.
+run codebase-memory-mcp cli --quiet index_repository '{"repo_path":"."}'
+
+exit 0
