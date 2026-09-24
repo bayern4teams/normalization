@@ -53,7 +53,12 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 import sqlalchemy as sa
-from normio.connectors._sql_base import ROW_CHUNK_SIZE as _ROW_CHUNK_SIZE
+from normio.connectors._sql_base import (
+    PERSISTENCE_PAGE_ROWS as _PAGE_ROWS,
+)
+from normio.connectors._sql_base import (
+    PERSISTENCE_WRITE_CHUNK_ROWS as _WRITE_CHUNK_ROWS,
+)
 
 from normanalysis import InvariantSampleReport, InvariantViolation
 from normapi import secrets
@@ -68,10 +73,10 @@ from normcore import (
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
-# _ROW_CHUNK_SIZE bounds peak memory for save_execution's writes,
+# _WRITE_CHUNK_ROWS bounds peak memory for save_execution's writes,
 # load_execution's full-run reconstruction, and (DB-clone-and-normalize
 # feature) save_clone_job_errors's writes — a shared constant
-# (normio.connectors._sql_base.ROW_CHUNK_SIZE) since it's now used by both
+# (normio.connectors._sql_base) since it's used by both
 # packages, not redefined here.
 
 _SCHEMA = """
@@ -434,11 +439,11 @@ class PgPersistence:
                 {"rid": run_id},
             )
 
-        for start in range(0, len(originals), _ROW_CHUNK_SIZE):
+        for start in range(0, len(originals), _WRITE_CHUNK_ROWS):
             chunk = list(
                 zip(
-                    originals[start : start + _ROW_CHUNK_SIZE],
-                    results[start : start + _ROW_CHUNK_SIZE],
+                    originals[start : start + _WRITE_CHUNK_ROWS],
+                    results[start : start + _WRITE_CHUNK_ROWS],
                     strict=True,
                 )
             )
@@ -530,7 +535,7 @@ class PgPersistence:
 
     def load_execution_all_rows(self, run_id: str) -> list[tuple[str | None, str]]:
         """Every row for one run, still paginated internally in
-        `_ROW_CHUNK_SIZE` pages so a caller reconstructing a full
+        `_PAGE_ROWS` pages so a caller reconstructing a full
         `_RunExecution` (needed by collisions/impact/overview, which
         compute over the whole run, not a page of it) never asks
         Postgres for more than one chunk's worth at a time — bounds
@@ -541,11 +546,11 @@ class PgPersistence:
         rows: list[tuple[str | None, str]] = []
         offset = 0
         while True:
-            page = self.load_execution_rows_page(run_id, limit=_ROW_CHUNK_SIZE, offset=offset)
+            page = self.load_execution_rows_page(run_id, limit=_PAGE_ROWS, offset=offset)
             if not page:
                 break
             rows.extend(page)
-            offset += _ROW_CHUNK_SIZE
+            offset += _PAGE_ROWS
         return rows
 
     # --- DB-clone-and-normalize: saved connections (decisions #12, #13) ---
@@ -672,8 +677,8 @@ class PgPersistence:
     def save_clone_job_errors(self, job_id: str, errors: Sequence[dict]) -> None:
         """Chunked insert, mirroring `save_execution`'s row-per-value
         writes — bounds peak memory the same way."""
-        for start in range(0, len(errors), _ROW_CHUNK_SIZE):
-            chunk = errors[start : start + _ROW_CHUNK_SIZE]
+        for start in range(0, len(errors), _WRITE_CHUNK_ROWS):
+            chunk = errors[start : start + _WRITE_CHUNK_ROWS]
             rows = [
                 {
                     "jid": job_id,

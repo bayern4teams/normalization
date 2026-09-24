@@ -930,7 +930,11 @@ def get_clone_job(
     job = connections.get_clone_job(job_id)
     if job is None:
         raise HTTPException(status_code=404, detail=f"No such clone job: {job_id}")
-    return job
+    # A job whose process was killed never got to mark itself FAILED, so
+    # RUNNING alone cannot be trusted. Reported rather than rewritten: the
+    # caller can restart it (claim already allows RUNNING -> RUNNING), and
+    # a merely slow job must not be declared dead on its behalf.
+    return {**job, "stale": clone_executor.is_stale(job)}
 
 
 @router.post("/clone-jobs/{job_id}/verify-database")

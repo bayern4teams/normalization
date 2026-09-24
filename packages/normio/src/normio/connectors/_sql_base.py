@@ -18,6 +18,7 @@ path even though this is an internal, not user-facing, component.
 
 from __future__ import annotations
 
+import os
 from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
@@ -27,10 +28,41 @@ if TYPE_CHECKING:
     from collections.abc import Iterator, Sequence
 
 # Bounds peak memory for chunked reads/writes across every SQL-backed
-# connector/persistence layer that chunks rows (normapi.pg_persistence's
-# save_execution, and the destination writers' bulk_insert) — one shared
-# constant instead of each redefining its own copy of the same number.
+# connector/persistence layer that chunks rows — one shared DEFAULT
+# instead of each redefining its own copy of the same number.
 ROW_CHUNK_SIZE = 2_000
+
+
+def _env_rows(name: str, default: int) -> int:
+    """A row count from the environment, ignoring anything unusable.
+
+    A malformed or non-positive override must not take the process down
+    at import time — falling back to the tested default is strictly
+    better than refusing to start because someone typed "2k".
+    """
+    try:
+        value = int(os.environ[name])
+    except (KeyError, ValueError):
+        return default
+    return value if value > 0 else default
+
+
+# One number used to drive all of the below, which meant tuning any one of
+# them silently moved the other three. They have genuinely different
+# tradeoffs, so they are now separate knobs that merely happen to share a
+# default:
+#
+# - the source read batch also fixes the resume checkpoint granularity and
+#   the window the distinct-value planner dedups over, so raising it buys
+#   better dedup at the cost of memory AND coarser resume;
+# - the destination insert chunk is the TRANSACTION boundary, so raising
+#   it means fewer round trips but more work lost to a mid-chunk crash;
+# - the persistence write chunk only bounds memory;
+# - the read page size is an API response size.
+SOURCE_READ_BATCH_ROWS = _env_rows("NORM_SOURCE_READ_BATCH_ROWS", ROW_CHUNK_SIZE)
+DESTINATION_INSERT_CHUNK_ROWS = _env_rows("NORM_DESTINATION_INSERT_CHUNK_ROWS", ROW_CHUNK_SIZE)
+PERSISTENCE_WRITE_CHUNK_ROWS = _env_rows("NORM_PERSISTENCE_WRITE_CHUNK_ROWS", ROW_CHUNK_SIZE)
+PERSISTENCE_PAGE_ROWS = _env_rows("NORM_PERSISTENCE_PAGE_ROWS", ROW_CHUNK_SIZE)
 
 
 class SqlConnectorBase:

@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any
 
 import clickhouse_connect
 
-from normio.connectors._sql_base import ROW_CHUNK_SIZE
+from normio.connectors._sql_base import DESTINATION_INSERT_CHUNK_ROWS
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -157,7 +157,7 @@ class ClickHouseDestination:
         primary_key: Sequence[str] = (),  # noqa: ARG002 - unused; matches PostgresDestination's signature so callers need no isinstance branch
     ) -> None:
         """Chunked native batch insert via `clickhouse_connect` — same
-        `ROW_CHUNK_SIZE` chunk-commit boundary as the Postgres destination,
+        `DESTINATION_INSERT_CHUNK_ROWS` chunk-commit boundary as the Postgres destination,
         doubling as the checkpoint-commit boundary (decision #10).
         # ponytail: no insert-dedup guard on resume (ClickHouse has no
         # `ON CONFLICT`) — a crash inside the in-flight chunk could
@@ -170,8 +170,8 @@ class ClickHouseDestination:
             return
         columns = list(rows[0].keys())
         client = self._client_for(database)
-        for start in range(0, len(rows), ROW_CHUNK_SIZE):
-            chunk = rows[start : start + ROW_CHUNK_SIZE]
+        for start in range(0, len(rows), DESTINATION_INSERT_CHUNK_ROWS):
+            chunk = rows[start : start + DESTINATION_INSERT_CHUNK_ROWS]
             data = [[row[c] for c in columns] for row in chunk]
             client.insert(table, data, column_names=columns, database=database)
 

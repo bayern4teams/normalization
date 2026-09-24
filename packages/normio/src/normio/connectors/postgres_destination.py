@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 
 import sqlalchemy as sa
 
-from normio.connectors._sql_base import ROW_CHUNK_SIZE
+from normio.connectors._sql_base import DESTINATION_INSERT_CHUNK_ROWS
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -144,7 +144,7 @@ class PostgresDestination:
         primary_key: Sequence[str] = (),
     ) -> None:
         """Chunked insert — same chunk loop as `PgPersistence.save_execution`
-        (`ROW_CHUNK_SIZE`, one transaction per chunk); chunk-commit
+        (`DESTINATION_INSERT_CHUNK_ROWS`, one transaction per chunk); chunk-commit
         boundaries double as checkpoint-commit boundaries for resumability
         (decision #10). `ON CONFLICT DO NOTHING` on the replicated primary
         key (decision #11) makes re-inserting an already-committed chunk on
@@ -165,8 +165,8 @@ class PostgresDestination:
             conflict_clause = f" ON CONFLICT ({pk_cols}) DO NOTHING"
         insert_sql = sa.text(f'INSERT INTO "{table}" ({col_list}) VALUES ({placeholders}){conflict_clause}')
         engine = self._engine_for(database)
-        for start in range(0, len(rows), ROW_CHUNK_SIZE):
-            chunk = rows[start : start + ROW_CHUNK_SIZE]
+        for start in range(0, len(rows), DESTINATION_INSERT_CHUNK_ROWS):
+            chunk = rows[start : start + DESTINATION_INSERT_CHUNK_ROWS]
             with engine.begin() as conn:
                 conn.execute(insert_sql, list(chunk))
 

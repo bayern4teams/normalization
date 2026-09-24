@@ -7,6 +7,7 @@ read by normapi.dependencies at request time.
 
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 
@@ -33,21 +34,28 @@ from normalizers.script import ScriptNormalizer
 from normalizers.unit import UnitNormalizer
 from normalizers.url import URLNormalizer
 from normexec.cache import NormalizationCache
+from normexec.env_fingerprint import current_env_id
 
 from normapi.pg_persistence import PgPersistence
 from normapi.routes import router
+from normapi.scaffold_profile import SCAFFOLD_PROFILE
 from normapi.store import DEFAULT_MAX_RUN_ROWS, InMemoryStore
 from normcore import Dispatcher, NormalizerRegistry
 from normdict import CustomDictionaryStore, DictionaryLoader
 
-# Real env_id computation (scripts/env_fingerprint.py) hashes actual
-# resolved package/ICU/dictionary versions and is intentionally a
-# standalone script, not something a running service imports (that would
-# make CI/ops tooling a runtime dependency of the API). Promoting that
-# logic into a shared normcore/normexec module so the live API can stamp
-# a REAL env_id (not this scaffold placeholder) is a known follow-up —
-# tracked for the milestone that wires real normalizers into normapi.
-_SCAFFOLD_ENV_ID = blake3.blake3(b"normapi-m1-scaffold-env-id").hexdigest()
+logger = logging.getLogger(__name__)
+
+# env_id used to be a hardcoded placeholder — the SAME hash in every
+# environment, for every dictionary and every dependency version. That
+# made it useless as a cache key: ADR-014's whole promise is that a
+# result computed under different inputs cannot be replayed as current,
+# and a constant defeats it silently. The computation now lives in
+# normexec.env_fingerprint (shared with scripts/env_fingerprint.py, so
+# there is one implementation rather than two that drift).
+#
+# Computed ONCE per process, at startup, per ADR-014 — never per value.
+# It walks the dictionaries directory and reads installed package
+# metadata, so it is not free, but it happens exactly once.
 
 # NORM_DICTIONARIES_DIR (set in compose.yaml to /app/data/dictionaries,
 # matching the Dockerfile's COPY destination) overrides this for container
@@ -162,6 +170,25 @@ def build_normalizer_registry(
     return registry
 
 
+def _resolve_env_id(dictionaries_dir: str | None = None) -> str:
+    """This environment's real ADR-014 fingerprint.
+
+    A failure here must not stop the service from starting: an env_id
+    that cannot be computed is a reproducibility problem, not an
+    availability one. The fallback is deliberately marked so a bad
+    env_id is obvious in stored results rather than silently plausible.
+    """
+    try:
+        return current_env_id(
+            dictionaries_dir=dictionaries_dir or _DEFAULT_DICTIONARIES_DIR,
+            profile_version=SCAFFOLD_PROFILE.version,
+            libpostal_model_sha256=os.environ.get("NORM_LIBPOSTAL_MODEL_SHA256"),
+        )
+    except Exception:
+        logger.exception("env_id could not be computed; results will be stamped unreproducible")
+        return "UNRESOLVED-" + blake3.blake3(b"env-id-unavailable").hexdigest()
+
+
 def build_dispatcher(loader: DictionaryLoader | None = None, *, env_id: str) -> Dispatcher:
     """Registry + the shared missing-value sentinel table, wired together.
 
@@ -220,7 +247,7 @@ def create_app(
     )
     app.state.dispatcher = Dispatcher(
         registry,
-        env_id=_SCAFFOLD_ENV_ID,
+        env_id=_resolve_env_id(),
         missing_sentinels=load_missing_value_sentinels(loader),
     )
     app.state.dictionary_loader = loader

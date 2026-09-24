@@ -24,6 +24,7 @@ that method would silently lose, for the identical dispatcher-call cost
 
 from __future__ import annotations
 
+import datetime as dt
 import multiprocessing
 import os
 import threading
@@ -39,7 +40,7 @@ from normio.connectors import (
     PostgresConnector,
     PostgresDestination,
 )
-from normio.connectors._sql_base import ROW_CHUNK_SIZE
+from normio.connectors._sql_base import SOURCE_READ_BATCH_ROWS
 
 from normapi import secrets
 from normapi.scaffold_profile import SCAFFOLD_PROFILE
@@ -132,6 +133,14 @@ def build_destination_writer(conn: dict) -> PostgresDestination | ClickHouseDest
 #   - only a guess confirmed by real sampled values clears the threshold,
 #   - what was inferred is written to the job as `inferred_field_configs`,
 #     so the decision is inspectable rather than silent (§85).
+def _env_seconds(name: str, default: int) -> int:
+    try:
+        value = int(os.environ[name])
+    except (KeyError, ValueError):
+        return default
+    return value if value > 0 else default
+
+
 _AUTODETECT_MIN_CONFIDENCE = float(os.environ.get("NORM_CLONE_AUTODETECT_MIN_CONFIDENCE", "0.9"))
 _AUTODETECT_SAMPLE_ROWS = int(os.environ.get("NORM_CLONE_AUTODETECT_SAMPLE_ROWS", "200"))
 
@@ -305,6 +314,48 @@ _STAGING_SUFFIX = "__normalizing"
 
 def staging_name(table: str) -> str:
     return f"{table}{_STAGING_SUFFIX}"
+
+
+# A job whose PROCESS dies — OOM kill, container restart, SIGKILL — never
+# runs the `except` that would mark it FAILED, so it sits in RUNNING
+# forever and is indistinguishable from a job that is simply slow.
+# Phase 2 already writes the job row once per chunk for the resume
+# checkpoint, so stamping the time there costs nothing extra and makes
+# "still working" observable rather than assumed.
+HEARTBEAT_TIMEOUT_SECONDS = _env_seconds("NORM_CLONE_HEARTBEAT_TIMEOUT_SECONDS", 900)
+
+
+def _save_progress(persistence: PgPersistence, job_id: str, job: dict) -> None:
+    """Persist progress and stamp the heartbeat in one step, so the two
+    can never drift apart — a saved checkpoint with a stale timestamp
+    would read as a dead job that is in fact working."""
+    job["heartbeat_at"] = dt.datetime.now(tz=dt.UTC).isoformat()
+    persistence.save_clone_job(job_id, job)
+
+
+def is_stale(job: Mapping[str, Any], *, now: dt.datetime | None = None) -> bool:
+    """True when a RUNNING job has not checkpointed recently enough to
+    still be believable.
+
+    Deliberately advisory: it never rewrites the job's status. Claiming
+    already allows RUNNING -> RUNNING so a stale job can just be started
+    again, and a job that was merely paused by a slow source should not
+    be declared dead by a background sweeper that cannot know better.
+    """
+    if job.get("status") != CloneJobStatus.RUNNING.value:
+        return False
+    stamp = job.get("heartbeat_at")
+    if not stamp:
+        # Pre-heartbeat job, or one that crashed before its first chunk.
+        # Unknowable rather than stale: saying "dead" here would mislabel
+        # every job written by an older version of this code.
+        return False
+    try:
+        beat = dt.datetime.fromisoformat(stamp)
+    except ValueError:
+        return False
+    now = now or dt.datetime.now(tz=dt.UTC)
+    return (now - beat).total_seconds() > HEARTBEAT_TIMEOUT_SECONDS
 _MONEY = FieldSemanticType.MONEY.value
 _TEXT_TYPE = {"postgres": "TEXT", "clickhouse": "String"}
 
@@ -507,7 +558,7 @@ def start_phase2(
 #      note the speedup is sublinear (46% efficiency at 4), so the memory
 #      buys less than it looks like it should.
 #   2. Each task carries at most one chunk's distinct values for ONE
-#      column (<= ROW_CHUNK_SIZE strings), and returns that many
+#      column (<= SOURCE_READ_BATCH_ROWS strings), and returns that many
 #      NormalizedValues. Nothing accumulates across chunks in a worker.
 #   3. The pool is created per job and shut down in `_run_phase2`'s
 #      finally, so an idle app holds no worker processes at all.
@@ -524,7 +575,7 @@ _WORKER_COUNT = min(int(os.environ.get("NORM_CLONE_WORKERS", "3")), os.cpu_count
 
 # Below this many distinct values, the pickle round-trip costs more than
 # the normalization it parallelizes. A full chunk of a high-cardinality
-# column is ~ROW_CHUNK_SIZE values, so this only skips genuinely small
+# column is ~SOURCE_READ_BATCH_ROWS values, so this only skips genuinely small
 # batches (low-cardinality columns, or the tail chunk of a table).
 _PARALLEL_MIN_VALUES = 500
 
@@ -745,7 +796,7 @@ def _run_phase2(
             typed_columns: dict[str, str] = table_plan.get("typed_columns", {})
             currency_columns: dict[str, str] = table_plan.get("currency_columns", {})
 
-            for batch in source.read_table(table, batch_size=ROW_CHUNK_SIZE):
+            for batch in source.read_table(table, batch_size=SOURCE_READ_BATCH_ROWS):
                 rows = batch.to_pylist()
                 pending: list[tuple[int, dict[str, Any]]] = []
                 for row in rows:
@@ -792,7 +843,7 @@ def _run_phase2(
                 progress["checkpoints"][table] = checkpoint
                 progress["rows_done"] += len(pending)
                 job["progress"] = progress
-                persistence.save_clone_job(job_id, job)
+                _save_progress(persistence, job_id, job)
 
             if in_place:
                 # Swap only after the table is fully written, and BEFORE
@@ -805,7 +856,7 @@ def _run_phase2(
             tables_completed.add(table)
             progress["tables_completed"] = sorted(tables_completed)
             job["progress"] = progress
-            persistence.save_clone_job(job_id, job)
+            _save_progress(persistence, job_id, job)
 
         progress["current_table"] = None
         job["progress"] = progress
