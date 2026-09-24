@@ -10,6 +10,7 @@ specific error into a false "converted" result.
 
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING
 
 import blake3
@@ -28,6 +29,11 @@ if TYPE_CHECKING:
     from normcore.interfaces import ComponentVersion, Explanation, StepSpec, ValidationResult
 
 _VERSION = "0.1.0"
+
+# One leading number, then everything else is the unit. Only "." is accepted
+# as the decimal mark: "1,5 kg" is genuinely ambiguous against thousands
+# grouping, so it is refused rather than guessed at.
+_MAGNITUDE_RE = re.compile(r"^([+-]?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)\s*(.*)$")
 _PARSE_PARAMS_HASH = blake3.blake3(b"{}").hexdigest()
 
 # One registry per process (Pint's own recommendation) — constructing it
@@ -64,18 +70,56 @@ class UnitNormalizer:
             return _missing(value, MissingKind.EMPTY_STRING, ctx)
 
         cleaned = value.strip()
+
+        # Split the magnitude off ourselves and build the Quantity from the
+        # pair, instead of handing the whole string to `_UREG(...)`.
+        # `_UREG(str)` is pint's expression EVALUATOR, and evaluating a data
+        # value rather than parsing it caused three distinct faults:
+        #
+        #   "5 °C"        -> OffsetUnitCalculusError, because the evaluator
+        #                    reads it as 5 * degC and multiplying an offset
+        #                    unit is ambiguous. Every temperature, in other
+        #                    words — and the error is a TypeError, so the
+        #                    old `except ... ValueError` never caught it and
+        #                    it escaped the normalizer entirely.
+        #   "3 ft 2 in"   -> 0.046 meter ** 2. Juxtaposition means multiply,
+        #                    so a compound length silently became an AREA.
+        #                    A wrong answer is worse than a refusal.
+        #   "2**2**99 kg" -> evaluated for real, exhausting memory. One
+        #                    hostile or corrupt cell could take the process
+        #                    down, since nothing bounds a per-value parse.
+        #
+        # `Quantity(magnitude, unit)` has no evaluator: offset units work,
+        # a leftover "ft 2 in" is an undefined unit rather than a product,
+        # and there is no arithmetic to exploit.
+        match = _MAGNITUDE_RE.match(cleaned)
+        if match is None:
+            return _invalid(value, ctx, reason="no leading numeric magnitude found")
+        magnitude_text, unit_text = match.groups()
+        # A bare number stays a genuinely dimensionless quantity rather than
+        # an error; callers that require a real unit check `dimensionality`.
+        # Integer magnitudes stay integers so "5 km" does not become "5.0".
+        magnitude = (
+            float(magnitude_text)
+            if any(c in magnitude_text for c in ".eE")
+            else int(magnitude_text)
+        )
         try:
-            quantity = _UREG(cleaned)
-        except (pint.UndefinedUnitError, pint.DimensionalityError, ValueError) as exc:
-            return _invalid(value, ctx, reason=str(exc))
+            quantity = _UREG.Quantity(magnitude, unit_text or "dimensionless")
+        # pint.PintError is the base of every pint failure; the old tuple
+        # enumerated three and missed the rest. ArithmeticError/MemoryError
+        # cover a pathological magnitude or exponent.
+        except (pint.PintError, ArithmeticError, MemoryError, ValueError, TypeError) as exc:
+            return _invalid(value, ctx, reason=str(exc) or type(exc).__name__)
 
-        if not isinstance(quantity, _UREG.Quantity):
-            return _invalid(value, ctx, reason="no unit found in value")
-
-        base = quantity.to_base_units()
+        try:
+            base = quantity.to_base_units()
+        except (pint.PintError, ArithmeticError, MemoryError, ValueError, TypeError) as exc:
+            return _invalid(value, ctx, reason=str(exc) or type(exc).__name__)
 
         structured = {
-            "original_value": str(quantity.magnitude),
+            # The magnitude exactly as written, not a round-tripped float.
+            "original_value": magnitude_text,
             "original_unit": str(quantity.units),
             "canonical_value": str(base.magnitude),
             "canonical_unit": str(base.units),
