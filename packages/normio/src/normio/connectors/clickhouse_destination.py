@@ -38,7 +38,7 @@ SEMANTIC_TYPE_TO_CH_TYPE: dict[str, str] = dict.fromkeys(
         "PERSON_NAME", "GIVEN_NAME", "FAMILY_NAME", "COMPANY_NAME", "EMAIL", "PHONE",
         "ADDRESS", "POSTCODE", "COUNTRY", "LANGUAGE", "SCRIPT", "DATE", "DATETIME",
         "IDENTIFIER", "UUID", "TAX_ID", "URL", "NUMERIC", "CURRENCY", "QUANTITY",
-        "BOOLEAN", "FREE_TEXT", "CODE", "UNKNOWN",
+        "MONEY", "BOOLEAN", "FREE_TEXT", "CODE", "UNKNOWN",
     ),
     "String",
 )
@@ -91,6 +91,8 @@ class ClickHouseDestination:
         order_by: Sequence[str] = (),
         engine: str = "MergeTree",
         semantic_types: Mapping[str, str] | None = None,
+        column_overrides: Mapping[str, str] | None = None,
+        extra_columns: Mapping[str, str] | None = None,
     ) -> None:
         """Empty-table DDL only (Phase 1, decision #5), replicating the
         origin's ORDER BY/table engine (decision #11). `semantic_types`
@@ -105,19 +107,41 @@ class ClickHouseDestination:
         by actually running this DDL against real ClickHouse, not by
         reasoning about the type system)."""
         semantic_types = semantic_types or {}
+        column_overrides = column_overrides or {}
         order_by_set = set(order_by)
-        column_defs = ", ".join(
-            f"`{col.name}` {self._column_type(col, semantic_types, nullable=col.name not in order_by_set)}"
+        defs = [
+            f"`{col.name}` "
+            + self._column_type(
+                col,
+                semantic_types,
+                column_overrides,
+                nullable=col.name not in order_by_set,
+            )
             for col in columns
-        )
+        ]
+        # Companion columns (a MONEY column's currency) are never part of
+        # the replicated sorting key, so they are always nullable.
+        defs += [f"`{name}` Nullable({t})" for name, t in (extra_columns or {}).items()]
+        column_defs = ", ".join(defs)
         order_clause = ", ".join(f"`{c}`" for c in order_by) if order_by else "tuple()"
         ddl = f"CREATE TABLE `{database}`.`{table}` ({column_defs}) ENGINE = {engine} ORDER BY ({order_clause})"
         self._client_for(database).command(ddl)
 
     @staticmethod
-    def _column_type(col: ColumnInfo, semantic_types: Mapping[str, str], *, nullable: bool) -> str:
+    def _column_type(
+        col: ColumnInfo,
+        semantic_types: Mapping[str, str],
+        column_overrides: Mapping[str, str],
+        *,
+        nullable: bool,
+    ) -> str:
         semantic_type = semantic_types.get(col.name)
-        base = SEMANTIC_TYPE_TO_CH_TYPE.get(semantic_type, PASSTHROUGH_CH_TYPE) if semantic_type else col.native_type
+        base = (
+            column_overrides.get(col.name)
+            or (SEMANTIC_TYPE_TO_CH_TYPE.get(semantic_type, PASSTHROUGH_CH_TYPE))
+            if semantic_type
+            else col.native_type
+        )
         if not nullable:
             # Strip an existing Nullable() wrapper too — an ORDER BY
             # column's origin type must never be forced/kept nullable.
@@ -150,6 +174,26 @@ class ClickHouseDestination:
             chunk = rows[start : start + ROW_CHUNK_SIZE]
             data = [[row[c] for c in columns] for row in chunk]
             client.insert(table, data, column_names=columns, database=database)
+
+    def swap_table(self, database: str, table: str, staging: str) -> None:
+        """Replace `table` with `staging`, then drop the original.
+
+        `EXCHANGE TABLES` is atomic in ClickHouse (Atomic database engine,
+        the default), so there is no window where the table is missing.
+        Used for in-place normalization: peak extra storage is the largest
+        SINGLE table, not a second copy of the whole database.
+
+        `ALTER TABLE ... UPDATE` was the obvious alternative and is the
+        wrong tool — a mutation rewrites whole parts asynchronously, so it
+        costs the same storage anyway and gives no point at which the
+        table is known to be done.
+        """
+        client = self._client_for(database)
+        client.command(f"EXCHANGE TABLES `{database}`.`{table}` AND `{database}`.`{staging}`")
+        client.command(f"DROP TABLE `{database}`.`{staging}`")
+
+    def drop_table(self, database: str, table: str) -> None:
+        self._client_for(database).command(f"DROP TABLE IF EXISTS `{database}`.`{table}`")
 
     def close(self) -> None:
         for client in self._clients.values():

@@ -102,6 +102,7 @@ class FieldSemanticType(StrEnum):
     NUMERIC = "NUMERIC"
     CURRENCY = "CURRENCY"
     QUANTITY = "QUANTITY"
+    MONEY = "MONEY"
     BOOLEAN = "BOOLEAN"
     FREE_TEXT = "FREE_TEXT"
     CODE = "CODE"

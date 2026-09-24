@@ -912,7 +912,13 @@ def create_clone_job(
     return CloneJobCreateResponse(
         job_id=job["job_id"],
         status=CloneJobStatus(job["status"]),
-        create_database_sql=clone_executor.create_database_sql(body.destination_database),
+        # In-place reuses the source database, so there is nothing for the
+        # operator to create and Phase 1 verifies nothing.
+        create_database_sql=(
+            ""
+            if body.in_place
+            else clone_executor.create_database_sql(body.destination_database)
+        ),
     )
 
 

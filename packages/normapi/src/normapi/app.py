@@ -23,6 +23,7 @@ from normalizers.email import EmailNormalizer
 from normalizers.generic_text import GenericTextNormalizer, load_missing_value_sentinels
 from normalizers.identifier import IdentifierNormalizer, UuidNormalizer
 from normalizers.language import LanguageNormalizer
+from normalizers.money import MoneyNormalizer
 from normalizers.name import NameNormalizer
 from normalizers.numeric import NumericNormalizer
 from normalizers.passthrough import PassthroughNormalizer
@@ -154,6 +155,7 @@ def build_normalizer_registry(
     registry.register(UuidNormalizer())
     registry.register(NumericNormalizer())
     registry.register(CurrencyNormalizer())
+    registry.register(MoneyNormalizer())
     registry.register(UnitNormalizer())
     registry.register(BooleanNormalizer())
     registry.register(URLNormalizer())

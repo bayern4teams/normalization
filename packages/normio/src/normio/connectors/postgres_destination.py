@@ -46,7 +46,7 @@ SEMANTIC_TYPE_TO_PG_TYPE: dict[str, str] = dict.fromkeys(
         "PERSON_NAME", "GIVEN_NAME", "FAMILY_NAME", "COMPANY_NAME", "EMAIL", "PHONE",
         "ADDRESS", "POSTCODE", "COUNTRY", "LANGUAGE", "SCRIPT", "DATE", "DATETIME",
         "IDENTIFIER", "UUID", "TAX_ID", "URL", "NUMERIC", "CURRENCY", "QUANTITY",
-        "BOOLEAN", "FREE_TEXT", "CODE", "UNKNOWN",
+        "MONEY", "BOOLEAN", "FREE_TEXT", "CODE", "UNKNOWN",
     ),
     "TEXT",
 )
@@ -100,6 +100,8 @@ class PostgresDestination:
         *,
         primary_key: Sequence[str] = (),
         semantic_types: Mapping[str, str] | None = None,
+        column_overrides: Mapping[str, str] | None = None,
+        extra_columns: Mapping[str, str] | None = None,
     ) -> None:
         """Empty-table DDL only (Phase 1, decision #5). `semantic_types`
         maps column name -> FieldSemanticType for configured (normalized)
@@ -108,15 +110,24 @@ class PostgresDestination:
         as-is — valid DDL here because source and destination are always
         the same engine (scope decision at the top of the plan)."""
         semantic_types = semantic_types or {}
+        # `column_overrides` carries a native (non-TEXT) type for a column
+        # the executor has decided to type properly — see
+        # normio.storage_types. It wins over the all-TEXT default, and is
+        # empty unless the job opted in.
+        column_overrides = column_overrides or {}
         column_defs = [
             f'"{col.name}" '
             + (
-                SEMANTIC_TYPE_TO_PG_TYPE.get(semantic_types[col.name], PASSTHROUGH_PG_TYPE)
+                column_overrides.get(col.name)
+                or SEMANTIC_TYPE_TO_PG_TYPE.get(semantic_types[col.name], PASSTHROUGH_PG_TYPE)
                 if col.name in semantic_types
                 else col.native_type
             )
             for col in columns
         ]
+        # Companion columns the normalizer produces alongside a value it
+        # would otherwise have to discard (a MONEY column's currency).
+        column_defs += [f'"{name}" {sql_type}' for name, sql_type in (extra_columns or {}).items()]
         if primary_key:
             pk_cols = ", ".join(f'"{c}"' for c in primary_key)
             column_defs.append(f"PRIMARY KEY ({pk_cols})")
@@ -158,6 +169,36 @@ class PostgresDestination:
             chunk = rows[start : start + ROW_CHUNK_SIZE]
             with engine.begin() as conn:
                 conn.execute(insert_sql, list(chunk))
+
+    def swap_table(self, database: str, table: str, staging: str) -> None:
+        """Replace `table` with `staging`, then drop the original.
+
+        For in-place normalization, where there is no second database to
+        write into. Peak extra storage becomes the largest SINGLE table
+        rather than a whole copy of the source, because the staging table
+        is swapped in and the original dropped one table at a time.
+
+        The two renames are one transaction, so a crash leaves either the
+        original or the normalized table in place and never neither. The
+        DROP is deliberately outside it: holding the original's storage
+        until commit would defeat the point of the exercise.
+
+        ponytail: index and constraint names still follow the ORIGINAL
+        table (Postgres does not rename them with the table), so the
+        swapped-in table carries names like "t__norm_pkey". Cosmetic, and
+        renaming every constraint is a lot of DDL for a cosmetic win —
+        revisit if something reads constraint names.
+        """
+        retired = f"{staging}_retired"
+        with self._engine_for(database).begin() as conn:
+            conn.execute(sa.text(f'ALTER TABLE "{table}" RENAME TO "{retired}"'))
+            conn.execute(sa.text(f'ALTER TABLE "{staging}" RENAME TO "{table}"'))
+        with self._engine_for(database).begin() as conn:
+            conn.execute(sa.text(f'DROP TABLE "{retired}"'))
+
+    def drop_table(self, database: str, table: str) -> None:
+        with self._engine_for(database).begin() as conn:
+            conn.execute(sa.text(f'DROP TABLE IF EXISTS "{table}"'))
 
     def close(self) -> None:
         self._admin_engine.dispose()

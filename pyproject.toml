@@ -159,6 +159,10 @@ ignore = ["PLR0913", "PLR2004"]
 # assert the shipped map is still current; that import must follow the
 # path construction.
 "tests/unit/test_locale_normalizers.py" = ["PLC0415"]
+# tests/unit/test_in_place_clone.py imports clone_executor inside the
+# helper so monkeypatch can replace build_source_connector on the module
+# object the function under test actually reads.
+"tests/unit/test_in_place_clone.py" = ["PLC0415"]
 
 [tool.mypy]
 python_version = "3.12"

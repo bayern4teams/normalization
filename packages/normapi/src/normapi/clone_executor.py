@@ -44,8 +44,11 @@ from normio.connectors._sql_base import ROW_CHUNK_SIZE
 from normapi import secrets
 from normapi.scaffold_profile import SCAFFOLD_PROFILE
 from normcore import CloneJobStatus, ErrorPolicy, FieldSemanticType, NormalizationContext
+from normio import storage_types
 
 if TYPE_CHECKING:
+    from collections.abc import Collection, Mapping
+
     from normcore.dispatch import NormalizerRegistry
     from normexec.cache import NormalizationCache
 
@@ -233,6 +236,16 @@ def create_clone_job(
         msg = f"No such connection: {request['source_connection_id']}"
         raise CloneJobNotFoundError(msg)
     source = build_source_connector(source_conn, request["source_database"])
+    # In-place normalizes the source itself, so the destination is not the
+    # caller's to choose — taking it from the request would let a typo
+    # write staging tables into some other database and swap nothing.
+    in_place = request.get("in_place", False)
+    destination_connection_id = (
+        request["source_connection_id"] if in_place else request["destination_connection_id"]
+    )
+    destination_database = (
+        request["source_database"] if in_place else request["destination_database"]
+    )
     explicit_configs = request["field_configs"]
     inferred_configs: dict[str, dict[str, str]] = {}
     try:
@@ -260,11 +273,13 @@ def create_clone_job(
         "status": CloneJobStatus.PENDING_DB_CREATE.value,
         "source_connection_id": request["source_connection_id"],
         "source_database": request["source_database"],
-        "destination_connection_id": request["destination_connection_id"],
-        "destination_database": request["destination_database"],
+        "destination_connection_id": destination_connection_id,
+        "destination_database": destination_database,
         "tables": tables,
         "field_configs": field_configs,
         "inferred_field_configs": inferred_configs,
+        "typed_destination_columns": request.get("typed_destination_columns", False),
+        "in_place": in_place,
         "progress": {
             "current_table": None,
             "tables_completed": [],
@@ -277,10 +292,63 @@ def create_clone_job(
     return job
 
 
+# A MONEY column normalizes to a bare amount so the column can be summed;
+# its currency would otherwise be dropped on the floor exactly the way
+# NUMERIC used to drop it. It goes in a companion column instead.
+_CURRENCY_SUFFIX = "_currency"
+
+# In-place normalization writes each table to a staging table beside the
+# original, then swaps. The suffix is part of the resume contract: Phase 1
+# creates <table><suffix>, Phase 2 fills and swaps it.
+_STAGING_SUFFIX = "__normalizing"
+
+
+def staging_name(table: str) -> str:
+    return f"{table}{_STAGING_SUFFIX}"
+_MONEY = FieldSemanticType.MONEY.value
+_TEXT_TYPE = {"postgres": "TEXT", "clickhouse": "String"}
+
+
+def _destination_plan(
+    semantic_types: Mapping[str, str],
+    engine: str,
+    key_columns: Collection[str],
+    *,
+    typed: bool,
+) -> tuple[dict[str, str], dict[str, str], dict[str, str]]:
+    """(column_overrides, extra_columns, typed_columns) for one table.
+
+    `key_columns` (the primary key / sorting key) are never given a native
+    type: ClickHouse refuses a nullable sorting key, so a value that
+    failed to cast would have nowhere to go — and a key column is the one
+    place a NULL is least acceptable anyway.
+    """
+    overrides: dict[str, str] = {}
+    extras: dict[str, str] = {}
+    typed_columns: dict[str, str] = {}
+    for column, semantic_type in semantic_types.items():
+        if semantic_type == _MONEY:
+            extras[f"{column}{_CURRENCY_SUFFIX}"] = _TEXT_TYPE.get(engine, "TEXT")
+        if not typed or column in key_columns:
+            continue
+        sql_type = storage_types.sql_type(semantic_type, engine)
+        if sql_type is not None:
+            overrides[column] = sql_type
+            typed_columns[column] = semantic_type
+    return overrides, extras, typed_columns
+
+
 def verify_and_create_schema(persistence: PgPersistence, job_id: str) -> dict:
     """Phase 1 (decision #5): verifies the user has run the returned
     `CREATE DATABASE` command, then creates every table completely empty
-    (schema clone only, no rows yet)."""
+    (schema clone only, no rows yet).
+
+    In-place mode (`in_place`) writes into the SOURCE database instead:
+    each table is created beside its original under a staging name, and
+    Phase 2 swaps it in and drops the original one table at a time. The
+    database already exists, so there is nothing for the operator to
+    create and no CREATE DATABASE step to verify.
+    """
     job = persistence.get_clone_job(job_id)
     if job is None:
         raise CloneJobNotFoundError(job_id)
@@ -291,7 +359,8 @@ def verify_and_create_schema(persistence: PgPersistence, job_id: str) -> dict:
     dest_conn = persistence.get_connection(job["destination_connection_id"])
     dest = build_destination_writer(dest_conn)
     try:
-        if not dest.database_exists(job["destination_database"]):
+        in_place = job.get("in_place", False)
+        if not in_place and not dest.database_exists(job["destination_database"]):
             msg = (
                 f"Destination database {job['destination_database']!r} does not exist yet — "
                 "run the CREATE DATABASE command returned by POST /clone-jobs, then retry."
@@ -300,38 +369,69 @@ def verify_and_create_schema(persistence: PgPersistence, job_id: str) -> dict:
 
         source_conn = persistence.get_connection(job["source_connection_id"])
         source = build_source_connector(source_conn, job["source_database"])
+        destination_plan: dict[str, dict[str, dict[str, str]]] = {}
         try:
             for table in job["tables"]:
                 columns = source.get_columns(table)
+                # In-place: build beside the original, swap in Phase 2.
+                # A leftover staging table from an abandoned run would
+                # make CREATE TABLE fail, so it is cleared first.
+                target = staging_name(table) if in_place else table
+                if in_place:
+                    dest.drop_table(job["destination_database"], target)
                 semantic_types = {
                     column: semantic_type
                     for column, semantic_type in job["field_configs"].get(table, {}).items()
                     if semantic_type
                 }
-                if dest_conn["engine"] == "postgres":
+                engine = dest_conn["engine"]
+                typed = job.get("typed_destination_columns", False)
+                if engine == "postgres":
                     primary_key = source.get_primary_key(table)
+                    overrides, extras, typed_columns = _destination_plan(
+                        semantic_types, engine, primary_key, typed=typed
+                    )
                     dest.create_table(
                         job["destination_database"],
-                        table,
+                        target,
                         columns,
                         primary_key=primary_key,
                         semantic_types=semantic_types,
+                        column_overrides=overrides,
+                        extra_columns=extras,
                     )
                 else:
                     engine_name, order_by = source.get_table_engine_info(table)
+                    overrides, extras, typed_columns = _destination_plan(
+                        semantic_types, engine, order_by, typed=typed
+                    )
                     dest.create_table(
                         job["destination_database"],
-                        table,
+                        target,
                         columns,
                         order_by=order_by,
                         engine=engine_name,
                         semantic_types=semantic_types,
+                        column_overrides=overrides,
+                        extra_columns=extras,
                     )
+                # Recorded, not recomputed in Phase 2: the INSERT must
+                # agree with the DDL that was actually executed here, even
+                # if the source's keys or the job's flags changed since.
+                destination_plan[table] = {
+                    "typed_columns": typed_columns,
+                    "currency_columns": {
+                        column: f"{column}{_CURRENCY_SUFFIX}"
+                        for column, st in semantic_types.items()
+                        if st == _MONEY
+                    },
+                }
         finally:
             source.close()
     finally:
         dest.close()
 
+    job["destination_plan"] = destination_plan
     job["status"] = CloneJobStatus.SCHEMA_READY.value
     persistence.save_clone_job(job_id, job)
     return job
@@ -509,6 +609,84 @@ def _make_pool(env_id: str) -> ProcessPoolExecutor | None:
         return None
 
 
+
+def _apply_column(
+    pending: list[tuple[int, dict[str, Any]]],
+    *,
+    column: str,
+    semantic_type: FieldSemanticType,
+    table: str,
+    source_id: str,
+    pool: Any,
+    planner: DistinctValuePlanner,
+    typed_as: str | None,
+    companion: str | None,
+    errors_buffer: list[dict[str, Any]],
+) -> None:
+    """Normalize one column across one chunk, in place.
+
+    Extracted from `_run_phase2` so that adding the pre-insert cast and
+    the MONEY companion column did not push an already-oversized function
+    further past the branch limit.
+    """
+    ctx = NormalizationContext(
+        field_name=column,
+        semantic_type=semantic_type,
+        table=table,
+        source=source_id,
+        error_policy=ErrorPolicy.RETURN_ORIGINAL,
+        # This loop reads exactly two things off each result —
+        # `.display` and `.errors` (for the decision #9 error report) —
+        # and throws the rest away, including the per-step trace. The
+        # trace is 36% of COMPANY_NAME normalize time (cProfile, real
+        # data), so building it here is pure waste. Every interactive
+        # path keeps it: the default is True, only bulk clone opts out.
+        include_trace=False,
+    )
+    distinct_values = list({row[column] for _, row in pending if row[column] is not None})
+    by_value = _normalize_distinct(
+        pool,
+        planner,
+        distinct_values,
+        semantic_type=semantic_type,
+        context=ctx,
+        profile=SCAFFOLD_PROFILE,
+    )
+    for offset, row in pending:
+        original = row[column]
+        if original is None:
+            continue
+        result = by_value[original]
+        row[column] = result.display
+        errors = list(result.errors)
+
+        if companion is not None:
+            row[companion] = result.structured.get("currency")
+
+        # Decision #8 puts the ORIGINAL raw string in the cell when
+        # normalization fails, which a natively typed column cannot hold.
+        # Cast here and send a value that will not fit down the same
+        # error-report path, rather than letting the database reject the
+        # whole chunk (and with it the error rows that would have
+        # explained why).
+        if typed_as is not None:
+            cast_value, cast_error = storage_types.coerce(typed_as, row[column])
+            row[column] = cast_value
+            if cast_error is not None:
+                errors.append(cast_error)
+
+        if errors:
+            errors_buffer.append(
+                {
+                    "row_index": offset,
+                    "table_name": table,
+                    "field": column,
+                    "original": original,
+                    "error": "; ".join(errors),
+                }
+            )
+
+
 def _run_phase2(
     persistence: PgPersistence, dispatcher: Dispatcher, cache: NormalizationCache | None, job_id: str
 ) -> None:
@@ -537,6 +715,7 @@ def _run_phase2(
     pool = _make_pool(dispatcher.env_id)
     progress = job["progress"]
     tables_completed = set(progress["tables_completed"])
+    in_place = job.get("in_place", False)
 
     try:
         for table in job["tables"]:
@@ -561,6 +740,10 @@ def _run_phase2(
             # re-reads already-processed rows on resume. Add pushdown
             # filtering if resumed jobs on very large tables get costly.
             checkpoint = progress["checkpoints"].get(table, -1)
+            write_target = staging_name(table) if in_place else table
+            table_plan = job.get("destination_plan", {}).get(table, {})
+            typed_columns: dict[str, str] = table_plan.get("typed_columns", {})
+            currency_columns: dict[str, str] = table_plan.get("currency_columns", {})
 
             for batch in source.read_table(table, batch_size=ROW_CHUNK_SIZE):
                 rows = batch.to_pylist()
@@ -573,50 +756,26 @@ def _run_phase2(
                     continue
 
                 errors_buffer: list[dict[str, Any]] = []
+                # Every row must carry the same keys: bulk_insert derives
+                # the column list from rows[0], so a companion column that
+                # only appears on rows with a non-null amount would build
+                # an INSERT that is wrong for every other row.
+                for _, row in pending:
+                    for companion in currency_columns.values():
+                        row[companion] = None
                 for column, semantic_type in configured_columns.items():
-                    ctx = NormalizationContext(
-                        field_name=column,
+                    _apply_column(
+                        pending,
+                        column=column,
                         semantic_type=semantic_type,
                         table=table,
-                        source=job["source_connection_id"],
-                        error_policy=ErrorPolicy.RETURN_ORIGINAL,
-                        # This loop reads exactly two things off each
-                        # result — `.display` (below) and `.errors` (for
-                        # the decision #9 error report) — and throws the
-                        # rest away, including the per-step trace. The
-                        # trace is 36% of COMPANY_NAME normalize time
-                        # (cProfile, real data), so building it here is
-                        # pure waste. Every interactive path keeps it:
-                        # the default is True, only bulk clone opts out.
-                        include_trace=False,
+                        source_id=job["source_connection_id"],
+                        pool=pool,
+                        planner=planner,
+                        typed_as=typed_columns.get(column),
+                        companion=currency_columns.get(column),
+                        errors_buffer=errors_buffer,
                     )
-                    distinct_values = list(
-                        {row[column] for _, row in pending if row[column] is not None}
-                    )
-                    by_value = _normalize_distinct(
-                        pool,
-                        planner,
-                        distinct_values,
-                        semantic_type=semantic_type,
-                        context=ctx,
-                        profile=SCAFFOLD_PROFILE,
-                    )
-                    for offset, row in pending:
-                        original = row[column]
-                        if original is None:
-                            continue
-                        result = by_value[original]
-                        row[column] = result.display
-                        if result.errors:
-                            errors_buffer.append(
-                                {
-                                    "row_index": offset,
-                                    "table_name": table,
-                                    "field": column,
-                                    "original": original,
-                                    "error": "; ".join(result.errors),
-                                }
-                            )
 
                 dest_rows = []
                 for _, row in pending:
@@ -624,7 +783,7 @@ def _run_phase2(
                     dest_rows.append(row)
 
                 dest.bulk_insert(
-                    job["destination_database"], table, dest_rows, primary_key=primary_key
+                    job["destination_database"], write_target, dest_rows, primary_key=primary_key
                 )
                 if errors_buffer:
                     persistence.save_clone_job_errors(job_id, errors_buffer)
@@ -634,6 +793,14 @@ def _run_phase2(
                 progress["rows_done"] += len(pending)
                 job["progress"] = progress
                 persistence.save_clone_job(job_id, job)
+
+            if in_place:
+                # Swap only after the table is fully written, and BEFORE
+                # it is marked completed: a crash between the two replays
+                # a table that is already normalized, which re-reads the
+                # source and rebuilds a staging table that no longer
+                # exists — so the swap is what "completed" must mean here.
+                dest.swap_table(job["destination_database"], table, write_target)
 
             tables_completed.add(table)
             progress["tables_completed"] = sorted(tables_completed)

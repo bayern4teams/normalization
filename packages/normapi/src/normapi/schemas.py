@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from normcore import (
     CloneJobStatus,
@@ -195,8 +195,10 @@ class CloneJobCreateRequest(BaseModel):
 
     source_connection_id: str
     source_database: str
-    destination_connection_id: str
-    destination_database: str
+    # Empty is valid only for in_place, which derives both from the
+    # source (see the validator below).
+    destination_connection_id: str = ""
+    destination_database: str = ""
     # Columns absent from `field_configs` get their semantic type detected
     # from the column name plus a sample of real values; an explicit entry
     # always overrides the guess. Off means "clone anything I did not list
@@ -207,6 +209,29 @@ class CloneJobCreateRequest(BaseModel):
     # folding). Off by default: folding is lossy, so it is the operator's
     # call rather than something inference should decide.
     normalize_unconfigured_text: bool = False
+    # Give NUMERIC/MONEY/BOOLEAN columns a real SQL type (NUMERIC, BOOLEAN)
+    # instead of TEXT, so downstream SUM/AVG work without casting. Off by
+    # default: a value that will not cast becomes NULL plus an error-report
+    # row, and losing the raw string from the cell is the operator's call.
+    # The original is still recoverable from the error report.
+    typed_destination_columns: bool = False
+    # Normalize the source database in place instead of cloning it into a
+    # second one. Each table is built beside its original under a staging
+    # name and swapped in, so peak extra storage is the largest SINGLE
+    # table rather than a whole second copy — for sources too large to
+    # duplicate. The source is REPLACED: originals survive only in the
+    # error report, so it is off by default and never inferred.
+    in_place: bool = False
+
+    @model_validator(mode="after")
+    def _destination_required_unless_in_place(self) -> CloneJobCreateRequest:
+        """A clone needs somewhere to go; in-place already knows where it
+        goes. Caught here rather than as a confusing "no such connection:
+        ''" from the executor."""
+        if not self.in_place and not (self.destination_connection_id and self.destination_database):
+            msg = "destination_connection_id and destination_database are required unless in_place"
+            raise ValueError(msg)
+        return self
     # ponytail: stored inside normalization_clone_jobs.data's JSON blob,
     # not a separate table — consumed exactly twice (Phase 1 DDL, Phase 2
     # normalization) by the job that owns it. Promote to its own table
