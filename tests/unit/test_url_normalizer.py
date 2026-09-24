@@ -185,9 +185,7 @@ class TestBareHostnameRepair:
             "//example.com",
         ],
     )
-    def test_non_hostnames_are_still_invalid(
-        self, normalizer: URLNormalizer, value: str
-    ) -> None:
+    def test_non_hostnames_are_still_invalid(self, normalizer: URLNormalizer, value: str) -> None:
         result = normalizer.normalize(value, _ctx())
         assert result.normalization_status is NormalizationStatus.INVALID
 

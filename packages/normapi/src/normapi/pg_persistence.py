@@ -50,7 +50,7 @@ from __future__ import annotations
 import dataclasses
 import json
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import sqlalchemy as sa
 from normio.connectors._sql_base import (
@@ -150,8 +150,8 @@ class PgPersistence:
 
     def ensure_schema(self) -> None:
         with self._engine.begin() as conn:
-            for statement in _SCHEMA.strip().split(";\n\n"):
-                statement = statement.strip()
+            for raw_statement in _SCHEMA.strip().split(";\n\n"):
+                statement = raw_statement.strip()
                 if statement:
                     conn.execute(sa.text(statement))
 
@@ -194,7 +194,9 @@ class PgPersistence:
     # write is visible on the next request instead of only after this
     # replica's own restart) ---
 
-    def get_profile(self, profile_id: str, version: str | None = None) -> NormalizationProfile | None:
+    def get_profile(
+        self, profile_id: str, version: str | None = None
+    ) -> NormalizationProfile | None:
         with self._engine.begin() as conn:
             resolved_version = version
             if resolved_version is None:
@@ -209,7 +211,8 @@ class PgPersistence:
                 resolved_version = row[0]
             row = conn.execute(
                 sa.text(
-                    "SELECT data FROM normalization_profiles WHERE profile_id = :pid AND version = :v"
+                    "SELECT data FROM normalization_profiles "
+                    "WHERE profile_id = :pid AND version = :v"
                 ),
                 {"pid": profile_id, "v": resolved_version},
             ).first()
@@ -225,7 +228,8 @@ class PgPersistence:
                 return None
             rows = conn.execute(
                 sa.text(
-                    "SELECT data FROM normalization_profiles WHERE profile_id = :pid ORDER BY version"
+                    "SELECT data FROM normalization_profiles "
+                    "WHERE profile_id = :pid ORDER BY version"
                 ),
                 {"pid": profile_id},
             ).all()
@@ -285,7 +289,8 @@ class PgPersistence:
             current_version = row[0]
             current_data = conn.execute(
                 sa.text(
-                    "SELECT data FROM normalization_profiles WHERE profile_id = :pid AND version = :v"
+                    "SELECT data FROM normalization_profiles "
+                    "WHERE profile_id = :pid AND version = :v"
                 ),
                 {"pid": profile_id, "v": current_version},
             ).scalar_one()
@@ -301,7 +306,11 @@ class PgPersistence:
                         "VALUES (:pid, :version, :data) "
                         "ON CONFLICT (profile_id, version) DO UPDATE SET data = EXCLUDED.data"
                     ),
-                    {"pid": profile_id, "version": profile.version, "data": profile.model_dump_json()},
+                    {
+                        "pid": profile_id,
+                        "version": profile.version,
+                        "data": profile.model_dump_json(),
+                    },
                 )
             conn.execute(
                 sa.text(
@@ -335,7 +344,8 @@ class PgPersistence:
 
             target_row = conn.execute(
                 sa.text(
-                    "SELECT data FROM normalization_profiles WHERE profile_id = :pid AND version = :v"
+                    "SELECT data FROM normalization_profiles "
+                    "WHERE profile_id = :pid AND version = :v"
                 ),
                 {"pid": profile_id, "v": target_version},
             ).first()
@@ -491,14 +501,14 @@ class PgPersistence:
                 data
             )
 
-        active_versions = {profile_id: version for profile_id, version in active_rows}
+        active_versions: dict[str, str] = {row[0]: row[1] for row in active_rows}
         runs = {run_id: NormalizationRun.model_validate_json(data) for run_id, data in run_rows}
 
         return profiles, active_versions, runs
 
     # --- lazy execution access ---
 
-    def load_execution_meta(self, run_id: str) -> dict | None:
+    def load_execution_meta(self, run_id: str) -> dict[str, Any] | None:
         with self._engine.begin() as conn:
             row = conn.execute(
                 sa.text(
@@ -563,7 +573,7 @@ class PgPersistence:
 
     def save_connection(
         self, connection_id: str, *, engine: str, host: str, port: int, username: str, password: str
-    ) -> dict:
+    ) -> dict[str, Any]:
         created_at = datetime.now(UTC).isoformat()
         encrypted_password = secrets.encrypt(password)
         with self._engine.begin() as conn:
@@ -593,22 +603,24 @@ class PgPersistence:
             "created_at": created_at,
         }
 
-    def get_connection(self, connection_id: str) -> dict | None:
+    def get_connection(self, connection_id: str) -> dict[str, Any] | None:
         with self._engine.begin() as conn:
             row = conn.execute(
                 sa.text(
-                    "SELECT connection_id, engine, host, port, username, encrypted_password, created_at "
+                    "SELECT connection_id, engine, host, port, username, "
+                    "encrypted_password, created_at "
                     "FROM normalization_connections WHERE connection_id = :cid"
                 ),
                 {"cid": connection_id},
             ).first()
         return _connection_row_to_dict(row) if row is not None else None
 
-    def list_connections(self) -> list[dict]:
+    def list_connections(self) -> list[dict[str, Any]]:
         with self._engine.begin() as conn:
             rows = conn.execute(
                 sa.text(
-                    "SELECT connection_id, engine, host, port, username, encrypted_password, created_at "
+                    "SELECT connection_id, engine, host, port, username, "
+                    "encrypted_password, created_at "
                     "FROM normalization_connections ORDER BY created_at"
                 )
             ).all()
@@ -627,23 +639,21 @@ class PgPersistence:
     # progress counters (current table, last committed source_row_key per
     # table) all live in `data`.
 
-    def create_clone_job(self, job_id: str, data: dict) -> None:
+    def create_clone_job(self, job_id: str, data: dict[str, Any]) -> None:
         with self._engine.begin() as conn:
             conn.execute(
                 sa.text("INSERT INTO normalization_clone_jobs (job_id, data) VALUES (:jid, :data)"),
                 {"jid": job_id, "data": json.dumps(data)},
             )
 
-    def save_clone_job(self, job_id: str, data: dict) -> None:
+    def save_clone_job(self, job_id: str, data: dict[str, Any]) -> None:
         with self._engine.begin() as conn:
             conn.execute(
-                sa.text(
-                    "UPDATE normalization_clone_jobs SET data = :data WHERE job_id = :jid"
-                ),
+                sa.text("UPDATE normalization_clone_jobs SET data = :data WHERE job_id = :jid"),
                 {"jid": job_id, "data": json.dumps(data)},
             )
 
-    def get_clone_job(self, job_id: str) -> dict | None:
+    def get_clone_job(self, job_id: str) -> dict[str, Any] | None:
         with self._engine.begin() as conn:
             row = conn.execute(
                 sa.text("SELECT data FROM normalization_clone_jobs WHERE job_id = :jid"),
@@ -651,7 +661,7 @@ class PgPersistence:
             ).first()
         return json.loads(row[0]) if row is not None else None
 
-    def list_clone_jobs(self) -> list[dict]:
+    def list_clone_jobs(self) -> list[dict[str, Any]]:
         with self._engine.begin() as conn:
             rows = conn.execute(sa.text("SELECT data FROM normalization_clone_jobs")).all()
         return [json.loads(r[0]) for r in rows]
@@ -668,13 +678,14 @@ class PgPersistence:
                 sa.text(
                     "UPDATE normalization_clone_jobs SET data = "
                     "jsonb_set(data::jsonb, '{status}', '\"RUNNING\"')::text "
-                    "WHERE job_id = :jid AND (data::jsonb ->> 'status') IN ('SCHEMA_READY', 'RUNNING')"
+                    "WHERE job_id = :jid "
+                    "AND (data::jsonb ->> 'status') IN ('SCHEMA_READY', 'RUNNING')"
                 ),
                 {"jid": job_id},
             )
         return result.rowcount > 0
 
-    def save_clone_job_errors(self, job_id: str, errors: Sequence[dict]) -> None:
+    def save_clone_job_errors(self, job_id: str, errors: Sequence[dict[str, Any]]) -> None:
         """Chunked insert, mirroring `save_execution`'s row-per-value
         writes — bounds peak memory the same way."""
         for start in range(0, len(errors), _WRITE_CHUNK_ROWS):
@@ -703,7 +714,7 @@ class PgPersistence:
 
     def load_clone_job_errors_page(
         self, job_id: str, *, limit: int, offset: int
-    ) -> list[dict]:
+    ) -> list[dict[str, Any]]:
         with self._engine.begin() as conn:
             rows = conn.execute(
                 sa.text(
@@ -725,7 +736,7 @@ class PgPersistence:
         ]
 
 
-def _connection_row_to_dict(row: sa.Row) -> dict:
+def _connection_row_to_dict(row: sa.Row[Any]) -> dict[str, Any]:
     connection_id, engine, host, port, username, encrypted_password, created_at = row
     return {
         "connection_id": connection_id,
@@ -738,6 +749,6 @@ def _connection_row_to_dict(row: sa.Row) -> dict:
     }
 
 
-def rehydrate_invariant_report(raw: dict) -> InvariantSampleReport:
+def rehydrate_invariant_report(raw: dict[str, Any]) -> InvariantSampleReport:
     violations = tuple(InvariantViolation(**v) for v in raw["violations"])
     return InvariantSampleReport(sampled=raw["sampled"], violations=violations)

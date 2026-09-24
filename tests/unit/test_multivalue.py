@@ -91,9 +91,7 @@ def test_the_arrival_style_is_preserved(
 # --- normalization --------------------------------------------------------
 
 
-def test_every_element_is_normalized(
-    dispatcher: Dispatcher, profile: NormalizationProfile
-) -> None:
+def test_every_element_is_normalized(dispatcher: Dispatcher, profile: NormalizationProfile) -> None:
     result = _normalize(dispatcher, profile, "['a@B.COM', 'c@D.com']")
     assert result.display == "['a@b.com', 'c@d.com']"
     assert result.normalization_status is NormalizationStatus.NORMALIZED

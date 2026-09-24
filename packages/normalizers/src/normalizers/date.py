@@ -242,9 +242,7 @@ _DATEPARSER_SETTINGS_BASE: dict[str, object] = {
 # Already-EDTF notation. Matched literally, never inferred: a plain
 # "12/05/1990" must NOT look like an interval here, or it would skip the
 # day/month ambiguity guard below and get silently resolved.
-_EDTF_NOTATION_RE = re.compile(
-    r"^\[|[?~%]|\.\.|\d{2,3}[Xx]\b|\d{4}/\d{4}|^/\d{4}|\d{4}/$"
-)
+_EDTF_NOTATION_RE = re.compile(r"^\[|[?~%]|\.\.|\d{2,3}[Xx]\b|\d{4}/\d{4}|^/\d{4}|\d{4}/$")
 
 # English phrasings of the same ideas, which `edtf` translates to EDTF.
 _EDTF_WORDS_RE = re.compile(

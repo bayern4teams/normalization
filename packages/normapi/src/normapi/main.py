@@ -33,6 +33,9 @@ app = None if __name__ == "__mp_main__" else create_app()
 if __name__ == "__main__":
     import uvicorn
 
+    # `app` is only None under __mp_main__ (a multiprocessing re-import),
+    # which never reaches __main__ — asserted so the type is honest.
+    assert app is not None
     uvicorn.run(
         app,
         host=os.environ.get("NORM_API_HOST", "0.0.0.0"),  # intentional: container-facing API server

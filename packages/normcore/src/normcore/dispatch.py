@@ -195,9 +195,7 @@ class Dispatcher:
         confidences = [r.confidence for r in results if r.confidence is not None]
         trace = [
             step.model_copy(update={"step_order": order})
-            for order, step in enumerate(
-                (step for r in results for step in r.trace), start=1
-            )
+            for order, step in enumerate((step for r in results for step in r.trace), start=1)
         ]
         return NormalizedValue(
             original=value,
@@ -213,11 +211,7 @@ class Dispatcher:
             confidence=min(confidences) if confidences else None,
             flags=list(dict.fromkeys(flag for r in results for flag in r.flags)),
             warnings=[w for r in results for w in r.warnings],
-            errors=[
-                f"element {i}: {error}"
-                for i, r in enumerate(results)
-                for error in r.errors
-            ],
+            errors=[f"element {i}: {error}" for i, r in enumerate(results) for error in r.errors],
             trace=trace,
             lossiness=_worst_lossiness(r.lossiness for r in results),
             profile_version=profile.version,
@@ -326,7 +320,7 @@ _LOSSINESS_SEVERITY: tuple[Reversibility, ...] = (
 )
 
 
-def _worst_by(order: tuple[object, ...], values: Iterable[object], default: object) -> object:
+def _worst_by[T, D](order: tuple[T, ...], values: Iterable[T], default: D) -> T | D:
     ranked = [v for v in values if v in order]
     return max(ranked, key=order.index) if ranked else default
 

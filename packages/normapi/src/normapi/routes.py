@@ -38,7 +38,7 @@ are all wired to real logic — no remaining 501 stubs on the §98 surface.
 from __future__ import annotations
 
 import uuid
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException
 from normcore.pii import safe_preview
@@ -793,14 +793,16 @@ def _resolve_connection(
     connection_id: str,
     body: DatabaseDiscoveryRequest | None,
     connections: PgPersistence,
-) -> dict:
+) -> dict[str, Any]:
     """Unifies the "saved connection" and "not-yet-saved, ad-hoc inline
     credentials" cases (§4) behind one shape — both end up as a dict with
     an `encrypted_password` field, so every downstream connector-builder
     (`clone_executor.build_source_connector`) only has one code path to
     handle regardless of which case produced it."""
     if connection_id == "adhoc":
-        if body is None or not (body.engine and body.host and body.port and body.username and body.password):
+        if body is None or not (
+            body.engine and body.host and body.port and body.username and body.password
+        ):
             raise HTTPException(
                 status_code=422,
                 detail="adhoc discovery requires engine, host, port, username, and password",
@@ -831,7 +833,9 @@ def discover_databases(
     body: Annotated[DatabaseDiscoveryRequest | None, Body()] = None,
 ) -> list[str]:
     conn = _resolve_connection(connection_id, body, connections)
-    source = clone_executor.build_source_connector(conn, clone_executor.bootstrap_database(conn["engine"]))
+    source = clone_executor.build_source_connector(
+        conn, clone_executor.bootstrap_database(conn["engine"])
+    )
     try:
         return list(source.list_databases())
     finally:
@@ -899,7 +903,9 @@ def create_clone_job(
                 "destination_connection_id": body.destination_connection_id,
                 "destination_database": body.destination_database,
                 "field_configs": {
-                    table: {column: (t.value if t is not None else None) for column, t in cols.items()}
+                    table: {
+                        column: (t.value if t is not None else None) for column, t in cols.items()
+                    }
                     for table, cols in body.field_configs.items()
                 },
                 "autodetect_field_types": body.autodetect_field_types,
@@ -915,9 +921,7 @@ def create_clone_job(
         # In-place reuses the source database, so there is nothing for the
         # operator to create and Phase 1 verifies nothing.
         create_database_sql=(
-            ""
-            if body.in_place
-            else clone_executor.create_database_sql(body.destination_database)
+            "" if body.in_place else clone_executor.create_database_sql(body.destination_database)
         ),
     )
 
@@ -926,7 +930,7 @@ def create_clone_job(
 def get_clone_job(
     job_id: str,
     connections: Annotated[PgPersistence, Depends(get_connections)],
-) -> dict:
+) -> dict[str, Any]:
     job = connections.get_clone_job(job_id)
     if job is None:
         raise HTTPException(status_code=404, detail=f"No such clone job: {job_id}")
@@ -941,7 +945,7 @@ def get_clone_job(
 def verify_clone_job_database(
     job_id: str,
     connections: Annotated[PgPersistence, Depends(get_connections)],
-) -> dict:
+) -> dict[str, Any]:
     """Decision #6: verifies the user has run the `CREATE DATABASE`
     command shown by `POST /clone-jobs`, then runs Phase 1 DDL (schema
     clone, every table completely empty) for every table."""
@@ -959,7 +963,7 @@ def start_clone_job(
     connections: Annotated[PgPersistence, Depends(get_connections)],
     dispatcher: Annotated[Dispatcher, Depends(get_dispatcher)],
     cache: Annotated[NormalizationCache, Depends(get_cache)],
-) -> dict:
+) -> dict[str, Any]:
     """Phase 2 (decision #4: background, pollable — not a blocking
     request). Also the resume entry point (decision #10): calling this
     again on an orphaned RUNNING job re-streams and skips already-
@@ -973,7 +977,10 @@ def start_clone_job(
             status_code=409,
             detail=f"Clone job {job_id} is {job['status']}, expected SCHEMA_READY or RUNNING",
         )
-    return connections.get_clone_job(job_id)
+    running = connections.get_clone_job(job_id)
+    if running is None:  # pragma: no cover - just claimed above, so it exists
+        raise HTTPException(status_code=404, detail=f"No such clone job: {job_id}")
+    return running
 
 
 _MAX_CLONE_ERRORS_PAGE_SIZE = 1000

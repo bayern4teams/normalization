@@ -13,6 +13,7 @@ from normalizers.email import EmailNormalizer
 from normalizers.passthrough import PassthroughNormalizer
 from normalizers.phone import PhoneNormalizer
 from normanalysis.type_detection import suggest_semantic_type
+from normapi.app import build_normalizer_registry
 from normcore.enums import FieldSemanticType
 
 from normcore import NormalizerRegistry
@@ -114,8 +115,6 @@ class TestValueOnlyDetection:
     every name anyone gives a URL column."""
 
     def test_a_name_that_matches_nothing_is_detected_from_its_values(self) -> None:
-        from normapi.app import build_normalizer_registry
-
         top = suggest_semantic_type(
             "logo",
             sample_values=["https://a.example/x.png", "https://b.example/y.png"],
@@ -152,8 +151,6 @@ class TestValueOnlyDetection:
         assert all(s.confidence < 0.9 for s in suggestions), suggestions
 
     def test_values_never_outrank_a_confirmed_name_match(self) -> None:
-        from normapi.app import build_normalizer_registry
-
         top = suggest_semantic_type(
             "website",
             sample_values=["https://a.example", "https://b.example"],
@@ -163,8 +160,6 @@ class TestValueOnlyDetection:
         assert "field name matches" in top.reason
 
     def test_a_repaired_value_is_not_evidence_of_the_type(self) -> None:
-        from normapi.app import build_normalizer_registry
-
         # URL repairs a bare host, so filenames would otherwise all
         # "validate" and a column of them would be rewritten to https://.
         suggestions = suggest_semantic_type(
@@ -175,8 +170,6 @@ class TestValueOnlyDetection:
         assert all(s.semantic_type is not FieldSemanticType.URL for s in suggestions), suggestions
 
     def test_cleanly_parsed_values_still_count(self) -> None:
-        from normapi.app import build_normalizer_registry
-
         top = suggest_semantic_type(
             "attachment",
             sample_values=["https://a.example/r.txt", "https://b.example/a.tar"],
@@ -185,8 +178,6 @@ class TestValueOnlyDetection:
         assert top.semantic_type is FieldSemanticType.URL
 
     def test_two_types_both_claiming_the_column_is_evidence_for_neither(self) -> None:
-        from normapi.app import build_normalizer_registry
-
         # With no name to break the tie, dict order must not decide.
         suggestions = suggest_semantic_type(
             "col", sample_values=["2020-01-02", "2021-03-04"], registry=build_normalizer_registry()

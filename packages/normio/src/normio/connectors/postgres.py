@@ -34,7 +34,9 @@ class PostgresConnector(SqlConnectorBase):
         the server itself, never a network port scan."""
         with self._engine.connect() as conn:
             rows = conn.execute(
-                sa.text("SELECT datname FROM pg_database WHERE datistemplate = false ORDER BY datname")
+                sa.text(
+                    "SELECT datname FROM pg_database WHERE datistemplate = false ORDER BY datname"
+                )
             ).all()
         return [row[0] for row in rows]
 

@@ -43,10 +43,31 @@ if TYPE_CHECKING:
 # per type.
 SEMANTIC_TYPE_TO_PG_TYPE: dict[str, str] = dict.fromkeys(
     (
-        "PERSON_NAME", "GIVEN_NAME", "FAMILY_NAME", "COMPANY_NAME", "EMAIL", "PHONE",
-        "ADDRESS", "POSTCODE", "COUNTRY", "LANGUAGE", "SCRIPT", "DATE", "DATETIME",
-        "IDENTIFIER", "UUID", "TAX_ID", "URL", "NUMERIC", "CURRENCY", "QUANTITY",
-        "MONEY", "BOOLEAN", "FREE_TEXT", "CODE", "UNKNOWN",
+        "PERSON_NAME",
+        "GIVEN_NAME",
+        "FAMILY_NAME",
+        "COMPANY_NAME",
+        "EMAIL",
+        "PHONE",
+        "ADDRESS",
+        "POSTCODE",
+        "COUNTRY",
+        "LANGUAGE",
+        "SCRIPT",
+        "DATE",
+        "DATETIME",
+        "IDENTIFIER",
+        "UUID",
+        "TAX_ID",
+        "URL",
+        "NUMERIC",
+        "CURRENCY",
+        "QUANTITY",
+        "MONEY",
+        "BOOLEAN",
+        "FREE_TEXT",
+        "CODE",
+        "UNKNOWN",
     ),
     "TEXT",
 )
@@ -163,7 +184,9 @@ class PostgresDestination:
         if primary_key:
             pk_cols = ", ".join(f'"{c}"' for c in primary_key)
             conflict_clause = f" ON CONFLICT ({pk_cols}) DO NOTHING"
-        insert_sql = sa.text(f'INSERT INTO "{table}" ({col_list}) VALUES ({placeholders}){conflict_clause}')
+        insert_sql = sa.text(
+            f'INSERT INTO "{table}" ({col_list}) VALUES ({placeholders}){conflict_clause}'
+        )
         engine = self._engine_for(database)
         for start in range(0, len(rows), DESTINATION_INSERT_CHUNK_ROWS):
             chunk = rows[start : start + DESTINATION_INSERT_CHUNK_ROWS]

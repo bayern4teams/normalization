@@ -283,7 +283,7 @@ class TestNumericSeparatorDisambiguation:
     def test_scientific_notation_is_not_mistaken_for_grouping(
         self, numeric_normalizer: NumericNormalizer
     ) -> None:
-        """"1.5e3" has a 3-character trailing run, but it is not 3 DIGITS,
+        """ "1.5e3" has a 3-character trailing run, but it is not 3 DIGITS,
         so it is not an ambiguous thousands group."""
         result = numeric_normalizer.normalize("1.5e3", _ctx(FieldSemanticType.NUMERIC))
         assert result.normalization_status is not NormalizationStatus.AMBIGUOUS
@@ -310,7 +310,7 @@ class TestCurrencyCodeRecognition:
         assert result.display == expected
 
     def test_lowercase_prose_is_not_read_as_a_code(self) -> None:
-        """"cup" IS a real ISO 4217 code (Cuban peso), so case-insensitive
+        """ "cup" IS a real ISO 4217 code (Cuban peso), so case-insensitive
         matching anywhere in the text would resolve ordinary prose. Only a
         value whose sole alphabetic token is the code may match.
         """

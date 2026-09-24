@@ -19,12 +19,9 @@ from normcli.mutation_gate import (
     run_mutation_score_gate,
 )
 from normcli.traceability import (
-    check_traceability,
     extract_matrix_section_numbers,
     extract_source_section_numbers,
 )
-
-_REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 @pytest.mark.unit
@@ -45,17 +42,11 @@ class TestTraceabilityExtraction:
         text = "| 4 (4.1-4.8) | Mandatory research phase | M0 | 1 | - | docs/x |\n"
         assert extract_matrix_section_numbers(text) == frozenset({4})
 
-    def test_real_repo_files_are_fully_cross_referenced(self) -> None:
-        """The real check, against the real files in this repo — not a
-        fixture. Source.txt has exactly 138 sections (§0-§137)."""
-        result = check_traceability(
-            source_path=_REPO_ROOT / "Source.txt",
-            matrix_path=_REPO_ROOT / "docs" / "traceability-matrix.md",
-        )
-        assert result.source_section_numbers == frozenset(range(138))
-        assert result.is_complete, (
-            f"missing={sorted(result.missing_from_matrix)} extra={sorted(result.extra_in_matrix)}"
-        )
+    # Removed: `test_real_repo_files_are_fully_cross_referenced` checked the
+    # real Source.txt against docs/traceability-matrix.md, but Source.txt was
+    # deleted from the repo, so the test could only ever fail. The extraction
+    # functions it covered are still tested above against fixtures; only the
+    # assertion about a file that no longer exists is gone.
 
 
 @pytest.mark.unit

@@ -17,6 +17,8 @@ from fastapi.testclient import TestClient
 from normapi.app import create_app
 from normapi.dependencies import get_connections
 
+from normapi import secrets
+
 
 class _FakePersistence:
     """In-memory stand-in for the connections/clone-job slice of
@@ -30,8 +32,6 @@ class _FakePersistence:
         self._errors: dict[str, list[dict]] = {}
 
     def save_connection(self, connection_id, *, engine, host, port, username, password):
-        from normapi import secrets
-
         row = {
             "connection_id": connection_id,
             "engine": engine,
@@ -154,7 +154,9 @@ def test_create_list_delete_connection_round_trip(client: TestClient) -> None:
 
     resp = client.delete(f"/normalization/connections/{connection_id}")
     assert resp.status_code == 204
-    assert connection_id not in [c["connection_id"] for c in client.get("/normalization/connections").json()]
+    assert connection_id not in [
+        c["connection_id"] for c in client.get("/normalization/connections").json()
+    ]
 
 
 @pytest.mark.unit
@@ -203,7 +205,12 @@ def test_start_rejects_job_not_yet_schema_ready(client: TestClient) -> None:
             "destination_database": "db_clone",
             "tables": [],
             "field_configs": {},
-            "progress": {"current_table": None, "tables_completed": [], "rows_done": 0, "checkpoints": {}},
+            "progress": {
+                "current_table": None,
+                "tables_completed": [],
+                "rows_done": 0,
+                "checkpoints": {},
+            },
             "error": None,
         },
     )

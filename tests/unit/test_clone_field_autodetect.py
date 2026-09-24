@@ -70,9 +70,7 @@ def test_unconfigured_columns_get_their_type_detected(registry) -> None:
 
 
 def test_an_explicit_config_is_never_second_guessed(registry) -> None:
-    source = _FakeSource(
-        {"company": ["website"]}, {"company": [["dish.com", "x.com"]]}
-    )
+    source = _FakeSource({"company": ["website"]}, {"company": [["dish.com", "x.com"]]})
     inferred = _infer(source, {"company": {"website": "FREE_TEXT"}}, registry)
     assert "company" not in inferred
 
@@ -99,9 +97,7 @@ def test_prose_columns_are_left_as_passthrough(registry) -> None:
 
 
 def test_list_shaped_columns_are_detected_through_the_list(registry) -> None:
-    source = _FakeSource(
-        {"t": ["freeMails"]}, {"t": [["['a@b.com']", "['c@d.com']"]]}
-    )
+    source = _FakeSource({"t": ["freeMails"]}, {"t": [["['a@b.com']", "['c@d.com']"]]})
     assert _infer(source, {}, registry)["t"]["freeMails"] == "EMAIL"
 
 
@@ -145,9 +141,7 @@ def test_clickhouse_style_wrapped_string_types_still_count_as_textual() -> None:
 
 
 def test_free_text_fallback_is_opt_in(registry) -> None:
-    source = _FakeSource(
-        {"t": ["description"]}, {"t": [["Some prose", "More prose"]]}
-    )
+    source = _FakeSource({"t": ["description"]}, {"t": [["Some prose", "More prose"]]})
     assert _infer(source, {}, registry) == {}
     opted_in = clone_executor._infer_field_configs(
         source, ["t"], {}, registry, fallback_free_text=True

@@ -54,7 +54,8 @@ class ClickHouseConnector:
         passthrough path. `_list_columns` (just below) stays as-is —
         `read_table` only needs the name set, not the types."""
         result = self._client.query(
-            "SELECT name, type FROM system.columns WHERE database = {db:String} AND table = {t:String} ORDER BY position",
+            "SELECT name, type FROM system.columns "
+            "WHERE database = {db:String} AND table = {t:String} ORDER BY position",
             parameters={"db": self._database, "t": table},
         )
         return [ColumnInfo(name=row[0], native_type=row[1]) for row in result.result_rows]
@@ -133,9 +134,7 @@ class ClickHouseConnector:
         # the same comma-split that Phase 1 already uses to CREATE the
         # destination table's ORDER BY — if that DDL was valid, this is.
         _, order_by = self.get_table_engine_info(table)
-        order_clause = (
-            " ORDER BY " + ", ".join(f"`{c}`" for c in order_by) if order_by else ""
-        )
+        order_clause = " ORDER BY " + ", ".join(f"`{c}`" for c in order_by) if order_by else ""
         query = f"SELECT {column_list} FROM `{table}`{order_clause}"
 
         # query_arrow() (what this used to call) materializes the ENTIRE

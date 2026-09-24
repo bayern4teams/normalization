@@ -35,10 +35,31 @@ if TYPE_CHECKING:
 # per type.
 SEMANTIC_TYPE_TO_CH_TYPE: dict[str, str] = dict.fromkeys(
     (
-        "PERSON_NAME", "GIVEN_NAME", "FAMILY_NAME", "COMPANY_NAME", "EMAIL", "PHONE",
-        "ADDRESS", "POSTCODE", "COUNTRY", "LANGUAGE", "SCRIPT", "DATE", "DATETIME",
-        "IDENTIFIER", "UUID", "TAX_ID", "URL", "NUMERIC", "CURRENCY", "QUANTITY",
-        "MONEY", "BOOLEAN", "FREE_TEXT", "CODE", "UNKNOWN",
+        "PERSON_NAME",
+        "GIVEN_NAME",
+        "FAMILY_NAME",
+        "COMPANY_NAME",
+        "EMAIL",
+        "PHONE",
+        "ADDRESS",
+        "POSTCODE",
+        "COUNTRY",
+        "LANGUAGE",
+        "SCRIPT",
+        "DATE",
+        "DATETIME",
+        "IDENTIFIER",
+        "UUID",
+        "TAX_ID",
+        "URL",
+        "NUMERIC",
+        "CURRENCY",
+        "QUANTITY",
+        "MONEY",
+        "BOOLEAN",
+        "FREE_TEXT",
+        "CODE",
+        "UNKNOWN",
     ),
     "String",
 )
@@ -124,7 +145,10 @@ class ClickHouseDestination:
         defs += [f"`{name}` Nullable({t})" for name, t in (extra_columns or {}).items()]
         column_defs = ", ".join(defs)
         order_clause = ", ".join(f"`{c}`" for c in order_by) if order_by else "tuple()"
-        ddl = f"CREATE TABLE `{database}`.`{table}` ({column_defs}) ENGINE = {engine} ORDER BY ({order_clause})"
+        ddl = (
+            f"CREATE TABLE `{database}`.`{table}` ({column_defs}) "
+            f"ENGINE = {engine} ORDER BY ({order_clause})"
+        )
         self._client_for(database).command(ddl)
 
     @staticmethod
@@ -154,7 +178,7 @@ class ClickHouseDestination:
         table: str,
         rows: Sequence[Mapping[str, object]],
         *,
-        primary_key: Sequence[str] = (),  # noqa: ARG002 - unused; matches PostgresDestination's signature so callers need no isinstance branch
+        primary_key: Sequence[str] = (),
     ) -> None:
         """Chunked native batch insert via `clickhouse_connect` — same
         `DESTINATION_INSERT_CHUNK_ROWS` chunk-commit boundary as the Postgres destination,

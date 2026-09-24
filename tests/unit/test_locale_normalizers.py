@@ -259,7 +259,7 @@ class TestCldrCountryResolution:
 
     @pytest.mark.parametrize("value", ["SU", "YU", "AN", "CS"])
     def test_retired_codes_with_several_successors_stay_unresolved(self, value: str) -> None:
-        """"SU" is 15 states and "YU" is two — picking one would be a
+        """ "SU" is 15 states and "YU" is two — picking one would be a
         guess, which this module never makes."""
         assert resolve_country_alpha2(value) is None
 
@@ -296,7 +296,7 @@ class TestCldrCountryResolution:
         assert resolve_country_alpha2(value) is None
 
     def test_iso_standard_wins_over_cldr_on_conflict(self) -> None:
-        """"nga" is Nigeria's ISO alpha-3 AND some locale's CLDR name for
+        """ "nga" is Nigeria's ISO alpha-3 AND some locale's CLDR name for
         Russia. pycountry is consulted first precisely so the standard
         wins; this is the only such collision in the data."""
         assert resolve_country_alpha2("nga") == "NG"
@@ -379,7 +379,7 @@ class TestLanguageTagParsing:
         )
 
     def test_live_pycountry_code_keeps_its_own_answer(self) -> None:
-        """"sh" is still a pycountry entry, so the ISO answer wins over
+        """ "sh" is still a pycountry entry, so the ISO answer wins over
         CLDR's "sr_Latn" alias — same authority order as COUNTRY."""
         result = LanguageNormalizer().normalize("sh", _ctx(FieldSemanticType.LANGUAGE))
         assert result.comparison == "sh"

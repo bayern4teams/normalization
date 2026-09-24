@@ -33,8 +33,9 @@ from cryptography.fernet import Fernet
 from normalizers.date import DateNormalizer
 from normalizers.email import EmailNormalizer
 from normalizers.passthrough import PassthroughNormalizer
-from normapi import clone_executor
 from normapi.pg_persistence import PgPersistence
+
+from normapi import clone_executor
 from normcore import Dispatcher, NormalizerRegistry
 
 APP_PG_DSN = os.environ.get(
@@ -80,16 +81,26 @@ def _wait_for_terminal(persistence: PgPersistence, job_id: str, timeout: float =
 
 
 @pytest.mark.integration
-def test_postgres_clone_pipeline_ddl_population_errors_and_resume(persistence: PgPersistence) -> None:
+def test_postgres_clone_pipeline_ddl_population_errors_and_resume(
+    persistence: PgPersistence,
+) -> None:
     dest_database = f"clone_pg_{uuid.uuid4().hex[:8]}"
 
     source_conn = persistence.save_connection(
-        str(uuid.uuid4()), engine="postgres", host=PG_HOST, port=PG_PORT,
-        username="readonly_user", password="readonly_pass",
+        str(uuid.uuid4()),
+        engine="postgres",
+        host=PG_HOST,
+        port=PG_PORT,
+        username="readonly_user",
+        password="readonly_pass",
     )
     dest_conn = persistence.save_connection(
-        str(uuid.uuid4()), engine="postgres", host=PG_HOST, port=PG_PORT,
-        username="writable_user", password="writable_pass",
+        str(uuid.uuid4()),
+        engine="postgres",
+        host=PG_HOST,
+        port=PG_PORT,
+        username="writable_user",
+        password="writable_pass",
     )
 
     job = clone_executor.create_clone_job(
@@ -160,9 +171,7 @@ def test_postgres_clone_pipeline_ddl_population_errors_and_resume(persistence: P
 
     errors = persistence.load_clone_job_errors_page(job_id, limit=100, offset=0)
     bad_value_errors = {
-        (e["field"], e["original"]): e["error"]
-        for e in errors
-        if e["table_name"] == "clone_source"
+        (e["field"], e["original"]): e["error"] for e in errors if e["table_name"] == "clone_source"
     }
     assert bad_value_errors.get(("email", "not-an-email"))
     assert bad_value_errors.get(("founded", "no-date-here"))
@@ -191,16 +200,26 @@ def test_postgres_clone_pipeline_ddl_population_errors_and_resume(persistence: P
 
 
 @pytest.mark.integration
-def test_clickhouse_clone_pipeline_ddl_population_errors_and_resume(persistence: PgPersistence) -> None:
+def test_clickhouse_clone_pipeline_ddl_population_errors_and_resume(
+    persistence: PgPersistence,
+) -> None:
     dest_database = f"clone_ch_{uuid.uuid4().hex[:8]}"
 
     source_conn = persistence.save_connection(
-        str(uuid.uuid4()), engine="clickhouse", host=CH_HOST, port=CH_PORT,
-        username="readonly_user", password="readonly_pass",
+        str(uuid.uuid4()),
+        engine="clickhouse",
+        host=CH_HOST,
+        port=CH_PORT,
+        username="readonly_user",
+        password="readonly_pass",
     )
     dest_conn = persistence.save_connection(
-        str(uuid.uuid4()), engine="clickhouse", host=CH_HOST, port=CH_PORT,
-        username="writable_user", password="writable_pass",
+        str(uuid.uuid4()),
+        engine="clickhouse",
+        host=CH_HOST,
+        port=CH_PORT,
+        username="writable_user",
+        password="writable_pass",
     )
 
     job = clone_executor.create_clone_job(
@@ -227,17 +246,24 @@ def test_clickhouse_clone_pipeline_ddl_population_errors_and_resume(persistence:
     assert job["status"] == "SCHEMA_READY"
 
     dest_client = clickhouse_connect.get_client(
-        host=CH_HOST, port=CH_PORT, username="writable_user", password="writable_pass",
+        host=CH_HOST,
+        port=CH_PORT,
+        username="writable_user",
+        password="writable_pass",
         database=dest_database,
     )
     col_result = dest_client.query(
-        "SELECT name, type FROM system.columns WHERE database = {db:String} AND table = 'clone_source'",
+        "SELECT name, type FROM system.columns "
+        "WHERE database = {db:String} AND table = 'clone_source'",
         parameters={"db": dest_database},
     )
     col_types = dict(col_result.result_rows)
-    assert col_types["email"] == "Nullable(String)"  # EMAIL semantic type -> String, wrapped Nullable
+    assert (
+        col_types["email"] == "Nullable(String)"
+    )  # EMAIL semantic type -> String, wrapped Nullable
     engine_result = dest_client.query(
-        "SELECT engine, sorting_key FROM system.tables WHERE database = {db:String} AND name = 'clone_source'",
+        "SELECT engine, sorting_key FROM system.tables "
+        "WHERE database = {db:String} AND name = 'clone_source'",
         parameters={"db": dest_database},
     )
     engine_name, sorting_key = engine_result.result_rows[0]
@@ -253,16 +279,16 @@ def test_clickhouse_clone_pipeline_ddl_population_errors_and_resume(persistence:
     assert job["progress"]["rows_done"] == 5
     assert sorted(job["progress"]["tables_completed"]) == sorted(job["tables"])
 
-    rows = dict(
-        dest_client.query("SELECT id, email FROM clone_source ORDER BY id").result_rows
-    )
+    rows = dict(dest_client.query("SELECT id, email FROM clone_source ORDER BY id").result_rows)
     assert rows[1] != "Valid.User@EXAMPLE.com"
     assert rows[1].endswith("@example.com")
     assert rows[2] == "not-an-email"
     assert dest_client.query("SELECT count() FROM customers").result_rows[0][0] == 3
 
     errors = persistence.load_clone_job_errors_page(job_id, limit=100, offset=0)
-    bad_value_errors = [e for e in errors if e["table_name"] == "clone_source" and e["field"] == "email"]
+    bad_value_errors = [
+        e for e in errors if e["table_name"] == "clone_source" and e["field"] == "email"
+    ]
     assert len(bad_value_errors) == 1
     assert bad_value_errors[0]["original"] == "not-an-email"
 

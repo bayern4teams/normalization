@@ -83,7 +83,9 @@ def bootstrap_database(engine: str) -> str:
     return "postgres" if engine == "postgres" else "default"
 
 
-def build_source_connector(conn: dict, database: str) -> PostgresConnector | ClickHouseConnector:
+def build_source_connector(
+    conn: dict[str, Any], database: str
+) -> PostgresConnector | ClickHouseConnector:
     password = secrets.decrypt(conn["encrypted_password"])
     if conn["engine"] == "postgres":
         dsn = f"postgresql://{conn['username']}:{password}@{conn['host']}:{conn['port']}/{database}"
@@ -101,7 +103,7 @@ def build_source_connector(conn: dict, database: str) -> PostgresConnector | Cli
     raise ValueError(msg)
 
 
-def build_destination_writer(conn: dict) -> PostgresDestination | ClickHouseDestination:
+def build_destination_writer(conn: dict[str, Any]) -> PostgresDestination | ClickHouseDestination:
     # ponytail: a two-branch if/else, not a DestinationConnector Protocol
     # — this is the only call site that ever touches destination writers,
     # and it already knows the engine from the saved connection. Add a
@@ -174,9 +176,7 @@ def _is_textual(native_type: str) -> bool:
 def _sample_column_values(source: Any, table: str, columns: list[str]) -> dict[str, list[str]]:
     """First batch only — one bounded read per table, not a scan."""
     try:
-        for batch in source.read_table(
-            table, columns=columns, batch_size=_AUTODETECT_SAMPLE_ROWS
-        ):
+        for batch in source.read_table(table, columns=columns, batch_size=_AUTODETECT_SAMPLE_ROWS):
             # Arrow hands back native types (datetime, int, bool) for
             # non-text columns; `suggest_semantic_type` is defined over the
             # string form a normalizer would actually see.
@@ -203,7 +203,7 @@ def _infer_field_configs(
     """`fallback_free_text` sweeps every remaining textual column into
     FREE_TEXT: unicode normalization, zero-width strip, whitespace collapse,
     punctuation folding. Off by default because folding is lossy — an en
-    dash becomes a hyphen, and `(2018–present)` was not wrong to begin with
+    dash becomes a hyphen, and `(2018-present)` was not wrong to begin with
     — so it is an operator's call, not a guess this can make. Measured
     against an independently produced reference of a 13-table source, it
     accounted for every remaining prose difference."""
@@ -233,8 +233,11 @@ def _infer_field_configs(
 
 
 def create_clone_job(
-    persistence: PgPersistence, *, request: dict, registry: NormalizerRegistry | None = None
-) -> dict:
+    persistence: PgPersistence,
+    *,
+    request: dict[str, Any],
+    registry: NormalizerRegistry | None = None,
+) -> dict[str, Any]:
     """Creates the job PENDING_DB_CREATE (decision #6). `request.tables`
     is captured NOW, at creation — every table in the chosen origin
     database is cloned automatically (decision #3), so the job's table
@@ -325,7 +328,7 @@ def staging_name(table: str) -> str:
 HEARTBEAT_TIMEOUT_SECONDS = _env_seconds("NORM_CLONE_HEARTBEAT_TIMEOUT_SECONDS", 900)
 
 
-def _save_progress(persistence: PgPersistence, job_id: str, job: dict) -> None:
+def _save_progress(persistence: PgPersistence, job_id: str, job: dict[str, Any]) -> None:
     """Persist progress and stamp the heartbeat in one step, so the two
     can never drift apart — a saved checkpoint with a stale timestamp
     would read as a dead job that is in fact working."""
@@ -356,6 +359,8 @@ def is_stale(job: Mapping[str, Any], *, now: dt.datetime | None = None) -> bool:
         return False
     now = now or dt.datetime.now(tz=dt.UTC)
     return (now - beat).total_seconds() > HEARTBEAT_TIMEOUT_SECONDS
+
+
 _MONEY = FieldSemanticType.MONEY.value
 _TEXT_TYPE = {"postgres": "TEXT", "clickhouse": "String"}
 
@@ -389,7 +394,20 @@ def _destination_plan(
     return overrides, extras, typed_columns
 
 
-def verify_and_create_schema(persistence: PgPersistence, job_id: str) -> dict:
+def _require_connection(persistence: PgPersistence, connection_id: str) -> dict[str, Any]:
+    """A saved connection a job already references must still exist.
+
+    Returning None here used to flow straight into the connector builders
+    as an untyped None and fail several frames later with no mention of
+    the connection id."""
+    connection = persistence.get_connection(connection_id)
+    if connection is None:
+        msg = f"No such connection: {connection_id}"
+        raise CloneJobNotFoundError(msg)
+    return connection
+
+
+def verify_and_create_schema(persistence: PgPersistence, job_id: str) -> dict[str, Any]:
     """Phase 1 (decision #5): verifies the user has run the returned
     `CREATE DATABASE` command, then creates every table completely empty
     (schema clone only, no rows yet).
@@ -407,7 +425,7 @@ def verify_and_create_schema(persistence: PgPersistence, job_id: str) -> dict:
         msg = f"Clone job {job_id} is {job['status']}, expected {CloneJobStatus.PENDING_DB_CREATE}"
         raise CloneJobStateError(msg)
 
-    dest_conn = persistence.get_connection(job["destination_connection_id"])
+    dest_conn = _require_connection(persistence, job["destination_connection_id"])
     dest = build_destination_writer(dest_conn)
     try:
         in_place = job.get("in_place", False)
@@ -418,7 +436,7 @@ def verify_and_create_schema(persistence: PgPersistence, job_id: str) -> dict:
             )
             raise CloneJobStateError(msg)
 
-        source_conn = persistence.get_connection(job["source_connection_id"])
+        source_conn = _require_connection(persistence, job["source_connection_id"])
         source = build_source_connector(source_conn, job["source_database"])
         destination_plan: dict[str, dict[str, dict[str, str]]] = {}
         try:
@@ -437,7 +455,11 @@ def verify_and_create_schema(persistence: PgPersistence, job_id: str) -> dict:
                 }
                 engine = dest_conn["engine"]
                 typed = job.get("typed_destination_columns", False)
-                if engine == "postgres":
+                # isinstance, not `engine == "postgres"`: the two branches
+                # call methods that exist on only one connector/destination
+                # each, and the engine string is opaque to the type checker
+                # even though it does decide which pair was built.
+                if isinstance(source, PostgresConnector) and isinstance(dest, PostgresDestination):
                     primary_key = source.get_primary_key(table)
                     overrides, extras, typed_columns = _destination_plan(
                         semantic_types, engine, primary_key, typed=typed
@@ -451,7 +473,9 @@ def verify_and_create_schema(persistence: PgPersistence, job_id: str) -> dict:
                         column_overrides=overrides,
                         extra_columns=extras,
                     )
-                else:
+                elif isinstance(source, ClickHouseConnector) and isinstance(
+                    dest, ClickHouseDestination
+                ):
                     engine_name, order_by = source.get_table_engine_info(table)
                     overrides, extras, typed_columns = _destination_plan(
                         semantic_types, engine, order_by, typed=typed
@@ -466,6 +490,13 @@ def verify_and_create_schema(persistence: PgPersistence, job_id: str) -> dict:
                         column_overrides=overrides,
                         extra_columns=extras,
                     )
+                else:
+                    msg = (
+                        f"Source {type(source).__name__} and destination "
+                        f"{type(dest).__name__} are different engines; a clone "
+                        "replicates schema in place and cannot translate between them."
+                    )
+                    raise CloneJobStateError(msg)
                 # Recorded, not recomputed in Phase 2: the INSERT must
                 # agree with the DDL that was actually executed here, even
                 # if the source's keys or the job's flags changed since.
@@ -500,7 +531,10 @@ _threads_lock = threading.Lock()
 
 
 def start_phase2(
-    persistence: PgPersistence, dispatcher: Dispatcher, cache: NormalizationCache | None, job_id: str
+    persistence: PgPersistence,
+    dispatcher: Dispatcher,
+    cache: NormalizationCache | None,
+    job_id: str,
 ) -> bool:
     """Claims the job (SCHEMA_READY|RUNNING -> RUNNING) and starts Phase 2
     on a daemon thread. Returns False without starting a new thread if
@@ -526,7 +560,6 @@ def start_phase2(
         _active_threads[job_id] = thread
         thread.start()
     return True
-
 
 
 # --- Parallel normalization (process pool) --------------------------------
@@ -630,7 +663,7 @@ def _normalize_distinct(
     if pool is None or len(distinct_values) < _PARALLEL_MIN_VALUES:
         return planner.distinct_value_results(distinct_values, semantic_type, context, profile)
 
-    workers = pool._max_workers
+    workers = _WORKER_COUNT
     size = (len(distinct_values) + workers - 1) // workers
     slices = [distinct_values[i : i + size] for i in range(0, len(distinct_values), size)]
     try:
@@ -658,7 +691,6 @@ def _make_pool(env_id: str) -> ProcessPoolExecutor | None:
         # No process pool available (restricted container, fd limits).
         # Serial normalization is correct, just slower.
         return None
-
 
 
 def _apply_column(
@@ -738,12 +770,127 @@ def _apply_column(
             )
 
 
-def _run_phase2(
-    persistence: PgPersistence, dispatcher: Dispatcher, cache: NormalizationCache | None, job_id: str
+def _normalize_table(
+    table: str,
+    *,
+    job: dict[str, Any],
+    job_id: str,
+    source: Any,
+    dest: Any,
+    source_engine: str,
+    persistence: PgPersistence,
+    planner: DistinctValuePlanner,
+    pool: Any,
+    progress: dict[str, Any],
+    in_place: bool,
 ) -> None:
+    """One table, end to end: stream it, normalize every configured
+    column, insert, checkpoint, and — in-place only — swap it in.
+
+    Extracted from `_run_phase2`, which had grown to 63 statements across
+    15 branches doing connection setup, the per-table work and failure
+    handling all at once. Marking the table completed stays with the
+    caller, which owns that set.
+    """
+    progress["current_table"] = table
+    field_config = job["field_configs"].get(table, {})
+    # FieldSemanticType, not the raw string stored in the job's
+    # JSON blob — Dispatcher.normalize's `context.semantic_type
+    # is not semantic_type` identity check (normcore/dispatch.py)
+    # requires the actual enum member on both sides, not a
+    # same-valued string (an `is` check, not `==`).
+    configured_columns = {c: FieldSemanticType(t) for c, t in field_config.items() if t}
+    primary_key = list(source.get_primary_key(table)) if source_engine == "postgres" else []
+    # Resume (decision #10): re-stream this table from the start
+    # and skip every row whose source_row_key offset is <= the
+    # last committed checkpoint, until reaching it.
+    # ponytail: re-stream-and-skip, not a pushdown filter (no
+    # per-row filter param on read_table today) — correct, but
+    # re-reads already-processed rows on resume. Add pushdown
+    # filtering if resumed jobs on very large tables get costly.
+    checkpoint = progress["checkpoints"].get(table, -1)
+    write_target = staging_name(table) if in_place else table
+    table_plan = job.get("destination_plan", {}).get(table, {})
+    typed_columns: dict[str, str] = table_plan.get("typed_columns", {})
+    currency_columns: dict[str, str] = table_plan.get("currency_columns", {})
+
+    for batch in source.read_table(table, batch_size=SOURCE_READ_BATCH_ROWS):
+        rows = batch.to_pylist()
+        pending: list[tuple[int, dict[str, Any]]] = []
+        for row in rows:
+            offset = int(row["source_row_key"].rsplit(":", 1)[1])
+            if offset > checkpoint:
+                pending.append((offset, row))
+        if not pending:
+            continue
+
+        errors_buffer: list[dict[str, Any]] = []
+        # Every row must carry the same keys: bulk_insert derives
+        # the column list from rows[0], so a companion column that
+        # only appears on rows with a non-null amount would build
+        # an INSERT that is wrong for every other row.
+        for _, row in pending:
+            for companion in currency_columns.values():
+                row[companion] = None
+        for column, semantic_type in configured_columns.items():
+            _apply_column(
+                pending,
+                column=column,
+                semantic_type=semantic_type,
+                table=table,
+                source_id=job["source_connection_id"],
+                pool=pool,
+                planner=planner,
+                typed_as=typed_columns.get(column),
+                companion=currency_columns.get(column),
+                errors_buffer=errors_buffer,
+            )
+
+        dest_rows = []
+        for _, row in pending:
+            row.pop("source_row_key", None)
+            dest_rows.append(row)
+
+        dest.bulk_insert(
+            job["destination_database"], write_target, dest_rows, primary_key=primary_key
+        )
+        if errors_buffer:
+            persistence.save_clone_job_errors(job_id, errors_buffer)
+
+        checkpoint = max(offset for offset, _ in pending)
+        progress["checkpoints"][table] = checkpoint
+        progress["rows_done"] += len(pending)
+        job["progress"] = progress
+        _save_progress(persistence, job_id, job)
+
+    if in_place:
+        # Swap only after the table is fully written, and BEFORE
+        # it is marked completed: a crash between the two replays
+        # a table that is already normalized, which re-reads the
+        # source and rebuilds a staging table that no longer
+        # exists — so the swap is what "completed" must mean here.
+        dest.swap_table(job["destination_database"], table, write_target)
+
+    job["progress"] = progress
+    _save_progress(persistence, job_id, job)
+
+
+def _run_phase2(
+    persistence: PgPersistence,
+    dispatcher: Dispatcher,
+    cache: NormalizationCache | None,
+    job_id: str,
+) -> None:
+    # Phase 2 runs on a daemon thread, so a missing job or connection here
+    # surfaces as an AttributeError deep in the first table rather than as
+    # anything a caller can read. They are genuinely unexpected — the job
+    # was claimed moments ago — so this is an assertion of an invariant,
+    # not error handling for a case that happens.
     job = persistence.get_clone_job(job_id)
-    source_conn = persistence.get_connection(job["source_connection_id"])
-    dest_conn = persistence.get_connection(job["destination_connection_id"])
+    if job is None:
+        raise CloneJobNotFoundError(job_id)
+    source_conn = _require_connection(persistence, job["source_connection_id"])
+    dest_conn = _require_connection(persistence, job["destination_connection_id"])
     source = build_source_connector(source_conn, job["source_database"])
     dest = build_destination_writer(dest_conn)
     # `cache` is deliberately NOT passed to the planner. The persistent
@@ -772,87 +919,19 @@ def _run_phase2(
         for table in job["tables"]:
             if table in tables_completed:
                 continue
-            progress["current_table"] = table
-            field_config = job["field_configs"].get(table, {})
-            # FieldSemanticType, not the raw string stored in the job's
-            # JSON blob — Dispatcher.normalize's `context.semantic_type
-            # is not semantic_type` identity check (normcore/dispatch.py)
-            # requires the actual enum member on both sides, not a
-            # same-valued string (an `is` check, not `==`).
-            configured_columns = {c: FieldSemanticType(t) for c, t in field_config.items() if t}
-            primary_key = (
-                list(source.get_primary_key(table)) if source_conn["engine"] == "postgres" else []
+            _normalize_table(
+                table,
+                job=job,
+                job_id=job_id,
+                source=source,
+                dest=dest,
+                source_engine=source_conn["engine"],
+                persistence=persistence,
+                planner=planner,
+                pool=pool,
+                progress=progress,
+                in_place=in_place,
             )
-            # Resume (decision #10): re-stream this table from the start
-            # and skip every row whose source_row_key offset is <= the
-            # last committed checkpoint, until reaching it.
-            # ponytail: re-stream-and-skip, not a pushdown filter (no
-            # per-row filter param on read_table today) — correct, but
-            # re-reads already-processed rows on resume. Add pushdown
-            # filtering if resumed jobs on very large tables get costly.
-            checkpoint = progress["checkpoints"].get(table, -1)
-            write_target = staging_name(table) if in_place else table
-            table_plan = job.get("destination_plan", {}).get(table, {})
-            typed_columns: dict[str, str] = table_plan.get("typed_columns", {})
-            currency_columns: dict[str, str] = table_plan.get("currency_columns", {})
-
-            for batch in source.read_table(table, batch_size=SOURCE_READ_BATCH_ROWS):
-                rows = batch.to_pylist()
-                pending: list[tuple[int, dict[str, Any]]] = []
-                for row in rows:
-                    offset = int(row["source_row_key"].rsplit(":", 1)[1])
-                    if offset > checkpoint:
-                        pending.append((offset, row))
-                if not pending:
-                    continue
-
-                errors_buffer: list[dict[str, Any]] = []
-                # Every row must carry the same keys: bulk_insert derives
-                # the column list from rows[0], so a companion column that
-                # only appears on rows with a non-null amount would build
-                # an INSERT that is wrong for every other row.
-                for _, row in pending:
-                    for companion in currency_columns.values():
-                        row[companion] = None
-                for column, semantic_type in configured_columns.items():
-                    _apply_column(
-                        pending,
-                        column=column,
-                        semantic_type=semantic_type,
-                        table=table,
-                        source_id=job["source_connection_id"],
-                        pool=pool,
-                        planner=planner,
-                        typed_as=typed_columns.get(column),
-                        companion=currency_columns.get(column),
-                        errors_buffer=errors_buffer,
-                    )
-
-                dest_rows = []
-                for _, row in pending:
-                    row.pop("source_row_key", None)
-                    dest_rows.append(row)
-
-                dest.bulk_insert(
-                    job["destination_database"], write_target, dest_rows, primary_key=primary_key
-                )
-                if errors_buffer:
-                    persistence.save_clone_job_errors(job_id, errors_buffer)
-
-                checkpoint = max(offset for offset, _ in pending)
-                progress["checkpoints"][table] = checkpoint
-                progress["rows_done"] += len(pending)
-                job["progress"] = progress
-                _save_progress(persistence, job_id, job)
-
-            if in_place:
-                # Swap only after the table is fully written, and BEFORE
-                # it is marked completed: a crash between the two replays
-                # a table that is already normalized, which re-reads the
-                # source and rebuilds a staging table that no longer
-                # exists — so the swap is what "completed" must mean here.
-                dest.swap_table(job["destination_database"], table, write_target)
-
             tables_completed.add(table)
             progress["tables_completed"] = sorted(tables_completed)
             job["progress"] = progress

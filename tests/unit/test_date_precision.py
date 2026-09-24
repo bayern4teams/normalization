@@ -185,9 +185,7 @@ class TestEdtfQualifiedAndRangeDates:
         result = normalizer.normalize("12/05/1990", ctx)
         assert result.normalization_status is NormalizationStatus.AMBIGUOUS
 
-    @pytest.mark.parametrize(
-        "value", ["1990", "1990-03", "1990-03-15", "March 1990", "2024-01-15"]
-    )
+    @pytest.mark.parametrize("value", ["1990", "1990-03", "1990-03-15", "March 1990", "2024-01-15"])
     def test_ordinary_dates_do_not_go_through_edtf(
         self, normalizer: DateNormalizer, ctx: NormalizationContext, value: str
     ) -> None:

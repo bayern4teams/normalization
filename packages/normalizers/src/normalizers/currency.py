@@ -56,6 +56,7 @@ _NUMERIC_CODE_RE = re.compile(r"^\d{3}$")
 def _is_real_iso_code(code: str) -> bool:
     return pycountry.currencies.get(alpha_3=code) is not None
 
+
 # Symbols are inherently ambiguous (§47) EXCEPT where a symbol is only
 # used by one currency in practice — kept deliberately small.
 _UNAMBIGUOUS_SYMBOLS: dict[str, str] = {

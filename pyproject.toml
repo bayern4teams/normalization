@@ -131,6 +131,12 @@ members = ["packages/*"]
 line-length = 100
 target-version = "py312"
 src = ["packages", "tests", "scripts", "spikes"]
+# Generated from CLDR by scripts/generate_cldr_country_names.py. The
+# formatter would re-indent 33k literal lines, and the generator would
+# write them back flat on the next regeneration — permanent churn for a
+# file no human reads. Excluded from the formatter as well as the linter
+# (the per-file-ignores below cover lint rules only).
+extend-exclude = ["packages/normalizers/src/normalizers/_cldr_country_names.py"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "C4", "SIM", "PL", "RUF"]
@@ -163,6 +169,16 @@ ignore = ["PLR0913", "PLR2004"]
 # helper so monkeypatch can replace build_source_connector on the module
 # object the function under test actually reads.
 "tests/unit/test_in_place_clone.py" = ["PLC0415"]
+# Every function in routes.py is a FastAPI handler whose signature is the
+# framework's contract (path params, query params, Depends) — nothing in
+# this codebase ever calls them positionally, so the positional-argument
+# count is not a real readability signal here.
+"packages/normapi/src/normapi/routes.py" = ["PLR0917"]
+# The clone pipeline tests walk one end-to-end sequence each: DDL, then
+# population, then the error report, then resume. The statement count IS
+# the scenario; splitting them into smaller tests would break the ordering
+# that is the thing under test.
+"tests/integration/test_clone_pipeline.py" = ["PLR0915"]
 
 [tool.mypy]
 python_version = "3.12"

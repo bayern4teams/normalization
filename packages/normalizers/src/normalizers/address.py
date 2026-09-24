@@ -48,6 +48,7 @@ from normalizers.postcode_validation import validate_postcode_format
 from normalizers.unicode_normalizer import (
     UnicodeNormalizer,
     UnicodeProcessingOptions,
+    UnicodeProcessingResult,
     build_unicode_trace,
 )
 
@@ -198,7 +199,7 @@ class AddressNormalizer:
         # one value's components to a different value. Replaced wholesale
         # per batch, so it is bounded by one chunk's distinct values and
         # cannot grow across a run.
-        self._primed: dict[str, tuple[object, list[tuple[str, str]]]] = {}
+        self._primed: dict[str, tuple[UnicodeProcessingResult, list[tuple[str, str]]]] = {}
 
     def can_handle(self, field_type: FieldSemanticType, ctx: NormalizationContext) -> bool:
         return field_type in self.supported_types

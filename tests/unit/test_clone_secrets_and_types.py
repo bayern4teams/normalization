@@ -11,11 +11,11 @@ from __future__ import annotations
 
 import pytest
 from cryptography.fernet import Fernet
-from normcore import FieldSemanticType
 from normio.connectors.clickhouse_destination import PASSTHROUGH_CH_TYPE, SEMANTIC_TYPE_TO_CH_TYPE
 from normio.connectors.postgres_destination import PASSTHROUGH_PG_TYPE, SEMANTIC_TYPE_TO_PG_TYPE
 
 from normapi import secrets
+from normcore import FieldSemanticType
 
 
 @pytest.fixture
@@ -77,6 +77,10 @@ def test_every_configured_column_type_is_text_compatible() -> None:
     error-report row for that exact value, which never got written).
     Every mapped type must therefore be text-compatible on both engines."""
     non_text_pg = {t: v for t, v in SEMANTIC_TYPE_TO_PG_TYPE.items() if v != "TEXT"}
-    assert not non_text_pg, f"Non-text Postgres types would reject decision #8's fallback: {non_text_pg}"
+    assert not non_text_pg, (
+        f"Non-text Postgres types would reject decision #8's fallback: {non_text_pg}"
+    )
     non_text_ch = {t: v for t, v in SEMANTIC_TYPE_TO_CH_TYPE.items() if v != "String"}
-    assert not non_text_ch, f"Non-text ClickHouse types would reject decision #8's fallback: {non_text_ch}"
+    assert not non_text_ch, (
+        f"Non-text ClickHouse types would reject decision #8's fallback: {non_text_ch}"
+    )

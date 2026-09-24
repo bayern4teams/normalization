@@ -91,6 +91,8 @@ def _looks_like_bare_host(value: str) -> bool:
         return False
     tld = labels[-1].split(":", 1)[0]  # drop any :port
     return len(tld) >= 2 and tld.isalpha()
+
+
 _PARSE_PARAMS_HASH = blake3.blake3(b"{}").hexdigest()
 
 _DEFAULT_PORTS = {"http": "80", "https": "443", "ftp": "21"}
@@ -187,9 +189,7 @@ class URLNormalizer:
             # surfaced in `repaired` (§0's distinct value types) so the
             # exact repaired string is inspectable, not just its effect.
             flags.append(QualityFlag.PARSER_FALLBACK)
-            warnings.append(
-                f"no scheme in input; assumed {_ASSUMED_SCHEME!r} for a bare hostname"
-            )
+            warnings.append(f"no scheme in input; assumed {_ASSUMED_SCHEME!r} for a bare hostname")
 
         host, idn_ok = _normalize_host(parts.hostname or "")
         if not idn_ok:

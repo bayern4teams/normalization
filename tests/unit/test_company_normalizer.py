@@ -227,7 +227,7 @@ class TestGleifLegalForms:
     def test_a_form_with_several_codes_reports_none(
         self, normalizer: CompanyNormalizer, ctx: NormalizationContext, value: str
     ) -> None:
-        """"Ltd" in GB is limited-by-shares AND limited-by-guarantee, two
+        """ "Ltd" in GB is limited-by-shares AND limited-by-guarantee, two
         distinct ELF codes. The suffix is still stripped — only the code
         is withheld, because picking one would be a guess."""
         result = normalizer.normalize(value, ctx)

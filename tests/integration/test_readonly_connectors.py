@@ -153,7 +153,10 @@ def test_clickhouse_read_succeeds_and_write_is_rejected() -> None:
         connector.close()
 
     client = clickhouse_connect.get_client(
-        host=CLICKHOUSE_HOST, port=CLICKHOUSE_PORT, username="readonly_user", password="readonly_pass"
+        host=CLICKHOUSE_HOST,
+        port=CLICKHOUSE_PORT,
+        username="readonly_user",
+        password="readonly_pass",
     )
     try:
         with pytest.raises(DatabaseError):

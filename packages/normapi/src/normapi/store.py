@@ -45,6 +45,7 @@ from typing import TYPE_CHECKING
 from normexec.planner import DistinctValuePlanner
 
 from normanalysis import InvariantSampleReport, RunRecorder, sample_and_check
+from normapi.pg_persistence import rehydrate_invariant_report
 from normcore import (
     FieldNormalizationConfig,
     FieldSemanticType,
@@ -57,8 +58,6 @@ from normcore import (
     ProfileStatus,
     RunStatus,
 )
-
-from normapi.pg_persistence import rehydrate_invariant_report
 
 if TYPE_CHECKING:
     from collections.abc import Sequence

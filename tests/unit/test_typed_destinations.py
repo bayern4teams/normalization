@@ -140,7 +140,7 @@ class TestMoneyNormalizer:
         assert result.normalization_status is NormalizationStatus.INVALID
 
     def test_ambiguous_amount_stays_ambiguous(self) -> None:
-        """"1,234" is undecidable without a locale — it must not be
+        """ "1,234" is undecidable without a locale — it must not be
         downgraded to a flat failure, nor guessed."""
         result = MoneyNormalizer().normalize("1,234", _ctx())
         assert result.normalization_status is NormalizationStatus.AMBIGUOUS
@@ -159,9 +159,7 @@ class TestTypeMapsStillCoverEverySemanticType:
 @pytest.mark.unit
 class TestDestinationPlan:
     def test_typed_off_by_default_changes_nothing(self) -> None:
-        overrides, _, typed = _destination_plan(
-            {"amount": "NUMERIC"}, "postgres", (), typed=False
-        )
+        overrides, _, typed = _destination_plan({"amount": "NUMERIC"}, "postgres", (), typed=False)
         assert overrides == {}
         assert typed == {}
 

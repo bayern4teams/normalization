@@ -67,9 +67,7 @@ class _FakeStream:
 def _connector(monkeypatch: pytest.MonkeyPatch, sorting_key: str) -> tuple[Any, _FakeClient]:
     fake = _FakeClient(sorting_key)
     monkeypatch.setattr(ch_module.clickhouse_connect, "get_client", lambda **_kw: fake)
-    conn = ClickHouseConnector(
-        "src", "host", port=8123, username="u", password="p", database="db"
-    )
+    conn = ClickHouseConnector("src", "host", port=8123, username="u", password="p", database="db")
     return conn, fake
 
 
@@ -82,9 +80,7 @@ def test_read_table_orders_by_the_tables_sorting_key(monkeypatch: pytest.MonkeyP
 def test_read_table_orders_by_every_sorting_key_column(monkeypatch: pytest.MonkeyPatch) -> None:
     conn, fake = _connector(monkeypatch, "companyID, companyName")
     list(conn.read_table("Company", batch_size=10))
-    assert fake.data_queries == [
-        "SELECT * FROM `Company` ORDER BY `companyID`, `companyName`"
-    ]
+    assert fake.data_queries == ["SELECT * FROM `Company` ORDER BY `companyID`, `companyName`"]
 
 
 def test_read_table_omits_order_by_when_the_table_has_no_sorting_key(

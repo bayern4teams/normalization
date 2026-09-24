@@ -232,6 +232,7 @@ class CloneJobCreateRequest(BaseModel):
             msg = "destination_connection_id and destination_database are required unless in_place"
             raise ValueError(msg)
         return self
+
     # ponytail: stored inside normalization_clone_jobs.data's JSON blob,
     # not a separate table — consumed exactly twice (Phase 1 DDL, Phase 2
     # normalization) by the job that owns it. Promote to its own table
