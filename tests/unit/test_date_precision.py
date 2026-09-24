@@ -34,7 +34,11 @@ def ctx() -> NormalizationContext:
         ("1990-03", "1990-03", "month"),
         ("1989-12-11", "1989-12-11", "day"),
         ("March 1990", "1990-03", "month"),
-        ("circa 1990", "1990", "year"),
+        # "circa 1990" is APPROXIMATELY 1990, and EDTF has a notation
+        # for saying so. This asserted a bare "1990" while the approximation
+        # was being silently dropped — the same class of invented certainty
+        # the rest of this table guards against.
+        ("circa 1990", "1990~", "year"),
         # placeholder components reduce precision, they do not become 01
         ("1982-XX-XX", "1982", "year"),
         ("1998-01-XX", "1998-01", "month"),
@@ -124,3 +128,70 @@ def test_a_date_field_still_truncates_a_timestamp(
     # DATE is what the field was declared to be, so dropping the time is
     # the declared intent here, not data loss.
     assert normalizer.normalize("2026-09-22 05:40:21", ctx).display == "2026-09-22"
+
+
+@pytest.mark.unit
+class TestEdtfQualifiedAndRangeDates:
+    """dateparser flattens a decade or a qualified year into a single day
+    and reports success: "1990s" became "1990", inventing year precision
+    out of a decade, and "circa 1990" lost the qualifier entirely."""
+
+    @pytest.mark.parametrize(
+        ("value", "expected", "precision"),
+        [
+            ("1990s", "199X", "decade"),
+            ("early 1990s", "199X", "decade"),
+            ("199X", "199X", "decade"),
+            ("circa 1990", "1990~", "year"),
+            ("about 1990", "1990~", "year"),
+            ("1990?", "1990?", "year"),
+            ("1990/2000", "1990/2000", "interval"),
+            ("[1667,1668]", "[1667,1668]", "interval"),
+        ],
+    )
+    def test_qualified_dates_keep_their_qualifier(
+        self,
+        normalizer: DateNormalizer,
+        ctx: NormalizationContext,
+        value: str,
+        expected: str,
+        precision: str,
+    ) -> None:
+        result = normalizer.normalize(value, ctx)
+        assert result.display == expected
+        assert result.structured["precision"] == precision
+
+    def test_a_decade_is_not_a_year(
+        self, normalizer: DateNormalizer, ctx: NormalizationContext
+    ) -> None:
+        """The whole point: "1990s" means 1990-1999, and reporting it as
+        the single day 1990-01-01 invents nine years of precision."""
+        result = normalizer.normalize("1990s", ctx)
+        assert result.structured["earliest"] == "1990-01-01"
+        assert result.structured["latest"] == "1999-12-31"
+
+    def test_bounds_make_a_range_queryable(
+        self, normalizer: DateNormalizer, ctx: NormalizationContext
+    ) -> None:
+        result = normalizer.normalize("1990/2000", ctx)
+        assert result.structured["earliest"] == "1990-01-01"
+        assert result.structured["latest"] == "2000-12-31"
+
+    def test_an_ambiguous_numeric_date_still_refuses_to_guess(
+        self, normalizer: DateNormalizer, ctx: NormalizationContext
+    ) -> None:
+        """The EDTF pass runs before the day/month ambiguity guard, so
+        "12/05/1990" must not be read as an interval and slip past it."""
+        result = normalizer.normalize("12/05/1990", ctx)
+        assert result.normalization_status is NormalizationStatus.AMBIGUOUS
+
+    @pytest.mark.parametrize(
+        "value", ["1990", "1990-03", "1990-03-15", "March 1990", "2024-01-15"]
+    )
+    def test_ordinary_dates_do_not_go_through_edtf(
+        self, normalizer: DateNormalizer, ctx: NormalizationContext, value: str
+    ) -> None:
+        """dateparser handles far more formats and languages, so the
+        common path must not be rerouted through a narrower parser."""
+        result = normalizer.normalize(value, ctx)
+        assert result.structured.get("source_format") != "EDTF"

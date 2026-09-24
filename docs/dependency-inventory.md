@@ -37,6 +37,7 @@ bug to fix immediately.
 | phonenumbers | >=8.13,<9 | Apache-2.0 | [github.com/daviddrysdale/python-phonenumbers](https://github.com/daviddrysdale/python-phonenumbers) | Phone parsing/validation | Low | Metadata releases can change validity for specific numbers — feeds `env_id` |
 | email-validator | >=2.2,<3 | Unlicense | [github.com/JoshData/python-email-validator](https://github.com/JoshData/python-email-validator) | Email syntax/normalization | Low | `check_deliverability=False` must be re-verified as default after every upgrade |
 | dateparser | >=1.4.2,<2 | BSD-3-Clause | [github.com/scrapinghub/dateparser](https://github.com/scrapinghub/dateparser) | Multilingual date parsing | **Medium** — historically small volunteer maintainer base | Monitor via nightly drift job; no maintained fork identified as needed currently |
+| edtf | >=5.0,<6 | MIT | [github.com/ixc/python-edtf](https://github.com/ixc/python-edtf) | EDTF / ISO 8601-2 dates: decades, intervals, uncertainty | **Low** — small, stable, no new transitive deps (needs only python-dateutil and pyparsing, both already present) | Keeps a decade (`1990s`) from being flattened to a year; dateparser cannot express qualified or range-valued dates |
 | python-dateutil | >=2.9,<3 | Apache-2.0/BSD dual | PyPI | ISO-adjacent date parsing fallback | Low | — |
 | ciso8601 | >=2.3,<3 | MIT | PyPI | Fast-path ISO 8601 parsing | Low — C extension, has wheels for all target platforms | — |
 | pycountry | >=24.6,<25 | LGPL-2.1 | [github.com/flyingcircusio/pycountry](https://github.com/pycountry/pycountry) | ISO 3166/639/4217/15924 codes | **LGPL — unmodified, dynamic-import only** | Data updates (new territories, currency changes) are frequent; low code risk |
@@ -63,6 +64,7 @@ bug to fix immediately.
 | text-unidecode | Artistic License (GPL-adjacent lineage) | Same lineage concern as Unidecode; anyascii preferred | ADR-015 |
 | wordfreq | MIT (license not the issue) | Sunset by author Sept 2024; data no longer trustworthy as current | ADR-015 |
 | abydos | GPL-3 | Beider-Morse port is GPL-3; jellyfish covers non-GPL subset of needed algorithms | ADR-003, ADR-015 |
+| Deepparse | LGPL-3 | Evaluated for ADDRESS parsing and rejected: it is a PyTorch model (~800MB of dependency, per-address inference) for a job libpostal already does in the existing sidecar, in a pipeline whose memory ceiling is a standing constraint. Reconsider only if libpostal is measurably wrong on real data AND a run can afford a model. | — |
 
 ## Container / service dependencies
 

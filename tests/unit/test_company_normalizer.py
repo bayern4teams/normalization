@@ -77,7 +77,10 @@ class TestConservativeSuffixStripping:
         result = normalizer.normalize("Acme Corp Inc.", ctx)
         assert result.structured["base_name"] == "Acme Corp"
         assert result.structured["organization_type"] == "Corporation"
-        assert result.structured["elf_code"] is not None
+        # jurisdiction, not elf_code: "Inc" names several ELF codes across
+        # countries, so the real list withholds one. This asserted
+        # `elf_code is not None` back when it was the placeholder "XXX1".
+        assert result.structured["jurisdiction_hint"] == "US"
 
     def test_multi_word_suffix_is_stripped(
         self, normalizer: CompanyNormalizer, ctx: NormalizationContext
@@ -176,3 +179,67 @@ class TestBatchAndInverse:
 
     def test_inverse_suffix_strip_returns_none(self, normalizer: CompanyNormalizer) -> None:
         assert normalizer.inverse("company.strip_legal_suffix", "Acme Corp") is None
+
+
+@pytest.mark.unit
+class TestGleifLegalForms:
+    """The suffix dictionary was a 40-entry hand seed whose own source
+    note said so, with placeholder `elf_code` values ("XXX1") invented
+    before GLEIF's list was reachable. It is now generated from the real
+    ISO 20275 code list, with the curated seed overlaid.
+    """
+
+    @pytest.mark.parametrize(
+        ("value", "base"),
+        [
+            # None of these stripped before: the seed had no entry.
+            ("Acme S.A.", "Acme"),
+            ("Acme B.V.", "Acme"),
+            ("Acme S.p.A.", "Acme"),
+            ("Acme A/S", "Acme"),
+            ("Acme Sp. z o.o.", "Acme"),
+            ("Acme d.o.o.", "Acme"),
+            ("Siemens Aktiengesellschaft", "Siemens"),
+            # and the seed's own entries still work.
+            ("Acme Inc.", "Acme"),
+            ("Acme GmbH", "Acme"),
+            ("Acme Pty Ltd", "Acme"),
+        ],
+    )
+    def test_legal_forms_are_stripped(
+        self, normalizer: CompanyNormalizer, ctx: NormalizationContext, value: str, base: str
+    ) -> None:
+        result = normalizer.normalize(value, ctx)
+        assert result.structured["base_name"] == base
+
+    @pytest.mark.parametrize(
+        ("value", "elf_code"),
+        [("Acme GmbH", "2HBR"), ("Acme Oy", "DKUW"), ("Acme S.p.A.", "P418")],
+    )
+    def test_real_elf_codes_replace_the_placeholders(
+        self, normalizer: CompanyNormalizer, ctx: NormalizationContext, value: str, elf_code: str
+    ) -> None:
+        """Placeholders started with "XX" and were not ELF codes at all."""
+        result = normalizer.normalize(value, ctx)
+        assert result.structured["elf_code"] == elf_code
+
+    @pytest.mark.parametrize("value", ["Acme Ltd", "Acme Inc.", "Acme Pty Ltd"])
+    def test_a_form_with_several_codes_reports_none(
+        self, normalizer: CompanyNormalizer, ctx: NormalizationContext, value: str
+    ) -> None:
+        """"Ltd" in GB is limited-by-shares AND limited-by-guarantee, two
+        distinct ELF codes. The suffix is still stripped — only the code
+        is withheld, because picking one would be a guess."""
+        result = normalizer.normalize(value, ctx)
+        assert result.structured["elf_code"] is None
+        assert result.structured["base_name"] == "Acme"
+
+    @pytest.mark.parametrize("value", ["Company A", "Acme Design", "The Limited"])
+    def test_expansion_did_not_start_eating_real_names(
+        self, normalizer: CompanyNormalizer, ctx: NormalizationContext, value: str
+    ) -> None:
+        """3,000 more suffixes is 3,000 more chances to strip a word that
+        belongs to the name. "A" is a real ELF abbreviation and is
+        excluded for exactly this reason."""
+        result = normalizer.normalize(value, ctx)
+        assert result.structured["base_name"] == value

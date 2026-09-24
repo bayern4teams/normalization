@@ -31,6 +31,8 @@ import ciso8601
 import dateparser
 import pyarrow as pa
 from dateparser.date import DateDataParser
+from edtf import natlang as edtf_natlang
+from edtf import parser as edtf_parser
 from normcore.context import NormalizationContext
 from normcore.enums import (
     FieldSemanticType,
@@ -226,6 +228,119 @@ _DATEPARSER_SETTINGS_BASE: dict[str, object] = {
 # per-country lookup table — extend `_MDY_COUNTRIES` as real gaps are
 # found, per the same "curated from evidence, not speculation" policy as
 # normalizers/country_codes.py.
+# Values whose meaning is a RANGE or a qualified point, not a date.
+# dateparser flattens all of these to a single day and reports success:
+# "1990s" became "1990", inventing year precision out of a decade, and
+# "circa 1990" / "1990?" lost the qualifier entirely. Both are exactly
+# the precision invention the rest of this module exists to prevent.
+#
+# EDTF (ISO 8601-2) is the notation for saying so, and `edtf` both reads
+# that notation and translates the English phrasings into it. It runs
+# ONLY when one of these markers is present: dateparser handles far more
+# formats and languages, so the ordinary path must not be rerouted
+# through a narrower parser.
+# Already-EDTF notation. Matched literally, never inferred: a plain
+# "12/05/1990" must NOT look like an interval here, or it would skip the
+# day/month ambiguity guard below and get silently resolved.
+_EDTF_NOTATION_RE = re.compile(
+    r"^\[|[?~%]|\.\.|\d{2,3}[Xx]\b|\d{4}/\d{4}|^/\d{4}|\d{4}/$"
+)
+
+# English phrasings of the same ideas, which `edtf` translates to EDTF.
+_EDTF_WORDS_RE = re.compile(
+    r"(\d{3}0s\b"
+    r"|\b(circa|ca|cca|approx|approximately|about|around|before|after|early|late|mid)\b)",
+    re.IGNORECASE,
+)
+
+_EDTF_PRECISION_BY_LENGTH = {4: "year", 7: "month", 10: "day"}
+
+
+def _edtf_precision(text: str) -> str:
+    """Precision of an EDTF string, by what it actually specifies."""
+    body = text.rstrip("?~%")
+    if "X" in body.upper():
+        return "decade" if body.upper().count("X") == 1 else "century"
+    if "/" in body or ".." in body or body.startswith("["):
+        return "interval"
+    return _EDTF_PRECISION_BY_LENGTH.get(len(body), "unknown")
+
+
+def _normalize_edtf(
+    original: str, cleaned: str, ctx: NormalizationContext
+) -> NormalizedValue | None:
+    """Resolve a qualified or range-valued date to EDTF, or None to let
+    the ordinary path handle it.
+
+    Already-EDTF notation is parsed directly. Only English phrasings go
+    through `text_to_edtf`, which reads "1990/2000" as the SET
+    "[1990, 2000]" rather than the interval it is — so it must never see
+    a value that already parses as EDTF on its own.
+    """
+    parsed = None
+    if _EDTF_NOTATION_RE.search(cleaned):
+        parsed = _parse_edtf_or_none(cleaned)
+    if parsed is None and _EDTF_WORDS_RE.search(cleaned):
+        try:
+            translated = edtf_natlang.text_to_edtf(cleaned)
+        except Exception:
+            translated = None
+        if translated:
+            parsed = _parse_edtf_or_none(translated)
+    if parsed is None:
+        return None
+
+    text = str(parsed)
+    if text.startswith(("[", "{")):
+        # edtf renders a set as Python does ("[1667, 1668]"); canonical
+        # EDTF has no space, and emitting invalid EDTF from the one code
+        # path whose purpose is EDTF would be self-defeating.
+        text = text.replace(", ", ",")
+    lower = _bound(parsed, "lower_strict")
+    upper = _bound(parsed, "upper_strict")
+    return _result(
+        original,
+        text,
+        ctx,
+        structured={
+            "parsed_date": text,
+            # The bounds are what make a range queryable: "199X" is not a
+            # date you can compare, but 1990-01-01..1999-12-31 is.
+            "earliest": lower,
+            "latest": upper,
+            "precision": _edtf_precision(text),
+            "source_format": "EDTF",
+            "assumption": "qualified or range-valued date, kept as EDTF rather than flattened",
+            "confidence": 0.9,
+        },
+        status=NormalizationStatus.PARSED,
+        confidence=0.9,
+        flags=[QualityFlag.PARTIAL_DATE],
+    )
+
+
+def _parse_edtf_or_none(text: str) -> object | None:
+    try:
+        parsed: object = edtf_parser.parse_edtf(text)
+    except Exception:
+        return None
+    return parsed
+
+
+def _bound(parsed: object, attribute: str) -> str | None:
+    try:
+        value = getattr(parsed, attribute)()
+    except Exception:
+        return None
+    return _struct_to_iso(value)
+
+
+def _struct_to_iso(value: object) -> str | None:
+    if value is None:
+        return None
+    return f"{value.tm_year:04d}-{value.tm_mon:02d}-{value.tm_mday:02d}"  # type: ignore[attr-defined]
+
+
 _MDY_COUNTRIES = frozenset({"US"})
 
 
@@ -257,24 +372,17 @@ class DateNormalizer:
         cleaned = value.strip()
 
         keep_time = _wants_time(ctx, cleaned)
-        iso_fast_path = _try_iso_fast_path(cleaned, keep_time=keep_time)
-        if iso_fast_path is not None:
-            iso_text, iso_precision = iso_fast_path
-            return _result(
-                value,
-                iso_text,
-                ctx,
-                structured={
-                    "parsed_date": iso_text,
-                    "precision": iso_precision,
-                    "source_format": "ISO8601",
-                    "assumption": "already ISO 8601, no locale inference needed",
-                    "confidence": 1.0,
-                },
-                status=NormalizationStatus.NORMALIZED,
-                confidence=1.0,
-                flags=[QualityFlag.PARTIAL_DATE] if iso_precision != "day" else [],
-            )
+
+        # Two shortcuts, tried in order, each returning None to mean "not
+        # mine". EDTF comes first so a decade or an interval is never
+        # flattened by the parsers below; ISO second because a
+        # well-formed ISO value needs no locale inference at all.
+        for shortcut in (
+            _normalize_edtf(value, cleaned, ctx),
+            _normalize_iso(value, cleaned, ctx, keep_time=keep_time),
+        ):
+            if shortcut is not None:
+                return shortcut
 
         date_order = _infer_date_order(ctx)
         if _is_ambiguous_numeric_date(cleaned) and date_order is None:
@@ -362,6 +470,30 @@ class DateNormalizer:
 
     def inverse(self, step_id: str, value: str) -> str | None:
         return None
+
+
+def _normalize_iso(
+    original: str, cleaned: str, ctx: NormalizationContext, *, keep_time: bool
+) -> NormalizedValue | None:
+    fast_path = _try_iso_fast_path(cleaned, keep_time=keep_time)
+    if fast_path is None:
+        return None
+    iso_text, iso_precision = fast_path
+    return _result(
+        original,
+        iso_text,
+        ctx,
+        structured={
+            "parsed_date": iso_text,
+            "precision": iso_precision,
+            "source_format": "ISO8601",
+            "assumption": "already ISO 8601, no locale inference needed",
+            "confidence": 1.0,
+        },
+        status=NormalizationStatus.NORMALIZED,
+        confidence=1.0,
+        flags=[QualityFlag.PARTIAL_DATE] if iso_precision != "day" else [],
+    )
 
 
 def _try_iso_fast_path(value: str, *, keep_time: bool = False) -> tuple[str, str] | None:
