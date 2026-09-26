@@ -131,12 +131,13 @@ members = ["packages/*"]
 line-length = 100
 target-version = "py312"
 src = ["packages", "tests", "scripts", "spikes"]
-# Generated from CLDR by scripts/generate_cldr_country_names.py. The
-# formatter would re-indent 33k literal lines, and the generator would
-# write them back flat on the next regeneration — permanent churn for a
-# file no human reads. Excluded from the formatter as well as the linter
-# (the per-file-ignores below cover lint rules only).
-extend-exclude = ["packages/normalizers/src/normalizers/_cldr_country_names.py"]
+# Generated from CLDR by scripts/generate_cldr_names.py (country,
+# currency and language name tables). The formatter would re-indent 110k
+# literal lines, and the generator would write them back flat on the next
+# regeneration — permanent churn for files no human reads. Excluded from
+# the formatter as well as the linter (the per-file-ignores below cover
+# lint rules only).
+extend-exclude = ["packages/normalizers/src/normalizers/_cldr_*_names.py"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "C4", "SIM", "PL", "RUF"]
@@ -157,10 +158,11 @@ ignore = ["PLR0913", "PLR2004"]
 # scripts/ directory as a module before importing from it — the import must
 # come after the path mutation.
 "tests/unit/test_env_fingerprint.py" = ["PLC0415"]
-# Generated from CLDR (scripts/generate_cldr_country_names.py). The
-# "ambiguous" characters are real country names in real scripts — that IS
-# the data. Never hand-edited, so style rules buy nothing here.
-"packages/normalizers/src/normalizers/_cldr_country_names.py" = ["RUF001", "RUF002", "RUF003", "E501"]
+# Generated from CLDR (scripts/generate_cldr_names.py). The "ambiguous"
+# characters are real country, currency and language names in real
+# scripts — that IS the data. Never hand-edited, so style rules buy
+# nothing here.
+"packages/normalizers/src/normalizers/_cldr_*_names.py" = ["RUF001", "RUF002", "RUF003", "E501"]
 # tests/unit/test_locale_normalizers.py loads the generator by file path to
 # assert the shipped map is still current; that import must follow the
 # path construction.

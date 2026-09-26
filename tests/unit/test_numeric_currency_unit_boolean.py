@@ -324,3 +324,111 @@ class TestCurrencyCodeRecognition:
     def test_unreal_three_letter_token_still_ambiguous(self) -> None:
         result = CurrencyNormalizer().normalize("XYZ", _ctx(FieldSemanticType.CURRENCY))
         assert result.normalization_status is NormalizationStatus.AMBIGUOUS
+
+
+@pytest.mark.unit
+class TestCurrencyCldrNamesAndSymbols:
+    """CLDR replaced 8 hand-written names and 3 symbols with 22.8k names
+    and 197 symbols (`_cldr_currency_names`). §47's ambiguity rule has to
+    survive that intact — and mostly does so for free, because a name or
+    symbol meaning different currencies in different locales is dropped at
+    generation time."""
+
+    @pytest.mark.parametrize(
+        ("value", "expected"),
+        [
+            ("US-Dollar", "USD"),  # de
+            ("Dollar des États-Unis", "USD"),  # fr
+            ("Yen japonais", "JPY"),
+            ("Dólar estadounidense", "USD"),  # es
+            ("Japanischer Yen", "JPY"),
+            ("人民币", "CNY"),
+            ("Индийская рупия", "INR"),
+        ],
+    )
+    def test_localized_currency_names(
+        self, currency_normalizer: CurrencyNormalizer, value: str, expected: str
+    ) -> None:
+        result = currency_normalizer.normalize(value, _ctx(FieldSemanticType.CURRENCY))
+        assert result.structured["canonical_currency"] == expected
+        assert result.normalization_status is NormalizationStatus.NORMALIZED
+
+    @pytest.mark.parametrize(
+        ("value", "expected"),
+        [("₹", "INR"), ("₽", "RUB"), ("₩", "KRW"), ("₪", "ILS"), ("฿", "THB"), ("₫", "VND")],
+    )
+    def test_letter_free_symbols_resolve_anywhere_in_the_value(
+        self, currency_normalizer: CurrencyNormalizer, value: str, expected: str
+    ) -> None:
+        for candidate in (value, f"{value}1,234.00", f"1 234 {value}"):
+            result = currency_normalizer.normalize(candidate, _ctx(FieldSemanticType.CURRENCY))
+            assert result.structured["canonical_currency"] == expected, candidate
+
+    @pytest.mark.parametrize(
+        ("value", "expected"),
+        [("A$", "AUD"), ("R$", "BRL"), ("CA$", "CAD"), ("$US", "USD"), ("zł", "PLN")],
+    )
+    def test_letter_bearing_symbols_resolve_as_the_whole_value(
+        self, currency_normalizer: CurrencyNormalizer, value: str, expected: str
+    ) -> None:
+        result = currency_normalizer.normalize(value, _ctx(FieldSemanticType.CURRENCY))
+        assert result.structured["canonical_currency"] == expected
+
+    @pytest.mark.parametrize(
+        "value",
+        [
+            "$",  # USD in en_US, CAD in en_CA — collapsed to None at generation
+            "$100",
+            "kr",  # four Nordic currencies
+            "¤",  # U+00A4, CLDR's generic placeholder — belongs to XXX
+            "unknown currency",  # every CLDR name for XXX, "no currency"
+            "test currency",  # XTS
+            "or",  # French for gold, i.e. CLDR's name for XAU
+            "cup of tea",  # CUP is Cuba's real ISO 4217 code
+        ],
+    )
+    def test_ambiguous_and_non_currency_values_never_resolve(
+        self, currency_normalizer: CurrencyNormalizer, value: str
+    ) -> None:
+        """Two classes of value that a bigger table makes easier to get
+        wrong: symbols that genuinely mean more than one currency, and the
+        two ISO 4217 entries that are definitionally not a currency at all
+        (XXX "no currency", XTS "testing"). Resolving a value to either
+        would report a successful normalization for exactly the input that
+        has none."""
+        result = currency_normalizer.normalize(value, _ctx(FieldSemanticType.CURRENCY))
+        assert result.normalization_status is NormalizationStatus.AMBIGUOUS
+        assert result.structured["canonical_currency"] is None
+
+    def test_metals_and_special_drawing_rights_do_resolve(
+        self, currency_normalizer: CurrencyNormalizer
+    ) -> None:
+        """XAU/XAG/XDR are real ISO 4217 code-list entries for real
+        financial instruments, not placeholders like XXX and XTS, so their
+        CLDR names resolve. Typing the CODE already did before CLDR was
+        added; excluding only the names would be inconsistent."""
+        for value, expected in (("Gold", "XAU"), ("Silver", "XAG"), ("XAU", "XAU")):
+            result = currency_normalizer.normalize(value, _ctx(FieldSemanticType.CURRENCY))
+            assert result.structured["canonical_currency"] == expected, value
+
+    def test_hand_curated_symbols_still_win_over_cldr(
+        self, currency_normalizer: CurrencyNormalizer
+    ) -> None:
+        """CLDR drops "¥" (JPY in ja, CNY in zh) and has no unambiguous
+        entry for "£", but in real data both overwhelmingly mean JPY and
+        GBP — so the three hand-curated symbols are consulted first."""
+        for value, expected in (("¥", "JPY"), ("£", "GBP"), ("€", "EUR")):
+            result = currency_normalizer.normalize(value, _ctx(FieldSemanticType.CURRENCY))
+            assert result.structured["canonical_currency"] == expected
+
+    def test_plural_names_still_resolve(self, currency_normalizer: CurrencyNormalizer) -> None:
+        """CLDR ships singular display names only, so the plurals real
+        data contains stay hand-listed. Deleting them would regress."""
+        for value, expected in (
+            ("US Dollars", "USD"),
+            ("euros", "EUR"),
+            ("united states dollar", "USD"),
+            ("pound sterling", "GBP"),
+        ):
+            result = currency_normalizer.normalize(value, _ctx(FieldSemanticType.CURRENCY))
+            assert result.structured["canonical_currency"] == expected, value

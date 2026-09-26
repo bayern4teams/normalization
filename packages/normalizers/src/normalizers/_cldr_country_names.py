@@ -1,18 +1,18 @@
-"""CLDR country/territory names -> ISO 3166-1 alpha-2.
+"""country/territory name (casefolded) -> ISO 3166-1 alpha-2.
 
 GENERATED FILE - DO NOT EDIT.
-Regenerate with `python scripts/generate_cldr_country_names.py`.
+Regenerate with `python scripts/generate_cldr_names.py`.
 
 Source: Unicode CLDR via Babel 2.18.0
 License: Unicode-3.0 (CLDR data) - https://www.unicode.org/license.txt
-Generated: 2026-09-24
-Entries: 33230
+Generated: 2026-09-26
 """
 
 from __future__ import annotations
 
 BABEL_VERSION = '2.18.0'
 
+# 33230 entries.
 CLDR_COUNTRY_NAMES: dict[str, str] = {
     'aail āp man': 'IM',
     'aaland-insle': 'AX',

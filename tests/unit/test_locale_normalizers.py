@@ -301,27 +301,72 @@ class TestCldrCountryResolution:
         wins; this is the only such collision in the data."""
         assert resolve_country_alpha2("nga") == "NG"
 
-    def test_generated_map_is_current(self) -> None:
-        """The map is generated, so it can drift from the installed
-        Babel. Rebuild it and compare rather than trusting the file."""
-        import babel
-        from normalizers._cldr_country_names import BABEL_VERSION, CLDR_COUNTRY_NAMES
 
-        if babel.__version__ != BABEL_VERSION:
-            pytest.skip(
-                f"generated against Babel {BABEL_VERSION}, installed {babel.__version__} — "
-                "run scripts/generate_cldr_country_names.py"
-            )
+@pytest.mark.unit
+class TestGeneratedCldrTablesAreCurrent:
+    """The country, currency and language tables are generated from
+    Babel's CLDR data, so they can drift from the installed Babel.
+
+    This FAILS on a mismatch rather than skipping. It used to skip when
+    `babel.__version__` differed from the version stamped in the generated
+    file, which sounded lenient and was actually the worst outcome: a
+    Babel bump silently disabled the only check that the 3MB of shipped
+    lookup data still matches its source, and a stale table is
+    confidently wrong. Fixing a failure is one command:
+
+        python scripts/generate_cldr_names.py
+    """
+
+    @staticmethod
+    def _rebuild() -> dict[str, dict[str, str]]:
+        """Rebuilt once for the whole class — the walk over ~1080 CLDR
+        locales is the expensive part, and all four tables come from it."""
         spec = importlib.util.spec_from_file_location(
             "_gen",
-            pathlib.Path(__file__).resolve().parents[2]
-            / "scripts"
-            / "generate_cldr_country_names.py",
+            pathlib.Path(__file__).resolve().parents[2] / "scripts" / "generate_cldr_names.py",
         )
         assert spec is not None and spec.loader is not None
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
-        assert module.build() == CLDR_COUNTRY_NAMES
+        built: dict[str, dict[str, str]] = module.build()
+        return built
+
+    @pytest.fixture(scope="class")
+    def rebuilt(self) -> dict[str, dict[str, str]]:
+        return self._rebuild()
+
+    def test_country_names(self, rebuilt: dict[str, dict[str, str]]) -> None:
+        from normalizers._cldr_country_names import CLDR_COUNTRY_NAMES
+
+        assert rebuilt["CLDR_COUNTRY_NAMES"] == CLDR_COUNTRY_NAMES
+
+    def test_currency_names_and_symbols(self, rebuilt: dict[str, dict[str, str]]) -> None:
+        from normalizers._cldr_currency_names import (
+            CLDR_CURRENCY_NAMES,
+            CLDR_CURRENCY_SYMBOLS,
+        )
+
+        assert rebuilt["CLDR_CURRENCY_NAMES"] == CLDR_CURRENCY_NAMES
+        assert rebuilt["CLDR_CURRENCY_SYMBOLS"] == CLDR_CURRENCY_SYMBOLS
+
+    def test_language_names(self, rebuilt: dict[str, dict[str, str]]) -> None:
+        from normalizers._cldr_language_names import CLDR_LANGUAGE_NAMES
+
+        assert rebuilt["CLDR_LANGUAGE_NAMES"] == CLDR_LANGUAGE_NAMES
+
+    def test_stamped_babel_version_matches_installed(self) -> None:
+        """A drift the data comparison above cannot see: the tables can
+        agree with a NEWER Babel by luck (a release that changed no name
+        this filter keeps), while the header still claims the older one.
+        The header is the only record of which CLDR release the shipped
+        data came from, so it must not go stale unnoticed."""
+        import babel
+        from normalizers._cldr_country_names import BABEL_VERSION
+
+        assert babel.__version__ == BABEL_VERSION, (
+            f"tables stamped Babel {BABEL_VERSION}, installed {babel.__version__} — "
+            "run python scripts/generate_cldr_names.py"
+        )
 
 
 @pytest.mark.unit
@@ -388,3 +433,80 @@ class TestLanguageTagParsing:
     def test_unparseable_stays_invalid(self, value: str) -> None:
         result = LanguageNormalizer().normalize(value, _ctx(FieldSemanticType.LANGUAGE))
         assert result.normalization_status is NormalizationStatus.INVALID
+
+
+@pytest.mark.unit
+class TestLanguageEndonyms:
+    """A language written in its OWN language used to come back INVALID:
+    pycountry knows English names only, and `Deutsch`, `Français`,
+    `español` and `日本語` are the second-commonest real-world spelling of
+    a language after the bare code. CLDR (`_cldr_language_names`) supplies
+    53.3k of them."""
+
+    @pytest.mark.parametrize(
+        ("value", "expected"),
+        [
+            ("Deutsch", "de"),
+            ("Français", "fr"),
+            ("español", "es"),
+            ("日本語", "ja"),
+            ("中文", "zh"),  # two characters — the short-name filter is Latin-only
+            ("русский", "ru"),
+            ("العربية", "ar"),
+            ("português", "pt"),
+            ("Nederlands", "nl"),
+            ("svenska", "sv"),
+            ("türkçe", "tr"),
+            ("한국어", "ko"),
+            ("polski", "pl"),
+            ("allemand", "de"),  # a translated name, not only the endonym
+            ("tedesco", "de"),
+        ],
+    )
+    def test_endonyms_and_translated_names_resolve(
+        self, language_normalizer: LanguageNormalizer, value: str, expected: str
+    ) -> None:
+        ctx = NormalizationContext(field_name="lang", semantic_type=FieldSemanticType.LANGUAGE)
+        result = language_normalizer.normalize(value, ctx)
+        assert result.normalization_status is NormalizationStatus.NORMALIZED
+        assert result.structured["canonical_code"] == expected
+
+    @pytest.mark.parametrize("value", ["xx", "qa", "zzz", "not a language", "12345", "ci"])
+    def test_junk_still_invalid(self, language_normalizer: LanguageNormalizer, value: str) -> None:
+        """Two-letter Latin CLDR names are excluded at generation time, so
+        a 53k-entry table cannot start answering for code-shaped junk —
+        ISO 639-1 is pycountry's to own."""
+        ctx = NormalizationContext(field_name="lang", semantic_type=FieldSemanticType.LANGUAGE)
+        assert (
+            language_normalizer.normalize(value, ctx).normalization_status
+            is NormalizationStatus.INVALID
+        )
+
+    def test_pycountry_still_wins(self, language_normalizer: LanguageNormalizer) -> None:
+        """CLDR is consulted last. `lookup()` resolving a name must keep
+        its own answer, and the tag path must be unaffected."""
+        ctx = NormalizationContext(field_name="lang", semantic_type=FieldSemanticType.LANGUAGE)
+        for value, expected in (("English", "en"), ("en", "en"), ("eng", "en"), ("en-US", "en")):
+            result = language_normalizer.normalize(value, ctx)
+            assert result.structured["canonical_code"] == expected, value
+
+
+@pytest.mark.unit
+class TestUkConstituentCountries:
+    """None of the four has an ISO 3166-1 code — they are ISO 3166-2
+    subdivisions of GB — yet all four appear in real country columns."""
+
+    @pytest.mark.parametrize(
+        "value",
+        ["England", "Scotland", "Wales", "Northern Ireland", "SCOTLAND", "  wales  "],
+    )
+    def test_all_four_resolve_to_gb(self, value: str) -> None:
+        assert resolve_country_alpha2(value) == "GB"
+
+    @pytest.mark.parametrize("value", ["Texas", "Bavaria", "Ontario", "Queensland"])
+    def test_other_iso_3166_2_subdivisions_do_not_resolve(self, value: str) -> None:
+        """The four above are hand-listed precisely so this stays true: a
+        general `pycountry.subdivisions` fallback would resolve all of
+        these too, which is a much larger claim than normalizing a country
+        field. A state is not a country."""
+        assert resolve_country_alpha2(value) is None
