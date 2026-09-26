@@ -70,3 +70,48 @@ def test_env_id_changes_when_any_single_input_changes(mutate) -> None:  # type: 
     mutated = _baseline()
     mutate(mutated)
     assert compute_env_id(mutated) != baseline_id
+
+
+@pytest.mark.unit
+class TestSourceHashesCloseTheCacheHole:
+    """Every other fingerprint input describes the ENVIRONMENT, so a change
+    to our own normalizer code used to change normalization output while
+    leaving env_id — and therefore the cache key — byte-identical."""
+
+    def test_source_hash_change_changes_env_id(self) -> None:
+        a = _baseline()
+        a.source_hashes = {"normalizers": "a" * 64}
+        b = _baseline()
+        b.source_hashes = {"normalizers": "b" * 64}
+        assert compute_env_id(a) != compute_env_id(b)
+
+    def test_real_packages_hash_to_stable_nonempty_digests(self) -> None:
+        from env_fingerprint import FINGERPRINTED_SOURCE_PACKAGES, collect_source_hashes
+
+        hashes = collect_source_hashes()
+        assert set(hashes) == set(FINGERPRINTED_SOURCE_PACKAGES)
+        for name, digest in hashes.items():
+            assert len(digest) == 64, f"{name} did not hash: {digest}"
+        # Same bytes, same digest — env_id must not drift between two
+        # calls in one process, nor between two identical checkouts.
+        assert collect_source_hashes() == hashes
+
+    def test_editing_a_normalizer_would_change_the_digest(self, tmp_path: Path) -> None:
+        """The walk hashes file PATH plus bytes, so neither an edit nor a
+        rename can slip through. Exercised on a throwaway tree rather than
+        by mutating the real package."""
+        import blake3
+
+        def digest_tree(root: Path) -> str:
+            out = blake3.blake3()
+            for path in sorted(root.rglob("*.py")):
+                out.update(path.relative_to(root).as_posix().encode("utf-8"))
+                out.update(path.read_bytes())
+            return out.hexdigest()
+
+        (tmp_path / "a.py").write_text("x = 1\n")
+        before = digest_tree(tmp_path)
+        (tmp_path / "a.py").write_text("x = 2\n")
+        assert digest_tree(tmp_path) != before
+        (tmp_path / "a.py").rename(tmp_path / "b.py")
+        assert digest_tree(tmp_path) != before

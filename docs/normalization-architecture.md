@@ -164,9 +164,12 @@ credentials are never reused for a destination.)
 
 ## 8. Reproducibility: the environment fingerprint (`env_id`) — see ADR-014
 
-`env_id = blake3(canonical_json({packages, icu_version, unicode_version,
-cldr_version, libpostal_model_sha256, phonenumbers_metadata_version,
-dictionaries, profile_version}))`, computed by `scripts/env_fingerprint.py`.
+`env_id = blake3(canonical_json({packages, source_hashes, icu_version,
+unicode_version, cldr_version, libpostal_model_sha256,
+phonenumbers_metadata_version, dictionaries, profile_version}))`, computed
+by `normexec.env_fingerprint` (CLI: `scripts/env_fingerprint.py`).
+`source_hashes` digests our own normalizing packages, so a change to a
+normalizer invalidates the cache it would otherwise silently bypass.
 Stamped on every `NormalizedValue`, `NormalizationRun`, and cache key. Two
 runs are comparable iff their `env_id` matches. A nightly CI job
 (`drift.yml`) detects upstream drift before anyone deliberately upgrades.

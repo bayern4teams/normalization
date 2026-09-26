@@ -3,6 +3,7 @@ NormalizationRun, and cache key — ADR-014.
 
 env_id = blake3(canonical_json({
     "packages": {name: version, ...},   # every pinned package actually resolved
+    "source_hashes": {pkg: blake3(its .py bytes), ...},  # OUR normalizing code
     "icu_version": "...",
     "unicode_version": "...",
     "cldr_version": "...",
@@ -22,10 +23,24 @@ identical across every environment and every dictionary change — exactly
 the thing ADR-014 exists to prevent. scripts/env_fingerprint.py is now a
 thin CLI over this module so there is one implementation, not two that
 can drift.
+
+`source_hashes` closes the hole that mattered most in practice. Every
+other input here describes the ENVIRONMENT, so a change to OUR OWN
+normalizer code changed the output of normalization while leaving env_id
+byte-identical — and env_id is part of the cache key. A cache populated
+before such a change kept serving the old answer forever: after CLDR
+currency and language names landed, "Deutsch" and "₹" resolved on a cold
+cache and stayed INVALID on a warm one, with no way to tell which you
+had. Versioning the packages would not fix it (they are all a static
+"0.1.0" nobody bumps, so it would hash a constant), so the source bytes
+are hashed instead. This also covers the generated CLDR tables, which
+means regenerating them invalidates the cache even when Babel's version
+did not move.
 """
 
 from __future__ import annotations
 
+import importlib
 import json
 from dataclasses import dataclass, field
 from importlib.metadata import PackageNotFoundError
@@ -65,10 +80,26 @@ FINGERPRINTED_PACKAGES = [
     "pyarrow",
 ]
 
+# Our own packages whose SOURCE participates in the fingerprint: the ones
+# that can change what a NormalizedValue contains for a given raw value.
+#
+# `normexec`, `normapi`, `normcli` and `normanalysis` are deliberately
+# absent. They decide WHICH values get normalized, WHEN, and where the
+# results go — not what the answer is — so including them would bust a
+# 1.27M-row cache on every unrelated executor or endpoint change. The
+# boundary is exactly `Dispatcher.normalize()`: if a change can alter what
+# comes out of it, the package belongs here.
+FINGERPRINTED_SOURCE_PACKAGES = [
+    "normcore",  # Dispatcher, rules, enums, sentinels
+    "normalizers",  # every normalizer + the generated CLDR tables
+    "normio",  # storage_types.coerce decides the value actually written
+]
+
 
 @dataclass
 class EnvFingerprintInputs:
     packages: dict[str, str] = field(default_factory=dict)
+    source_hashes: dict[str, str] = field(default_factory=dict)
     icu_version: str | None = None
     unicode_version: str | None = None
     cldr_version: str | None = None
@@ -80,6 +111,7 @@ class EnvFingerprintInputs:
     def canonical_dict(self) -> dict[str, Any]:
         return {
             "packages": dict(sorted(self.packages.items())),
+            "source_hashes": dict(sorted(self.source_hashes.items())),
             "icu_version": self.icu_version,
             "unicode_version": self.unicode_version,
             "cldr_version": self.cldr_version,
@@ -98,6 +130,44 @@ def collect_package_versions() -> dict[str, str]:
         except PackageNotFoundError:
             versions[name] = "MISSING"
     return versions
+
+
+def collect_source_hashes() -> dict[str, str]:
+    """blake3 over every `*.py` file of each normalizing package.
+
+    Computed ONCE per process (ADR-014: env_id is never recomputed per
+    value); ~4MB of source, so a few milliseconds. Each file's path is
+    hashed alongside its bytes, so moving code between files changes the
+    digest even when the bytes are unchanged in total.
+
+    Works from a wheel as well as an editable checkout, because the walk
+    starts at the imported package's own directory rather than at the
+    repo. `__pycache__` is excluded: a `.pyc` is a build artifact of the
+    very bytes already being hashed, and its mtime-bearing header would
+    make the digest differ between two identical checkouts.
+    """
+    hashes: dict[str, str] = {}
+    for name in FINGERPRINTED_SOURCE_PACKAGES:
+        try:
+            module = importlib.import_module(name)
+        except ImportError:
+            hashes[name] = "MISSING"
+            continue
+        locations = [Path(p) for p in getattr(module, "__path__", [])] or (
+            [Path(module.__file__).parent] if module.__file__ else []
+        )
+        if not locations:
+            hashes[name] = "UNLOCATABLE"
+            continue
+        digest = blake3.blake3()
+        for root in sorted(locations):
+            for path in sorted(root.rglob("*.py")):
+                if "__pycache__" in path.parts:
+                    continue
+                digest.update(path.relative_to(root).as_posix().encode("utf-8"))
+                digest.update(path.read_bytes())
+        hashes[name] = digest.hexdigest()
+    return hashes
 
 
 def collect_icu_versions() -> tuple[str | None, str | None, str | None]:
@@ -152,6 +222,7 @@ def gather(
     icu_version, unicode_version, cldr_version = collect_icu_versions()
     return EnvFingerprintInputs(
         packages=collect_package_versions(),
+        source_hashes=collect_source_hashes(),
         icu_version=icu_version,
         unicode_version=unicode_version,
         cldr_version=cldr_version,

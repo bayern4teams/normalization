@@ -21,22 +21,26 @@ from pathlib import Path
 
 from normexec.env_fingerprint import (
     FINGERPRINTED_PACKAGES,
+    FINGERPRINTED_SOURCE_PACKAGES,
     EnvFingerprintInputs,
     collect_dictionary_hashes,
     collect_icu_versions,
     collect_package_versions,
     collect_phonenumbers_metadata_version,
+    collect_source_hashes,
     compute_env_id,
     gather,
 )
 
 __all__ = [
     "FINGERPRINTED_PACKAGES",
+    "FINGERPRINTED_SOURCE_PACKAGES",
     "EnvFingerprintInputs",
     "collect_dictionary_hashes",
     "collect_icu_versions",
     "collect_package_versions",
     "collect_phonenumbers_metadata_version",
+    "collect_source_hashes",
     "compute_env_id",
     "gather",
 ]

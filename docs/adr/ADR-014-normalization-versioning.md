@@ -24,6 +24,18 @@ would detect that until someone noticed a discrepancy in production.
   - every pinned Python package version actually resolved (not just
     declared range) for the libraries listed in
     `scripts/env_fingerprint.py::FINGERPRINTED_PACKAGES`
+  - a `blake3` digest of the SOURCE of every package that can change what
+    `Dispatcher.normalize()` returns (`FINGERPRINTED_SOURCE_PACKAGES`:
+    `normcore`, `normalizers`, `normio`). Added after the CLDR currency
+    and language work, which changed normalization output without moving
+    any input above: a warm cache kept serving the old answer, and
+    nothing distinguished it from a correct one. Package VERSIONS cannot
+    serve here — ours are all a static `0.1.0` — so the bytes are hashed
+    instead, ~15ms once per process. This also covers the generated CLDR
+    tables, so regenerating them invalidates the cache even when Babel's
+    own version did not move. `normexec`, `normapi`, `normcli` and
+    `normanalysis` are excluded on purpose: they decide which values get
+    normalized and where results go, not what the answer is.
   - ICU version, Unicode version, CLDR version (queried from PyICU at
     runtime)
   - libpostal sidecar's model data SHA-256 (queried from its `/version`
