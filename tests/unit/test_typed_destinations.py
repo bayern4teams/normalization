@@ -192,3 +192,85 @@ class TestDestinationPlan:
             {"born": "DATE", "name": "PERSON_NAME"}, "postgres", (), typed=True
         )
         assert overrides == {}
+
+
+@pytest.mark.unit
+class TestMoneyMagnitudeWords:
+    """Regression for a silent 1,000,000x error.
+
+    The original split treated every non-numeric token as the currency half
+    and dropped whatever did not resolve, so "$10.5 Million" normalized to
+    10.5 and reported NORMALIZED with full confidence. Found against a real
+    1.27M-row revenue column where EVERY value has that shape, which means
+    every revenue figure in it would have been wrong by a factor of a
+    million with nothing to indicate it.
+    """
+
+    @pytest.mark.parametrize(
+        ("value", "expected"),
+        [
+            ("$10.5 Million", "10500000"),
+            ("$17.6 Million", "17600000"),
+            ("$1 Billion", "1000000000"),
+            ("$500 Thousand", "500000"),
+            ("$3.4 trillion", "3400000000000"),
+            ("1.2bn", "1200000000"),
+            ("2 hundred", "200"),
+        ],
+    )
+    def test_magnitude_words_multiply_the_amount(self, value: str, expected: str) -> None:
+        result = MoneyNormalizer().normalize(value, _ctx())
+        assert result.normalization_status is NormalizationStatus.NORMALIZED
+        assert result.structured["canonical_amount"] == expected
+        # Exact integers, not floats: 10.5 * 10**6 in binary floating point
+        # is 10499999.999999998, which would not equal the string above.
+        assert "." not in result.structured["canonical_amount"]
+
+    def test_magnitude_and_currency_together(self) -> None:
+        for value in ("USD 2 million", "2 Million USD"):
+            result = MoneyNormalizer().normalize(value, _ctx())
+            assert result.structured["canonical_amount"] == "2000000", value
+            assert result.structured["currency"] == "USD", value
+
+    @pytest.mark.parametrize(
+        "value",
+        [
+            "$10.5 Milliarde",  # German 10^9 — long-scale locales are not guessed
+            "$10.5 Billiarde",
+            "5 lakh",  # Indian 10^5
+            "100 per share",
+            "$50 each",
+        ],
+    )
+    def test_unrecognised_words_are_ambiguous_never_dropped(self, value: str) -> None:
+        """An unexplained word means the value was not understood. Refusing
+        is the only safe answer: a wrong number is far worse than none."""
+        result = MoneyNormalizer().normalize(value, _ctx())
+        assert result.normalization_status is NormalizationStatus.AMBIGUOUS
+        assert result.structured["canonical_amount"] is None
+
+    @pytest.mark.parametrize("value", ["10.5M", "3B", "20k", "7T"])
+    def test_single_letter_suffixes_are_ambiguous(self, value: str) -> None:
+        """ "M" is the CLDR currency symbol for the Lesotho loti, so "10.5M"
+        used to resolve to 10.5 LSL — wrong in both halves at once. A single
+        letter beside a number cannot be told from a currency symbol
+        without knowing the column."""
+        result = MoneyNormalizer().normalize(value, _ctx())
+        assert result.normalization_status is NormalizationStatus.AMBIGUOUS
+
+    def test_ambiguous_symbol_still_keeps_its_amount(self) -> None:
+        """The guard must not catch a bare "$": a symbol we cannot pin to
+        one currency is a known unknown and the amount is still good. Only
+        an unrecognised WORD is refused."""
+        result = MoneyNormalizer().normalize("$1234.56", _ctx())
+        assert result.normalization_status is NormalizationStatus.NORMALIZED
+        assert result.structured["canonical_amount"] == "1234.56"
+        assert result.structured["currency"] is None
+
+    def test_values_without_a_magnitude_are_byte_identical(self) -> None:
+        """The multiplier path reformats through Decimal, so the no-magnitude
+        path must not go through it — "1234.5600" must not become "1234.56"
+        (or vice versa) as a side effect of this fix."""
+        for value, expected in (("1234.56 USD", "1234.56"), ("€1.234,56", "1234.56")):
+            result = MoneyNormalizer().normalize(value, _ctx())
+            assert result.structured["canonical_amount"] == expected, value

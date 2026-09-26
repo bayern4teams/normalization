@@ -16,10 +16,27 @@ An amount with no currency at all is still NORMALIZED (a single-currency
 column is the common case and its currency is not in the cell); the
 currency is simply absent. A value with no parseable AMOUNT is INVALID —
 that is the part a money column exists to hold.
+
+Magnitude words are the reason this module cannot just split and delegate.
+The first version of that split treated EVERY non-numeric token as part
+of the currency half and dropped whatever did not resolve, so
+"$10.5 Million" normalized to 10.5 and reported NORMALIZED: a silent
+1,000,000x error, found against a real 1.27M-row revenue column where
+every value has that shape. Two rules now prevent it:
+
+- A known magnitude word MULTIPLIES the amount ("$10.5 Million" ->
+  10500000).
+- An alphabetic token that is neither a currency nor a known magnitude is
+  AMBIGUOUS. Never dropped — an unexplained word in a money value means
+  the value was not understood, and a wrong number is far worse than a
+  refused one. An ambiguous SYMBOL still behaves as before ("$1,234.56"
+  keeps its amount and reports no currency): a symbol we cannot pin to
+  one currency is a known unknown, an unrecognised word is not.
 """
 
 from __future__ import annotations
 
+import decimal
 import re
 from typing import TYPE_CHECKING
 
@@ -46,6 +63,34 @@ _PARSE_PARAMS_HASH = blake3.blake3(b"{}").hexdigest()
 # The currency half of a money value: an ISO 4217 code, or a symbol.
 # Digits, separators and the sign belong to the amount.
 _CURRENCY_PART_RE = re.compile(r"[^\d\s.,()+-]+")
+
+# Multipliers, English SHORT scale, spelled out. Applied to the amount.
+#
+# ponytail: short scale only, and no single letters. "M"/"B"/"K"/"T" are
+# every bit as common in financial data, and are left out deliberately —
+# "M" is the CLDR currency symbol for the Lesotho loti, so "10.5M" was
+# resolving to 10.5 LSL, wrong in both halves at once. A single letter
+# next to a number cannot be told from a currency symbol without asking
+# the column, so it stays AMBIGUOUS. Long-scale locales are the other
+# ceiling: German "Milliarde" is 10^9 and German "Billion" is 10^12, so
+# only English words are listed and anything else is refused rather than
+# guessed. Upgrade path for both: require ctx.locale and key this table
+# by it.
+_MAGNITUDES: dict[str, int] = {
+    "hundred": 10**2,
+    "thousand": 10**3,
+    "million": 10**6,
+    "mn": 10**6,
+    "billion": 10**9,
+    "bn": 10**9,
+    "trillion": 10**12,
+}
+
+# A single ASCII letter in the currency half is refused even when it DOES
+# resolve to a currency, for the "10.5M" reason above.
+_SINGLE_LETTER_RE = re.compile(r"^[A-Za-z]$")
+
+_HAS_LETTER_RE = re.compile(r"[^\W\d_]")
 
 # ISO 4217 minor units. Most currencies have 2; these are the exceptions,
 # and they are why the destination column is scaled to 4 rather than 2.
@@ -114,7 +159,9 @@ class MoneyNormalizer:
         # strips a LEADING symbol, so handing it the whole string made
         # every trailing-code spelling ("1234.56 USD", the commonest one
         # in real exports) INVALID.
-        currency_text = " ".join(_CURRENCY_PART_RE.findall(cleaned)).strip()
+        tokens = _CURRENCY_PART_RE.findall(cleaned)
+        multiplier, currency_tokens = _split_magnitudes(tokens)
+        currency_text = " ".join(currency_tokens).strip()
         amount_text = _CURRENCY_PART_RE.sub(" ", cleaned).strip()
 
         if not amount_text:
@@ -131,13 +178,11 @@ class MoneyNormalizer:
             # ambiguous rather than being downgraded to a flat failure.
             return _unresolved(value, amount.normalization_status, ctx)
 
-        currency_code = None
-        if currency_text:
-            resolved = self._currency.normalize(currency_text, _as(ctx, FieldSemanticType.CURRENCY))
-            if resolved.normalization_status is NormalizationStatus.NORMALIZED:
-                currency_code = resolved.comparison
+        currency_code, understood = self._currency_half(currency_text, ctx)
+        if not understood:
+            return _unresolved(value, NormalizationStatus.AMBIGUOUS, ctx)
 
-        canonical = str(amount.display)
+        canonical = _scaled(str(amount.display), multiplier)
         structured = {
             "canonical_amount": canonical,
             "currency": currency_code,
@@ -160,6 +205,27 @@ class MoneyNormalizer:
             semantic_type=ctx.semantic_type,
             context_hash=ctx.context_hash,
         )
+
+    def _currency_half(
+        self, currency_text: str, ctx: NormalizationContext
+    ) -> tuple[str | None, bool]:
+        """(ISO code or None, whether the half was understood at all).
+
+        `understood=False` is the guard that stops a silent wrong number:
+        an alphabetic token that is neither a currency nor a known
+        magnitude means the value was not understood, and dropping it is
+        what turned "$10.5 Million" into 10.5. A bare ambiguous SYMBOL is
+        understood — "$" is a known unknown and the amount beside it is
+        still good.
+        """
+        if not currency_text:
+            return None, True
+        if _SINGLE_LETTER_RE.match(currency_text):
+            return None, False
+        resolved = self._currency.normalize(currency_text, _as(ctx, FieldSemanticType.CURRENCY))
+        if resolved.normalization_status is NormalizationStatus.NORMALIZED:
+            return resolved.comparison, True
+        return None, not _HAS_LETTER_RE.search(currency_text)
 
     def normalize_batch(self, values: pa.Array, ctx: NormalizationContext) -> pa.StructArray:
         results = [self.normalize(v, ctx) for v in values.to_pylist()]
@@ -207,6 +273,36 @@ class MoneyNormalizer:
 
     def inverse(self, step_id: str, value: str) -> str | None:
         return None
+
+
+def _split_magnitudes(tokens: list[str]) -> tuple[int, list[str]]:
+    """(multiplier, the tokens that are still the currency half)."""
+    multiplier = 1
+    remaining: list[str] = []
+    for token in tokens:
+        scale = _MAGNITUDES.get(token.casefold())
+        if scale is None:
+            remaining.append(token)
+        else:
+            multiplier *= scale
+    return multiplier, remaining
+
+
+def _scaled(amount: str, multiplier: int) -> str:
+    """Apply a magnitude multiplier without going near a float.
+
+    Returns `amount` untouched when there is no multiplier, so every value
+    that has no magnitude word keeps byte-identical output. `format(..., "f")`
+    rather than `str()`: Decimal renders 1.05E+7 in exponent form, which is
+    not what a money column should contain.
+    """
+    if multiplier == 1:
+        return amount
+    try:
+        scaled = decimal.Decimal(amount) * multiplier
+    except decimal.InvalidOperation:  # pragma: no cover - amount already parsed
+        return amount
+    return format(scaled.normalize(), "f")
 
 
 def _as(ctx: NormalizationContext, semantic_type: FieldSemanticType) -> NormalizationContext:
