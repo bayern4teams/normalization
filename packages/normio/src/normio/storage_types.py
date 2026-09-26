@@ -46,6 +46,24 @@ _PG_TYPES: Mapping[str, str] = {
 }
 
 # Bare types: ClickHouse's create_table wraps every column in Nullable().
+#
+# The two engines do NOT have the same numeric ceiling, and the same
+# source column can therefore round differently depending on which one it
+# is cloned to. Postgres NUMERIC without a precision is unbounded (up to
+# 131072 digits before the point, 16383 after); ClickHouse has no
+# unbounded decimal, so NUMERIC pins Decimal(38,9) — 38 significant
+# digits, 9 after the point. A value needing more than 9 decimal places
+# (a unit price at 12dp, a scientific measurement) is rounded on
+# ClickHouse and exact on Postgres, and a value beyond 38 significant
+# digits fails to cast on ClickHouse and lands as NULL plus an error row
+# while Postgres stores it. MONEY is Decimal(38,4) on both, so it is
+# identical across engines by construction.
+#
+# ponytail: 38,9 is ClickHouse's widest Decimal that still fits its
+# 128-bit backing type. Decimal256 goes to 76 digits if a real column
+# ever needs it — at roughly double the storage and slower arithmetic,
+# which is not worth paying for every numeric column on the chance one
+# needs it.
 _CH_TYPES: Mapping[str, str] = {
     "NUMERIC": "Decimal(38,9)",
     "MONEY": "Decimal(38,4)",

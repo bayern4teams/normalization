@@ -44,7 +44,13 @@ from normio.connectors._sql_base import SOURCE_READ_BATCH_ROWS
 
 from normapi import secrets
 from normapi.scaffold_profile import SCAFFOLD_PROFILE
-from normcore import CloneJobStatus, ErrorPolicy, FieldSemanticType, NormalizationContext
+from normcore import (
+    CloneJobStatus,
+    ErrorPolicy,
+    FieldSemanticType,
+    MissingKind,
+    NormalizationContext,
+)
 from normio import storage_types
 
 if TYPE_CHECKING:
@@ -745,6 +751,18 @@ def _apply_column(
 
         if companion is not None:
             row[companion] = result.structured.get("currency")
+
+        # A non-empty source value the normalizer read as MISSING lands as
+        # NULL with nothing anywhere to say so. `display` is None for
+        # MissingKind.UNKNOWN_VALUE, and the status is NORMALIZED, so
+        # neither decision #8's raw-string fallback nor the cast below
+        # records anything: a BOOLEAN column of "maybe"/"N/A" arrives 100%
+        # NULL and reads as a column that was simply empty at source.
+        # NULL and EMPTY_STRING are not reported — those need no
+        # explanation — and this is checked before the cast so it fires in
+        # untyped mode too, where the loss is identical.
+        if row[column] is None and result.original_kind is MissingKind.UNKNOWN_VALUE:
+            errors.append(f"value {original!r} means missing; stored as NULL")
 
         # Decision #8 puts the ORIGINAL raw string in the cell when
         # normalization fails, which a natively typed column cannot hold.

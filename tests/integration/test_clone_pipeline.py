@@ -22,6 +22,7 @@ Requires: docker compose up -d postgres demo-postgres demo-clickhouse
 
 from __future__ import annotations
 
+import decimal
 import os
 import time
 import uuid
@@ -30,8 +31,11 @@ import clickhouse_connect
 import psycopg
 import pytest
 from cryptography.fernet import Fernet
+from normalizers.boolean import BooleanNormalizer
 from normalizers.date import DateNormalizer
 from normalizers.email import EmailNormalizer
+from normalizers.money import MoneyNormalizer
+from normalizers.numeric import NumericNormalizer
 from normalizers.passthrough import PassthroughNormalizer
 from normapi.pg_persistence import PgPersistence
 
@@ -154,7 +158,9 @@ def test_postgres_clone_pipeline_ddl_population_errors_and_resume(
     assert started is True
     job = _wait_for_terminal(persistence, job_id)
     assert job["status"] == "COMPLETED", job.get("error")
-    assert job["progress"]["rows_done"] == 5  # 3 customers + 2 clone_source
+    # 3 customers + 2 clone_source + 3 typed_source: a clone copies EVERY
+    # table in the source database, so adding a fixture table moves this.
+    assert job["progress"]["rows_done"] == 8
     assert sorted(job["progress"]["tables_completed"]) == sorted(job["tables"])
 
     with psycopg.connect(dest_dsn) as conn:
@@ -186,7 +192,7 @@ def test_postgres_clone_pipeline_ddl_population_errors_and_resume(
     assert started_again is True
     job = _wait_for_terminal(persistence, job_id)
     assert job["status"] == "COMPLETED"
-    assert job["progress"]["rows_done"] == 5  # unchanged — nothing re-inserted
+    assert job["progress"]["rows_done"] == 8  # unchanged — nothing re-inserted
 
     with psycopg.connect(dest_dsn) as conn:
         assert conn.execute("SELECT count(*) FROM clone_source").fetchone()[0] == 2
@@ -310,3 +316,219 @@ def test_clickhouse_clone_pipeline_ddl_population_errors_and_resume(
     origin_rows = origin_client.query("SELECT id, email FROM clone_source ORDER BY id").result_rows
     assert list(origin_rows) == [(1, "Valid.User@EXAMPLE.com"), (2, "not-an-email")]
     origin_client.close()
+
+
+def _typed_dispatcher() -> Dispatcher:
+    registry = NormalizerRegistry()
+    registry.register(PassthroughNormalizer())
+    registry.register(NumericNormalizer())
+    registry.register(MoneyNormalizer())
+    registry.register(BooleanNormalizer())
+    return Dispatcher(registry, env_id="test-typed-clone")
+
+
+def _run_to_completion(
+    persistence: PgPersistence, dispatcher: Dispatcher, job_id: str, dest_database: str
+) -> dict:
+    """Phase 1 + the by-hand CREATE DATABASE (decision #6) + Phase 2."""
+    admin_dsn = f"postgresql://writable_user:writable_pass@{PG_HOST}:{PG_PORT}/postgres"
+    with psycopg.connect(admin_dsn, autocommit=True) as conn:
+        conn.execute(clone_executor.create_database_sql(dest_database))
+    job = clone_executor.verify_and_create_schema(persistence, job_id)
+    assert job["status"] == "SCHEMA_READY"
+    assert clone_executor.start_phase2(persistence, dispatcher, None, job_id) is True
+    job = _wait_for_terminal(persistence, job_id)
+    assert job["status"] == "COMPLETED", job.get("error")
+    return job
+
+
+def _pg_connections(persistence: PgPersistence) -> tuple[dict, dict]:
+    source_conn = persistence.save_connection(
+        str(uuid.uuid4()),
+        engine="postgres",
+        host=PG_HOST,
+        port=PG_PORT,
+        username="readonly_user",
+        password="readonly_pass",
+    )
+    dest_conn = persistence.save_connection(
+        str(uuid.uuid4()),
+        engine="postgres",
+        host=PG_HOST,
+        port=PG_PORT,
+        username="writable_user",
+        password="writable_pass",
+    )
+    return source_conn, dest_conn
+
+
+@pytest.mark.integration
+def test_typed_destination_columns_against_real_postgres(persistence: PgPersistence) -> None:
+    """The typed-column DDL and the pre-insert cast had unit tests only.
+
+    Everything they promise is a claim about a real database — that
+    `NUMERIC(38,4)` is accepted DDL, that a Decimal reaches the column
+    without going through a float, that an uncastable value becomes NULL
+    instead of aborting the chunk. None of that can be proven with a mock.
+    """
+    dest_database = f"clone_typed_{uuid.uuid4().hex[:8]}"
+    source_conn, dest_conn = _pg_connections(persistence)
+
+    job = clone_executor.create_clone_job(
+        persistence,
+        request={
+            "source_connection_id": source_conn["connection_id"],
+            "source_database": "source_demo",
+            "destination_connection_id": dest_conn["connection_id"],
+            "destination_database": dest_database,
+            "typed_destination_columns": True,
+            "field_configs": {
+                "typed_source": {"amount": "NUMERIC", "price": "MONEY", "active": "BOOLEAN"}
+            },
+        },
+    )
+    job_id = job["job_id"]
+    job = _run_to_completion(persistence, _typed_dispatcher(), job_id, dest_database)
+
+    dest_dsn = f"postgresql://writable_user:writable_pass@{PG_HOST}:{PG_PORT}/{dest_database}"
+    with psycopg.connect(dest_dsn) as conn:
+        columns = dict(
+            conn.execute(
+                "SELECT column_name, data_type FROM information_schema.columns "
+                "WHERE table_name = 'typed_source'"
+            ).fetchall()
+        )
+        assert columns["amount"] == "numeric"
+        assert columns["price"] == "numeric"
+        assert columns["active"] == "boolean"
+        # MONEY's currency would otherwise be dropped on the floor: the
+        # amount is what the column can sum, the currency is what makes
+        # the sum mean anything.
+        assert columns["price_currency"] == "text"
+        # The primary key is never typed (a ClickHouse sorting key cannot
+        # be Nullable, and a NULL key is the least acceptable NULL there
+        # is) — asserted here because it is the same code path on both.
+        assert columns["id"] == "integer"
+
+        rows = conn.execute(
+            "SELECT id, amount, price, price_currency, active FROM typed_source ORDER BY id"
+        ).fetchall()
+        by_id = {r[0]: r[1:] for r in rows}
+
+        # Both locales' separators reach the SAME native decimal, and it is
+        # a Decimal, not a float — 1234.56 is not representable in binary
+        # floating point, so a float round-trip here would not compare
+        # equal.
+        assert by_id[1][0] == decimal.Decimal("1234.56")
+        assert by_id[2][0] == decimal.Decimal("1234.56")
+        assert isinstance(by_id[1][0], decimal.Decimal)
+
+        # "€1.234,56" and "1234.56 USD" agree on the amount and differ
+        # only in the companion column.
+        assert by_id[1][1] == decimal.Decimal("1234.5600")
+        assert by_id[1][2] == "EUR"
+        assert by_id[2][1] == decimal.Decimal("1234.5600")
+        assert by_id[2][2] == "USD"
+
+        assert by_id[1][3] is True  # "yes"
+        assert by_id[2][3] is False  # "NO"
+
+        # Row 3: nothing castable. The whole point is that the chunk still
+        # inserted — the old behaviour was the database rejecting it and
+        # taking the job (and the error rows explaining why) down with it.
+        assert by_id[3] == (None, None, None, None)
+
+        # And the column really is arithmetic now, which is the feature.
+        total = conn.execute("SELECT sum(price) FROM typed_source").fetchone()[0]
+        assert total == decimal.Decimal("2469.1200")
+
+    errors = persistence.load_clone_job_errors_page(job_id, limit=100, offset=0)
+    reported = {(e["field"], e["original"]): e["error"] for e in errors}
+    assert "not a number" in reported[("amount", "not-a-number")]
+    # "free" fails in MoneyNormalizer, so it arrives as its own raw string
+    # and then fails the cast as well; either message is a true report.
+    assert ("price", "free") in reported
+    # The regression this test exists for: "maybe" is not a failure — it
+    # normalizes to NORMALIZED with MissingKind.UNKNOWN_VALUE and a None
+    # display — so neither decision #8 nor the cast said anything, and a
+    # BOOLEAN column of "maybe"/"N/A" arrived 100% NULL looking like a
+    # column that was simply empty at source.
+    assert "means missing" in reported[("active", "maybe")]
+
+
+@pytest.mark.integration
+def test_in_place_normalization_swaps_the_real_table(persistence: PgPersistence) -> None:
+    """In-place mode writes a staging table beside the original and swaps.
+
+    Unit tests could only check the generated SQL strings. Whether Postgres
+    actually accepts the rename pair, whether the swapped-in table keeps
+    its primary key, and whether the original is really gone afterwards are
+    facts about a live server.
+    """
+    database = f"inplace_{uuid.uuid4().hex[:8]}"
+    admin_dsn = f"postgresql://writable_user:writable_pass@{PG_HOST}:{PG_PORT}/postgres"
+    with psycopg.connect(admin_dsn, autocommit=True) as conn:
+        conn.execute(clone_executor.create_database_sql(database))
+
+    dsn = f"postgresql://writable_user:writable_pass@{PG_HOST}:{PG_PORT}/{database}"
+    with psycopg.connect(dsn, autocommit=True) as conn:
+        conn.execute("CREATE TABLE amounts (id SERIAL PRIMARY KEY, amount TEXT)")
+        conn.execute("INSERT INTO amounts (amount) VALUES ('1,234.56'), ('7.890,12')")
+
+    # Same connection for source and destination: that IS in-place mode.
+    conn_row = persistence.save_connection(
+        str(uuid.uuid4()),
+        engine="postgres",
+        host=PG_HOST,
+        port=PG_PORT,
+        username="writable_user",
+        password="writable_pass",
+    )
+    job = clone_executor.create_clone_job(
+        persistence,
+        request={
+            "source_connection_id": conn_row["connection_id"],
+            "source_database": database,
+            "in_place": True,
+            "field_configs": {"amounts": {"amount": "NUMERIC"}},
+        },
+    )
+    job_id = job["job_id"]
+    # No CREATE DATABASE step: in-place normalizes the database it read.
+    job = clone_executor.verify_and_create_schema(persistence, job_id)
+    assert job["status"] == "SCHEMA_READY"
+
+    staging = clone_executor.staging_name("amounts")
+    with psycopg.connect(dsn) as conn:
+        present = {
+            r[0]
+            for r in conn.execute(
+                "SELECT tablename FROM pg_tables WHERE schemaname = 'public'"
+            ).fetchall()
+        }
+        assert staging in present, "Phase 1 must create the staging table beside the original"
+        assert "amounts" in present
+
+    assert clone_executor.start_phase2(persistence, _typed_dispatcher(), None, job_id) is True
+    job = _wait_for_terminal(persistence, job_id)
+    assert job["status"] == "COMPLETED", job.get("error")
+
+    with psycopg.connect(dsn) as conn:
+        present = {
+            r[0]
+            for r in conn.execute(
+                "SELECT tablename FROM pg_tables WHERE schemaname = 'public'"
+            ).fetchall()
+        }
+        assert "amounts" in present
+        assert staging not in present, "the staging table must not survive the swap"
+
+        rows = conn.execute("SELECT id, amount FROM amounts ORDER BY id").fetchall()
+        assert [r[1] for r in rows] == ["1234.56", "7890.12"]
+
+        pk_cols = conn.execute(
+            "SELECT a.attname FROM pg_index i "
+            "JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey) "
+            "WHERE i.indrelid = 'amounts'::regclass AND i.indisprimary"
+        ).fetchall()
+        assert [c[0] for c in pk_cols] == ["id"], "the swapped-in table must keep its primary key"

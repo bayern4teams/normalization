@@ -56,3 +56,31 @@ INSERT INTO clone_source (email, founded) VALUES
     ('not-an-email', 'no-date-here');
 
 GRANT SELECT ON clone_source TO readonly_user;
+
+-- A dedicated table for the TYPED-destination-column tests (§7/§8).
+-- Every column is TEXT at source, which is the real-world case: the whole
+-- point of `typed_destination_columns` is that a messy text column becomes
+-- a summable native one. Each row exercises a different outcome:
+--   1: values that normalize and cast cleanly
+--   2: a different locale's separators, and a currency named rather than
+--      symbolised, both of which must reach the SAME native value
+--   3: values that cannot cast (-> NULL + an error row) and a boolean that
+--      means "missing" rather than true/false (-> NULL, which used to be
+--      recorded nowhere at all)
+CREATE TABLE IF NOT EXISTS typed_source (
+    id SERIAL PRIMARY KEY,
+    amount TEXT,
+    price TEXT,
+    active TEXT
+);
+
+INSERT INTO typed_source (amount, price, active) VALUES
+    ('1,234.56', '€1.234,56', 'yes'),
+    ('1.234,56', '1234.56 USD', 'NO'),
+    ('not-a-number', 'free', 'maybe');
+
+GRANT SELECT ON typed_source TO readonly_user;
+
+-- In-place normalization (decision: swap a staging table in) needs a
+-- database the app may WRITE to, which source_demo deliberately is not.
+-- writable_user has CREATEDB, so the test creates and seeds its own.
