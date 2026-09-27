@@ -209,12 +209,33 @@ class CloneJobCreateRequest(BaseModel):
     # folding). Off by default: folding is lossy, so it is the operator's
     # call rather than something inference should decide.
     normalize_unconfigured_text: bool = False
+    # The country and locale every normalizer gets as context. Most
+    # normalizers refuse to guess without them and say so rather than
+    # picking: a POSTCODE returns AMBIGUOUS with no country to validate
+    # against, `1,234` stays AMBIGUOUS with no locale to say whether the
+    # comma groups or decimalises, `$948,000` likewise, and `12/05/1990`
+    # is never read as either MDY or DMY. Measured on a real 1.27M-row
+    # source, supplying them moved PHONE from 74.1% AMBIGUOUS to 99.5%
+    # PARSED. Left unset, every one of those refusals stands — which is
+    # correct, just much less useful. Not inferred: a wrong locale
+    # silently changes what a number MEANS.
+    country: str | None = None
+    locale: str | None = None
     # Give NUMERIC/MONEY/BOOLEAN columns a real SQL type (NUMERIC, BOOLEAN)
-    # instead of TEXT, so downstream SUM/AVG work without casting. Off by
-    # default: a value that will not cast becomes NULL plus an error-report
-    # row, and losing the raw string from the cell is the operator's call.
-    # The original is still recoverable from the error report.
-    typed_destination_columns: bool = False
+    # instead of TEXT, so downstream SUM/AVG work without casting. On by
+    # default: an untyped clone of a numeric column cannot be summed, which
+    # is most of the reason to normalize it. A value that will not cast
+    # becomes NULL plus an error-report row keeping the original, and the
+    # column-level null-rate report (below) says how often that happened —
+    # without that report this default would hide the loss, which is why it
+    # was off before one existed.
+    typed_destination_columns: bool = True
+    # Fail the job when normalizing empties more than this fraction of any
+    # one column's non-null source values. Unset means report and continue:
+    # every column over NORM_CLONE_NULL_RATE_REPORT (5% by default) gets a
+    # row in the error report either way. Set it when a clone feeds
+    # something that cannot tolerate a silently gutted column.
+    max_new_null_rate: float | None = Field(default=None, ge=0.0, le=1.0)
     # Normalize the source database in place instead of cloning it into a
     # second one. Each table is built beside its original under a staging
     # name and swapped in, so peak extra storage is the largest SINGLE

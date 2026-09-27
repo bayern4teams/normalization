@@ -128,7 +128,24 @@ a saved connection (decision #13) — it's picked fresh on the next screen.
    any table and set a semantic type on the columns you want normalized;
    leave the rest as passthrough (copied through untouched, original
    type preserved).
-4. **Create clone job.**
+4. **Set country and locale** if you know them. Most normalizers refuse
+   to guess without them and say so instead of picking: a postcode has no
+   format to validate against, `1,234` could group or decimalise,
+   `$948,000` likewise, and `12/05/1990` is never read as either MDY or
+   DMY. Measured on a real 50,000-row source, adding `locale=en-US`
+   recovered 16,200 revenue values that were otherwise stored as NULL —
+   34.5% of the column. Leave them unset and every one of those refusals
+   stands, which is correct but much less useful. They are never
+   inferred: a wrong locale silently changes what a number *means*.
+
+   A COUNTRY column fills this in per row by itself. Its resolved
+   alpha-2 becomes the context for every other column of the **same
+   row**, so a table holding both a country and a postcode validates
+   each postcode against its own row's country — 66 different countries
+   in one measured 50,000-row table, which no single job-level default
+   could have covered. Two country columns in one row that disagree are
+   reported and neither is used.
+5. **Create clone job.**
 
 ## 4. Run `CREATE DATABASE` by hand
 
@@ -161,10 +178,38 @@ at 20,000-row scale in the verification pack).
 
 ## 6. Check the results
 
+The clone has columns the origin did not:
+
+| Column | Holds | For |
+|---|---|---|
+| `<col>_code` | the ISO alpha-2 / BCP-47 subtag / E.164 number | COUNTRY, LANGUAGE, PHONE |
+| `<col>_currency` | the ISO 4217 code | MONEY |
+
+Both exist because the original column keeps the *human* form
+("United States", "+1 650-253-0000") and the machine key would otherwise
+be computed and thrown away — which is how a column named `CountryCode`
+ended up holding "United States" and joining against nothing.
+
+`typed_destination_columns` is **on by default**: NUMERIC/MONEY/BOOLEAN
+columns get a real SQL type, so `SUM`/`AVG` work without casting. A
+value that will not cast becomes NULL, keeping its original in the error
+report. Set `typed_destination_columns: false` to keep everything text.
+
 - **Errors** section on the same page: any value that failed to
   normalize kept its **original** raw value in the clone (never blank,
   never skipped — decision #8) and is listed here with full detail
   (table, field, row, error, safe preview), paginated.
+- Two entries there are *column*-level, not row-level, and carry
+  `row_index = -1`:
+  - `normalization emptied N% of this column` — every column whose
+    non-empty values were emptied by more than
+    `NORM_CLONE_NULL_RATE_REPORT` (5% by default). This is the one thing
+    that makes typed columns safe to leave on: without it, a column that
+    arrived 34.5% NULL looked exactly like a column that was merely
+    sparse at source. Set `max_new_null_rate` on the job to FAIL rather
+    than report.
+  - `country conflict: X says .., Y says ..` — two country columns in one
+    row that contradict each other.
 - Diff origin vs. destination directly to confirm normalized-in-place
   values, untouched passthrough columns, and — most importantly — that
   the origin is byte-for-byte unchanged:

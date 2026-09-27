@@ -274,3 +274,38 @@ class TestMoneyMagnitudeWords:
         for value, expected in (("1234.56 USD", "1234.56"), ("€1.234,56", "1234.56")):
             result = MoneyNormalizer().normalize(value, _ctx())
             assert result.structured["canonical_amount"] == expected, value
+
+
+@pytest.mark.unit
+class TestCodeCompanionColumns:
+    """`comparison` is the machine key for these types and used to be
+    computed and thrown away — which is how a column named CountryCode
+    ended up holding "United States" in a real 1.76M-row clone."""
+
+    def test_country_language_and_phone_earn_a_code_column(self) -> None:
+        _, extras, _ = _destination_plan(
+            {"CountryCode": "COUNTRY", "lang": "LANGUAGE", "tel": "PHONE"},
+            "postgres",
+            (),
+            typed=False,
+        )
+        assert extras == {
+            "CountryCode_code": "TEXT",
+            "lang_code": "TEXT",
+            "tel_code": "TEXT",
+        }
+
+    def test_currency_earns_none_because_its_display_is_already_the_code(self) -> None:
+        _, extras, _ = _destination_plan({"ccy": "CURRENCY"}, "postgres", (), typed=False)
+        assert extras == {}
+
+    def test_money_still_earns_only_its_currency_companion(self) -> None:
+        _, extras, _ = _destination_plan({"price": "MONEY"}, "clickhouse", (), typed=False)
+        assert extras == {"price_currency": "String"}
+
+    def test_a_code_column_is_never_given_a_native_type(self) -> None:
+        """Typing is about NUMERIC/MONEY/BOOLEAN; a code is text on both
+        engines, and `typed` must not change what the companion holds."""
+        _, extras, typed = _destination_plan({"CountryCode": "COUNTRY"}, "postgres", (), typed=True)
+        assert extras == {"CountryCode_code": "TEXT"}
+        assert "CountryCode_code" not in typed

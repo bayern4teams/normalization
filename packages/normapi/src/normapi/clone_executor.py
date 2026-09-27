@@ -50,6 +50,7 @@ from normcore import (
     FieldSemanticType,
     MissingKind,
     NormalizationContext,
+    NormalizedValue,
 )
 from normio import storage_types
 
@@ -296,7 +297,10 @@ def create_clone_job(
         "tables": tables,
         "field_configs": field_configs,
         "inferred_field_configs": inferred_configs,
-        "typed_destination_columns": request.get("typed_destination_columns", False),
+        "typed_destination_columns": request.get("typed_destination_columns", True),
+        "country": request.get("country"),
+        "locale": request.get("locale"),
+        "max_new_null_rate": request.get("max_new_null_rate"),
         "in_place": in_place,
         "progress": {
             "current_table": None,
@@ -314,6 +318,28 @@ def create_clone_job(
 # its currency would otherwise be dropped on the floor exactly the way
 # NUMERIC used to drop it. It goes in a companion column instead.
 _CURRENCY_SUFFIX = "_currency"
+
+# Same problem, same fix, for `comparison`. For these types `comparison` is
+# a stable machine key — an ISO 3166 alpha-2, a BCP-47 subtag, an E.164
+# number — and `display` is a human rendering of the same fact ("United
+# States", "German", "+1 650-253-0000"). The destination only ever got
+# `display`, so the key was computed and thrown away: that is how a column
+# named CountryCode ended up holding "United States" and joining against
+# nothing. Both are written now. The original column keeps `display`
+# (a column named `Country` was not wrong before, and changing what it
+# holds would break every existing consumer of a clone); the companion
+# gets the key.
+_CODE_SUFFIX = "_code"
+_CODE_TYPES = frozenset(
+    {
+        FieldSemanticType.COUNTRY.value,
+        FieldSemanticType.LANGUAGE.value,
+        FieldSemanticType.PHONE.value,
+    }
+)
+
+# CURRENCY is deliberately absent: its `display` already IS the ISO 4217
+# code, so a companion would duplicate the column.
 
 # In-place normalization writes each table to a staging table beside the
 # original, then swaps. The suffix is part of the resume contract: Phase 1
@@ -388,9 +414,12 @@ def _destination_plan(
     overrides: dict[str, str] = {}
     extras: dict[str, str] = {}
     typed_columns: dict[str, str] = {}
+    text_type = _TEXT_TYPE.get(engine, "TEXT")
     for column, semantic_type in semantic_types.items():
         if semantic_type == _MONEY:
-            extras[f"{column}{_CURRENCY_SUFFIX}"] = _TEXT_TYPE.get(engine, "TEXT")
+            extras[f"{column}{_CURRENCY_SUFFIX}"] = text_type
+        if semantic_type in _CODE_TYPES:
+            extras[f"{column}{_CODE_SUFFIX}"] = text_type
         if not typed or column in key_columns:
             continue
         sql_type = storage_types.sql_type(semantic_type, engine)
@@ -460,7 +489,7 @@ def verify_and_create_schema(persistence: PgPersistence, job_id: str) -> dict[st
                     if semantic_type
                 }
                 engine = dest_conn["engine"]
-                typed = job.get("typed_destination_columns", False)
+                typed = job.get("typed_destination_columns", True)
                 # isinstance, not `engine == "postgres"`: the two branches
                 # call methods that exist on only one connector/destination
                 # each, and the engine string is opaque to the type checker
@@ -512,6 +541,11 @@ def verify_and_create_schema(persistence: PgPersistence, job_id: str) -> dict[st
                         column: f"{column}{_CURRENCY_SUFFIX}"
                         for column, st in semantic_types.items()
                         if st == _MONEY
+                    },
+                    "code_columns": {
+                        column: f"{column}{_CODE_SUFFIX}"
+                        for column, st in semantic_types.items()
+                        if st in _CODE_TYPES
                     },
                 }
         finally:
@@ -710,9 +744,16 @@ def _apply_column(
     planner: DistinctValuePlanner,
     typed_as: str | None,
     companion: str | None,
+    code_column: str | None,
+    country: str | None,
+    locale: str | None,
+    signals: dict[int, tuple[str, str]] | None,
     errors_buffer: list[dict[str, Any]],
-) -> None:
+) -> tuple[int, int]:
     """Normalize one column across one chunk, in place.
+
+    Returns `(non_empty_source_values, of_which_now_null)` for the
+    column-level null-rate report.
 
     Extracted from `_run_phase2` so that adding the pre-insert cast and
     the MONEY companion column did not push an already-oversized function
@@ -723,13 +764,16 @@ def _apply_column(
         semantic_type=semantic_type,
         table=table,
         source=source_id,
+        country=country,
+        locale=locale,
         error_policy=ErrorPolicy.RETURN_ORIGINAL,
-        # This loop reads exactly two things off each result —
-        # `.display` and `.errors` (for the decision #9 error report) —
-        # and throws the rest away, including the per-step trace. The
-        # trace is 36% of COMPANY_NAME normalize time (cProfile, real
-        # data), so building it here is pure waste. Every interactive
-        # path keeps it: the default is True, only bulk clone opts out.
+        # This loop reads the projections the destination has columns
+        # for (`.display`, `.comparison`, the MONEY currency out of
+        # `.structured`) plus `.errors` for the decision #9 report, and
+        # throws the rest away, including the per-step trace. The trace
+        # is 36% of COMPANY_NAME normalize time (cProfile, real data), so
+        # building it here is pure waste. Every interactive path keeps
+        # it: the default is True, only bulk clone opts out.
         include_trace=False,
     )
     distinct_values = list({row[column] for _, row in pending if row[column] is not None})
@@ -741,40 +785,34 @@ def _apply_column(
         context=ctx,
         profile=SCAFFOLD_PROFILE,
     )
+    total = 0
+    nulled = 0
     for offset, row in pending:
         original = row[column]
         if original is None:
             continue
         result = by_value[original]
-        row[column] = result.display
-        errors = list(result.errors)
-
-        if companion is not None:
-            row[companion] = result.structured.get("currency")
-
-        # A non-empty source value the normalizer read as MISSING lands as
-        # NULL with nothing anywhere to say so. `display` is None for
-        # MissingKind.UNKNOWN_VALUE, and the status is NORMALIZED, so
-        # neither decision #8's raw-string fallback nor the cast below
-        # records anything: a BOOLEAN column of "maybe"/"N/A" arrives 100%
-        # NULL and reads as a column that was simply empty at source.
-        # NULL and EMPTY_STRING are not reported — those need no
-        # explanation — and this is checked before the cast so it fires in
-        # untyped mode too, where the loss is identical.
-        if row[column] is None and result.original_kind is MissingKind.UNKNOWN_VALUE:
-            errors.append(f"value {original!r} means missing; stored as NULL")
-
-        # Decision #8 puts the ORIGINAL raw string in the cell when
-        # normalization fails, which a natively typed column cannot hold.
-        # Cast here and send a value that will not fit down the same
-        # error-report path, rather than letting the database reject the
-        # whole chunk (and with it the error rows that would have
-        # explained why).
-        if typed_as is not None:
-            cast_value, cast_error = storage_types.coerce(typed_as, row[column])
-            row[column] = cast_value
-            if cast_error is not None:
-                errors.append(cast_error)
+        # An empty string arriving as NULL is the same absence in a better
+        # representation, not a value normalization destroyed — counting it
+        # would inflate every text column's rate and could fail a job on
+        # `max_new_null_rate` for no real loss. A value that MEANS missing
+        # ("maybe", "N/A") is counted: that one really was information.
+        counted = result.original_kind is not MissingKind.EMPTY_STRING
+        total += counted
+        errors = _apply_value(
+            row,
+            result,
+            column=column,
+            typed_as=typed_as,
+            companion=companion,
+            code_column=code_column,
+        )
+        # After the cast, not before it: a value that normalized fine and
+        # then would not fit its native column is the loss this counts.
+        if counted and row[column] is None:
+            nulled += 1
+        if signals is not None:
+            _record_country_signal(signals, offset, column, result, errors)
 
         if errors:
             errors_buffer.append(
@@ -786,6 +824,224 @@ def _apply_column(
                     "error": "; ".join(errors),
                 }
             )
+    return total, nulled
+
+
+def _apply_value(
+    row: dict[str, Any],
+    result: NormalizedValue,
+    *,
+    column: str,
+    typed_as: str | None,
+    companion: str | None,
+    code_column: str | None,
+) -> list[str]:
+    """One row, one column: write every projection the destination has a
+    home for, and hand back whatever needs reporting."""
+    original = row[column]
+    row[column] = result.display
+    errors = list(result.errors)
+
+    if companion is not None:
+        row[companion] = result.structured.get("currency")
+    if code_column is not None:
+        row[code_column] = result.comparison
+
+    # A non-empty source value the normalizer read as MISSING lands as
+    # NULL with nothing anywhere to say so. `display` is None for
+    # MissingKind.UNKNOWN_VALUE, and the status is NORMALIZED, so
+    # neither decision #8's raw-string fallback nor the cast below
+    # records anything: a BOOLEAN column of "maybe"/"N/A" arrives 100%
+    # NULL and reads as a column that was simply empty at source.
+    # NULL and EMPTY_STRING are not reported — those need no
+    # explanation — and this is checked before the cast so it fires in
+    # untyped mode too, where the loss is identical.
+    if row[column] is None and result.original_kind is MissingKind.UNKNOWN_VALUE:
+        errors.append(f"value {original!r} means missing; stored as NULL")
+
+    # Decision #8 puts the ORIGINAL raw string in the cell when
+    # normalization fails, which a natively typed column cannot hold.
+    # Cast here and send a value that will not fit down the same
+    # error-report path, rather than letting the database reject the
+    # whole chunk (and with it the error rows that would have
+    # explained why).
+    if typed_as is not None:
+        cast_value, cast_error = storage_types.coerce(typed_as, row[column])
+        row[column] = cast_value
+        if cast_error is not None:
+            errors.append(cast_error)
+    return errors
+
+
+def _record_country_signal(
+    signals: dict[int, tuple[str, str]],
+    offset: int,
+    column: str,
+    result: NormalizedValue,
+    errors: list[str],
+) -> None:
+    """A resolved COUNTRY column tells every OTHER column in the same row
+    which country it is in, which is precisely the `ctx.country` that
+    POSTCODE, PHONE, NUMERIC, MONEY and DATE all refuse to guess without.
+    Per-row and free: the value was normalized anyway, this only keeps the
+    alpha-2 it already produced.
+
+    Two country columns in one row that disagree are reported and NEITHER
+    is used (the row falls back to the job-level country) — picking the
+    first, or the more confident, is exactly the guess this codebase does
+    not make.
+    """
+    alpha2 = result.structured.get("alpha2")
+    if not alpha2:
+        return
+    seen = signals.setdefault(offset, (column, alpha2))
+    if seen[1] and seen[1] != alpha2:
+        errors.append(f"country conflict: {column} says {alpha2}, {seen[0]} says {seen[1]}")
+        # Empty is sticky, so a third column cannot resurrect a
+        # contradicted row.
+        signals[offset] = (column, "")
+
+
+# Real rows report under their own source-row offset, which is always >= 0.
+# A column-level finding belongs to the whole column, so it takes an offset
+# no row can occupy — the report table's primary key is
+# (job_id, row_index, table_name, field), so this is one row per column.
+_COLUMN_REPORT_ROW = -1
+
+# Below this, a column losing values is just the data being messy (an
+# unparseable date here and there) and a report row per column would drown
+# the per-row findings it sits beside.
+_NULL_RATE_REPORT = float(os.environ.get("NORM_CLONE_NULL_RATE_REPORT", "0.05"))
+
+
+def _normalize_chunk(
+    pending: list[tuple[int, dict[str, Any]]],
+    *,
+    table: str,
+    job: dict[str, Any],
+    configured_columns: dict[str, FieldSemanticType],
+    typed_columns: dict[str, str],
+    currency_columns: dict[str, str],
+    code_columns: dict[str, str],
+    pool: Any,
+    planner: DistinctValuePlanner,
+    drift: dict[str, list[int]],
+    errors_buffer: list[dict[str, Any]],
+) -> None:
+    """Every configured column of one chunk, COUNTRY columns first.
+
+    Order matters: a resolved COUNTRY column supplies `ctx.country` for
+    every other column of the same row, and most normalizers refuse to
+    guess without it (a POSTCODE cannot be validated against "somewhere",
+    `1,234` could group or decimalise). So the country columns run against
+    the job-level context, and the rest run once per country found —
+    grouping, because the distinct-value dedup below is per context, and a
+    per-row context would defeat it entirely.
+
+    ponytail: within-row only. A country signal in a SIBLING TABLE (the
+    classic case: `Location.CountryCode` next to `Company.companyPhone`,
+    joined on company id) is invisible here, because Phase 2 streams one
+    table at a time and never holds two. That needs a first pass building
+    an entity -> country map; do it when a real source pays for it.
+    """
+    # Every row must carry the same keys: bulk_insert derives the column
+    # list from rows[0], so a companion column that only appears on rows
+    # with a non-null amount would build an INSERT that is wrong for
+    # every other row.
+    for _, row in pending:
+        for extra in (*currency_columns.values(), *code_columns.values()):
+            row[extra] = None
+
+    job_country = job.get("country")
+    signals: dict[int, tuple[str, str]] = {}
+    country_first = sorted(
+        configured_columns.items(),
+        key=lambda item: item[1] is not FieldSemanticType.COUNTRY,
+    )
+    for column, semantic_type in country_first:
+        provides_country = semantic_type is FieldSemanticType.COUNTRY
+        # No country column resolved anything (or there is none), so this
+        # is one group with the job-level country — identical to the
+        # behaviour before signals existed, and identical in cost.
+        groups = (
+            {job_country: pending}
+            if provides_country or not signals
+            else _group_by_country(pending, signals, job_country)
+        )
+        for country, group in groups.items():
+            total, nulled = _apply_column(
+                group,
+                column=column,
+                semantic_type=semantic_type,
+                table=table,
+                source_id=job["source_connection_id"],
+                pool=pool,
+                planner=planner,
+                typed_as=typed_columns.get(column),
+                companion=currency_columns.get(column),
+                code_column=code_columns.get(column),
+                country=country,
+                locale=job.get("locale"),
+                signals=signals if provides_country else None,
+                errors_buffer=errors_buffer,
+            )
+            drift[column][0] += total
+            drift[column][1] += nulled
+
+
+def _group_by_country(
+    pending: list[tuple[int, dict[str, Any]]],
+    signals: dict[int, tuple[str, str]],
+    default: str | None,
+) -> dict[str | None, list[tuple[int, dict[str, Any]]]]:
+    """Partition a chunk by the country its own row resolved to. A row with
+    no signal — or with two country columns that contradicted each other —
+    falls back to the job-level country."""
+    groups: dict[str | None, list[tuple[int, dict[str, Any]]]] = {}
+    for item in pending:
+        alpha2 = signals.get(item[0], ("", ""))[1]
+        groups.setdefault(alpha2 or default, []).append(item)
+    return groups
+
+
+def _report_null_rates(
+    persistence: PgPersistence,
+    job_id: str,
+    table: str,
+    drift: dict[str, list[int]],
+    ceiling: float | None,
+) -> None:
+    """One report row per column normalization emptied.
+
+    Nothing else in this pipeline says this at the COLUMN level. A typed
+    destination column turns every value that will not cast into NULL, and
+    a per-row finding for each one is invisible in aggregate: measured on a
+    real source, typing `companyRevenue` NULLed 38.5% of it (comma-decimal
+    values, with no locale to read them by) and the clone looked exactly
+    like a column that was simply sparse at source.
+    """
+    rows = []
+    for column, (total, nulled) in sorted(drift.items()):
+        if not total:
+            continue
+        rate = nulled / total
+        if rate < _NULL_RATE_REPORT:
+            continue
+        message = f"normalization emptied {rate:.1%} of this column ({nulled}/{total} values)"
+        if ceiling is not None and rate > ceiling:
+            msg = f"{table}.{column}: {message}, over the job's max_new_null_rate of {ceiling}"
+            raise CloneJobStateError(msg)
+        rows.append(
+            {
+                "row_index": _COLUMN_REPORT_ROW,
+                "table_name": table,
+                "field": column,
+                "original": None,
+                "error": message,
+            }
+        )
+    if rows:
+        persistence.save_clone_job_errors(job_id, rows)
 
 
 def _normalize_table(
@@ -831,6 +1087,10 @@ def _normalize_table(
     table_plan = job.get("destination_plan", {}).get(table, {})
     typed_columns: dict[str, str] = table_plan.get("typed_columns", {})
     currency_columns: dict[str, str] = table_plan.get("currency_columns", {})
+    code_columns: dict[str, str] = table_plan.get("code_columns", {})
+    # column -> [non-null source values seen, of which now NULL], summed
+    # across every chunk of this table.
+    drift: dict[str, list[int]] = {column: [0, 0] for column in configured_columns}
 
     for batch in source.read_table(table, batch_size=SOURCE_READ_BATCH_ROWS):
         rows = batch.to_pylist()
@@ -843,26 +1103,19 @@ def _normalize_table(
             continue
 
         errors_buffer: list[dict[str, Any]] = []
-        # Every row must carry the same keys: bulk_insert derives
-        # the column list from rows[0], so a companion column that
-        # only appears on rows with a non-null amount would build
-        # an INSERT that is wrong for every other row.
-        for _, row in pending:
-            for companion in currency_columns.values():
-                row[companion] = None
-        for column, semantic_type in configured_columns.items():
-            _apply_column(
-                pending,
-                column=column,
-                semantic_type=semantic_type,
-                table=table,
-                source_id=job["source_connection_id"],
-                pool=pool,
-                planner=planner,
-                typed_as=typed_columns.get(column),
-                companion=currency_columns.get(column),
-                errors_buffer=errors_buffer,
-            )
+        _normalize_chunk(
+            pending,
+            table=table,
+            job=job,
+            configured_columns=configured_columns,
+            typed_columns=typed_columns,
+            currency_columns=currency_columns,
+            code_columns=code_columns,
+            pool=pool,
+            planner=planner,
+            drift=drift,
+            errors_buffer=errors_buffer,
+        )
 
         dest_rows = []
         for _, row in pending:
@@ -880,6 +1133,12 @@ def _normalize_table(
         progress["rows_done"] += len(pending)
         job["progress"] = progress
         _save_progress(persistence, job_id, job)
+
+    # Before the swap, deliberately: a job that trips its own
+    # max_new_null_rate ceiling in in-place mode must leave the ORIGINAL
+    # table in place. Failing after the swap would have already replaced
+    # the source with the table the ceiling exists to reject.
+    _report_null_rates(persistence, job_id, table, drift, job.get("max_new_null_rate"))
 
     if in_place:
         # Swap only after the table is fully written, and BEFORE

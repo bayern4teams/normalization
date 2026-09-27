@@ -32,11 +32,13 @@ import psycopg
 import pytest
 from cryptography.fernet import Fernet
 from normalizers.boolean import BooleanNormalizer
+from normalizers.country import CountryNormalizer
 from normalizers.date import DateNormalizer
 from normalizers.email import EmailNormalizer
 from normalizers.money import MoneyNormalizer
 from normalizers.numeric import NumericNormalizer
 from normalizers.passthrough import PassthroughNormalizer
+from normalizers.postcode import PostcodeNormalizer
 from normapi.pg_persistence import PgPersistence
 
 from normapi import clone_executor
@@ -158,9 +160,10 @@ def test_postgres_clone_pipeline_ddl_population_errors_and_resume(
     assert started is True
     job = _wait_for_terminal(persistence, job_id)
     assert job["status"] == "COMPLETED", job.get("error")
-    # 3 customers + 2 clone_source + 3 typed_source: a clone copies EVERY
-    # table in the source database, so adding a fixture table moves this.
-    assert job["progress"]["rows_done"] == 8
+    # 3 customers + 2 clone_source + 3 typed_source + 4 context_source: a
+    # clone copies EVERY table in the source database, so adding a fixture
+    # table moves this.
+    assert job["progress"]["rows_done"] == 12
     assert sorted(job["progress"]["tables_completed"]) == sorted(job["tables"])
 
     with psycopg.connect(dest_dsn) as conn:
@@ -192,7 +195,7 @@ def test_postgres_clone_pipeline_ddl_population_errors_and_resume(
     assert started_again is True
     job = _wait_for_terminal(persistence, job_id)
     assert job["status"] == "COMPLETED"
-    assert job["progress"]["rows_done"] == 8  # unchanged — nothing re-inserted
+    assert job["progress"]["rows_done"] == 12  # unchanged — nothing re-inserted
 
     with psycopg.connect(dest_dsn) as conn:
         assert conn.execute("SELECT count(*) FROM clone_source").fetchone()[0] == 2
@@ -523,8 +526,22 @@ def test_in_place_normalization_swaps_the_real_table(persistence: PgPersistence)
         assert "amounts" in present
         assert staging not in present, "the staging table must not survive the swap"
 
+        # Typed columns are the default, and in-place mode therefore
+        # changes the SOURCE column's type when it swaps: a TEXT column of
+        # "1,234.56" comes back as a real NUMERIC that SUM works on. That
+        # is the loudest consequence of the default, so it is asserted
+        # rather than left implicit.
+        native = conn.execute(
+            "SELECT data_type FROM information_schema.columns "
+            "WHERE table_name = 'amounts' AND column_name = 'amount'"
+        ).fetchone()[0]
+        assert native == "numeric"
+
         rows = conn.execute("SELECT id, amount FROM amounts ORDER BY id").fetchall()
-        assert [r[1] for r in rows] == ["1234.56", "7890.12"]
+        assert [r[1] for r in rows] == [decimal.Decimal("1234.56"), decimal.Decimal("7890.12")]
+        assert conn.execute("SELECT sum(amount) FROM amounts").fetchone()[0] == decimal.Decimal(
+            "9124.68"
+        )
 
         pk_cols = conn.execute(
             "SELECT a.attname FROM pg_index i "
@@ -532,3 +549,130 @@ def test_in_place_normalization_swaps_the_real_table(persistence: PgPersistence)
             "WHERE i.indrelid = 'amounts'::regclass AND i.indisprimary"
         ).fetchall()
         assert [c[0] for c in pk_cols] == ["id"], "the swapped-in table must keep its primary key"
+
+
+def _context_dispatcher() -> Dispatcher:
+    registry = NormalizerRegistry()
+    registry.register(PassthroughNormalizer())
+    registry.register(CountryNormalizer())
+    registry.register(PostcodeNormalizer())
+    registry.register(BooleanNormalizer())
+    return Dispatcher(registry, env_id="test-context-clone")
+
+
+@pytest.mark.integration
+def test_row_country_reaches_the_rest_of_its_row(persistence: PgPersistence) -> None:
+    """Three things at once, because they are one pipeline pass.
+
+    A COUNTRY column's answer now reaches the other columns of its own row
+    as `ctx.country`, which is what POSTCODE was refusing to validate
+    without: the only way `zip` can be reported INVALID here is if the
+    country propagated. `comparison` — the ISO alpha-2 — gets a column of
+    its own instead of being computed and discarded. And a column that
+    normalization emptied is reported at the column level, which nothing
+    said before: measured on a real source, typing one column NULLed 38.5%
+    of it and the clone looked like a column that was merely sparse.
+
+    No job-level country is set deliberately. Everything asserted here
+    comes from the rows themselves.
+    """
+    dest_database = f"clone_ctx_{uuid.uuid4().hex[:8]}"
+    source_conn, dest_conn = _pg_connections(persistence)
+
+    job = clone_executor.create_clone_job(
+        persistence,
+        request={
+            "source_connection_id": source_conn["connection_id"],
+            "source_database": "source_demo",
+            "destination_connection_id": dest_conn["connection_id"],
+            "destination_database": dest_database,
+            # Only what this test configures, so the assertions are about
+            # propagation and not about what inference happened to guess.
+            "autodetect_field_types": False,
+            "field_configs": {
+                "context_source": {
+                    "country": "COUNTRY",
+                    "other_country": "COUNTRY",
+                    "zip": "POSTCODE",
+                    "active": "BOOLEAN",
+                }
+            },
+        },
+    )
+    job_id = job["job_id"]
+    # Typed columns are the default now; `active` proves it without the
+    # request having to ask.
+    assert job["typed_destination_columns"] is True
+    job = _run_to_completion(persistence, _context_dispatcher(), job_id, dest_database)
+
+    dest_dsn = f"postgresql://writable_user:writable_pass@{PG_HOST}:{PG_PORT}/{dest_database}"
+    with psycopg.connect(dest_dsn) as conn:
+        columns = dict(
+            conn.execute(
+                "SELECT column_name, data_type FROM information_schema.columns "
+                "WHERE table_name = 'context_source'"
+            ).fetchall()
+        )
+        assert columns["country_code"] == "text"
+        assert columns["other_country_code"] == "text"
+        assert columns["active"] == "boolean"
+        # POSTCODE has no machine key distinct from its display form, so
+        # it earns no companion — the rule is about `comparison`, not a
+        # column for every semantic type.
+        assert "zip_code" not in columns
+
+        rows = conn.execute(
+            "SELECT id, country, country_code, other_country_code, zip, active "
+            "FROM context_source ORDER BY id"
+        ).fetchall()
+        by_id = {r[0]: r[1:] for r in rows}
+
+        # The original column keeps `display`; the code goes beside it.
+        # Before this, a column named CountryCode held "United States" and
+        # joined against nothing.
+        assert by_id[1][0] == "United States"
+        assert by_id[1][1] == "US"
+        # "US" and "United States" are the same country by different
+        # names, and both land as the same code.
+        assert by_id[1][2] == "US"
+        assert by_id[3][1] == "GB"
+        assert by_id[3][2] == "DE"
+        assert by_id[4][:3] == (None, None, None)
+
+        assert by_id[1][4] is True
+        assert by_id[2][4] is False
+        # "maybe" and "n/a" mean missing, not false.
+        assert by_id[3][4] is None
+        assert by_id[4][4] is None
+
+    errors = persistence.load_clone_job_errors_page(job_id, limit=200, offset=0)
+    ctx_errors = [e for e in errors if e["table_name"] == "context_source"]
+    by_row: dict[int, dict[str, str]] = {}
+    for e in ctx_errors:
+        by_row.setdefault(e["row_index"], {})[e["field"]] = e["error"]
+
+    # Row 2 (offset 1): the propagation this test exists for. A GB
+    # postcode in a US row is INVALID — and POSTCODE can only say that if
+    # it was told US, which only the row's own country column could do.
+    assert "does not match the expected postcode format for US" in by_row[1]["zip"]
+
+    # Row 3 (offset 2): two country columns that disagree. Both are
+    # reported and NEITHER is used, so this row's `zip` is left alone even
+    # though it is a valid GB postcode and one of the two columns said GB.
+    assert "country conflict" in by_row[2]["other_country"]
+    assert "GB" in by_row[2]["other_country"]
+    assert "DE" in by_row[2]["other_country"]
+    assert "zip" not in by_row[2]
+
+    # Row 1 and row 4: a postcode with a country that fits, and a postcode
+    # with no country at all. Neither is an error.
+    assert 0 not in by_row
+    assert "zip" not in by_row.get(3, {})
+
+    # The column-level report, on the one offset no real row can occupy.
+    column_report = by_row[-1]
+    assert "50.0%" in column_report["active"]
+    assert "2/4 values" in column_report["active"]
+    # Columns that lost nothing are not reported — one row per gutted
+    # column, not one per column.
+    assert set(column_report) == {"active"}

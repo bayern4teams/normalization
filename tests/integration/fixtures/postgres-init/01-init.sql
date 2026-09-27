@@ -84,3 +84,31 @@ GRANT SELECT ON typed_source TO readonly_user;
 -- In-place normalization (decision: swap a staging table in) needs a
 -- database the app may WRITE to, which source_demo deliberately is not.
 -- writable_user has CREATEDB, so the test creates and seeds its own.
+
+-- A dedicated table for the normalization-CONTEXT tests. Several
+-- normalizers refuse to guess without a country, and a COUNTRY column in
+-- the same row is the answer they were refusing for lack of:
+--   1: country resolves (US), so `zip` is validated as a US postcode
+--   2: same, and the zip is deliberately not a US format -> a reported
+--      INVALID, which is only reachable IF the country propagated
+--   3: two COUNTRY columns that contradict each other (GB vs DE) ->
+--      reported, and NEITHER is used, so this row's zip stays AMBIGUOUS
+--      even though the zip itself is a perfectly good GB postcode
+--   4: no country anywhere -> the pre-propagation behaviour
+-- `active` exists to be emptied: 2 of its 4 values are neither true nor
+-- false, which is what the column-level null-rate report is for.
+CREATE TABLE IF NOT EXISTS context_source (
+    id SERIAL PRIMARY KEY,
+    country TEXT,
+    other_country TEXT,
+    zip TEXT,
+    active TEXT
+);
+
+INSERT INTO context_source (country, other_country, zip, active) VALUES
+    ('United States',  'US',      '94043',     'yes'),
+    ('United States',  'US',      'SW1A 1AA',  'no'),
+    ('United Kingdom', 'Germany', 'SW1A 1AA',  'maybe'),
+    (NULL,             NULL,      '94043',     'n/a');
+
+GRANT SELECT ON context_source TO readonly_user;

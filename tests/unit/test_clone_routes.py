@@ -17,7 +17,7 @@ from fastapi.testclient import TestClient
 from normapi.app import create_app
 from normapi.dependencies import get_connections
 
-from normapi import secrets
+from normapi import clone_executor, secrets
 
 
 class _FakePersistence:
@@ -218,3 +218,61 @@ def test_start_rejects_job_not_yet_schema_ready(client: TestClient) -> None:
     resp = client.post("/normalization/clone-jobs/job-1/start")
     assert resp.status_code == 409
     assert client.get("/normalization/clone-jobs/job-1").json()["status"] == "PENDING_DB_CREATE"
+
+
+@pytest.mark.unit
+def test_every_request_field_reaches_the_stored_job(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression: the route used to hand-copy 8 of the request's fields
+    into the executor's dict, so `typed_destination_columns` and
+    `in_place` were unreachable over HTTP however they were sent — the
+    request model accepted them and the job never saw them."""
+
+    class _Source:
+        def list_tables(self):
+            return ["Company"]
+
+        def get_columns(self, table):
+            return []
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(clone_executor, "build_source_connector", lambda conn, db: _Source())
+    client.post(
+        "/normalization/connections",
+        json={
+            "engine": "postgres",
+            "host": "localhost",
+            "port": 5432,
+            "username": "u",
+            "password": "p",
+        },
+    )
+    connection_id = client.get("/normalization/connections").json()[0]["connection_id"]
+
+    resp = client.post(
+        "/normalization/clone-jobs",
+        json={
+            "source_connection_id": connection_id,
+            "source_database": "src",
+            "in_place": True,
+            "country": "GB",
+            "locale": "en-GB",
+            "typed_destination_columns": False,
+            "max_new_null_rate": 0.25,
+            "field_configs": {"Company": {"revenue": "MONEY"}},
+        },
+    )
+    assert resp.status_code == 201, resp.text
+
+    job = client.get(f"/normalization/clone-jobs/{resp.json()['job_id']}").json()
+    assert job["in_place"] is True
+    assert job["country"] == "GB"
+    assert job["locale"] == "en-GB"
+    assert job["typed_destination_columns"] is False
+    assert job["max_new_null_rate"] == 0.25
+    # in_place derives the destination from the source rather than taking
+    # it from the request.
+    assert job["destination_database"] == "src"

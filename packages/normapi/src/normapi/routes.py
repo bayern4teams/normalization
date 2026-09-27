@@ -897,20 +897,13 @@ def create_clone_job(
     try:
         job = clone_executor.create_clone_job(
             connections,
-            request={
-                "source_connection_id": body.source_connection_id,
-                "source_database": body.source_database,
-                "destination_connection_id": body.destination_connection_id,
-                "destination_database": body.destination_database,
-                "field_configs": {
-                    table: {
-                        column: (t.value if t is not None else None) for column, t in cols.items()
-                    }
-                    for table, cols in body.field_configs.items()
-                },
-                "autodetect_field_types": body.autodetect_field_types,
-                "normalize_unconfigured_text": body.normalize_unconfigured_text,
-            },
+            # model_dump, not a hand-copied dict: the hand-copied version
+            # listed 8 of the request's fields and silently dropped the
+            # rest, so `typed_destination_columns` and `in_place` were
+            # unreachable over HTTP however they were sent. mode="json"
+            # also does the FieldSemanticType -> str conversion that copy
+            # was doing by hand.
+            request=body.model_dump(mode="json"),
             registry=dispatcher.registry,
         )
     except CloneJobNotFoundError as exc:
