@@ -69,9 +69,20 @@ class SqlConnectorBase:
     source_id: str
     _engine: sa.Engine
 
+    # Which namespace inside the database every table name in this
+    # connector is relative to. None means the connection's own default
+    # (Postgres: the first entry on `search_path`, normally `public`;
+    # MySQL, where a schema IS a database, has nothing else it could be).
+    #
+    # Everything above this layer keeps passing BARE table names, which is
+    # the point: the job's table list, its field_configs, the destination
+    # DDL and the clone's own table names all stay unqualified, so a schema
+    # costs one argument here and no change anywhere else.
+    _schema: str | None = None
+
     def list_tables(self) -> Sequence[str]:
         inspector = sa.inspect(self._engine)
-        return sorted(inspector.get_table_names())
+        return sorted(inspector.get_table_names(schema=self._schema))
 
     def read_table(
         self,
@@ -81,7 +92,7 @@ class SqlConnectorBase:
         batch_size: int = 100_000,
     ) -> Iterator[pa.RecordBatch]:
         metadata = sa.MetaData()
-        sql_table = sa.Table(table, metadata, autoload_with=self._engine)
+        sql_table = sa.Table(table, metadata, schema=self._schema, autoload_with=self._engine)
 
         if columns is not None:
             unknown = set(columns) - {c.name for c in sql_table.columns}

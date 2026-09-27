@@ -843,14 +843,36 @@ def discover_databases(
         source.close()
 
 
+@router.get("/connections/{connection_id}/databases/{database}/schemas", response_model=list[str])
+def discover_schemas(
+    connection_id: str,
+    database: str,
+    connections: Annotated[PgPersistence, Depends(get_connections)],
+) -> list[str]:
+    """Namespaces inside a Postgres database that actually hold tables.
+
+    Empty for ClickHouse, which has no layer between database and table.
+    Worth its own call because table discovery is relative to ONE of these:
+    a source keeping its tables in a named schema answers `[]` to every
+    table query made against the default one."""
+    conn = _resolve_connection(connection_id, None, connections)
+    source = clone_executor.build_source_connector(conn, database)
+    try:
+        lister = getattr(source, "list_schemas", None)
+        return list(lister()) if lister else []
+    finally:
+        source.close()
+
+
 @router.get("/connections/{connection_id}/databases/{database}/tables", response_model=list[str])
 def discover_tables(
     connection_id: str,
     database: str,
     connections: Annotated[PgPersistence, Depends(get_connections)],
+    schema: str | None = None,
 ) -> list[str]:
     conn = _resolve_connection(connection_id, None, connections)
-    source = clone_executor.build_source_connector(conn, database)
+    source = clone_executor.build_source_connector(conn, database, schema)
     try:
         return list(source.list_tables())
     finally:
@@ -871,13 +893,17 @@ def discover_columns(
     connections: Annotated[PgPersistence, Depends(get_connections)],
     limit: int = 100,
     offset: int = 0,
+    schema: str | None = None,
 ) -> list[ColumnInfoResponse]:
     """Paginated — same query-param names and capped page size as
-    `GET /runs/{run_id}/values`."""
+    `GET /runs/{run_id}/values`.
+
+    `schema` must match whatever the table was discovered under: a column
+    lookup in the wrong namespace finds no such table."""
     limit = max(1, min(limit, _MAX_COLUMNS_PAGE_SIZE))
     offset = max(0, offset)
     conn = _resolve_connection(connection_id, None, connections)
-    source = clone_executor.build_source_connector(conn, database)
+    source = clone_executor.build_source_connector(conn, database, schema)
     try:
         columns = source.get_columns(table)
     finally:
@@ -909,6 +935,11 @@ def create_clone_job(
         )
     except CloneJobNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except CloneJobStateError as exc:
+        # A source with nothing to clone. 422, not 500: the request is
+        # well-formed and the server is fine — the database or schema it
+        # names holds no tables, and the detail says where they are.
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     return CloneJobCreateResponse(
         job_id=job["job_id"],
         status=CloneJobStatus(job["status"]),

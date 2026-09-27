@@ -1020,3 +1020,89 @@ def test_the_job_reports_what_each_column_achieved(persistence: PgPersistence) -
 
     assert all(c["not_idempotent"] == 0 for c in quality.values())
     assert persistence.count_clone_job_errors(job_id) == len(errors)
+
+
+def _country_dispatcher() -> Dispatcher:
+    registry = NormalizerRegistry()
+    registry.register(PassthroughNormalizer())
+    registry.register(CountryNormalizer())
+    return Dispatcher(registry, env_id="test-schema-clone")
+
+
+@pytest.mark.integration
+def test_a_table_in_a_named_schema_can_be_cloned(persistence: PgPersistence) -> None:
+    """Every Postgres lookup is relative to a schema, and the default is
+    `public`.
+
+    Measured on a real 13-table source that keeps all of them in a named
+    schema: `list_tables()` returned `[]`, the job was created with no
+    tables, and Phase 2 reported COMPLETED having copied nothing. All four
+    lookups have to honour the schema or none of them can — with it applied
+    to `list_tables` alone the table is discovered and then has no columns,
+    no key and no rows.
+    """
+    dest_database = f"clone_schema_{uuid.uuid4().hex[:8]}"
+    source_conn, dest_conn = _pg_connections(persistence)
+
+    job = clone_executor.create_clone_job(
+        persistence,
+        request={
+            "source_connection_id": source_conn["connection_id"],
+            "source_database": "source_demo",
+            "source_schema": "tenant_b",
+            "destination_connection_id": dest_conn["connection_id"],
+            "destination_database": dest_database,
+            "autodetect_field_types": False,
+            "field_configs": {"scoped_source": {"country": "COUNTRY"}},
+        },
+    )
+    # ONLY that schema's tables, and named without the schema — the bare
+    # name is what the destination DDL and field_configs both use.
+    assert job["tables"] == ["scoped_source"]
+
+    job = _run_to_completion(persistence, _country_dispatcher(), job["job_id"], dest_database)
+    assert job["progress"]["rows_done"] == 3
+
+    dest_dsn = f"postgresql://writable_user:writable_pass@{PG_HOST}:{PG_PORT}/{dest_database}"
+    with psycopg.connect(dest_dsn) as conn:
+        # In `public` of the destination, not in a replicated `tenant_b`.
+        rows = conn.execute("SELECT country FROM public.scoped_source ORDER BY id").fetchall()
+    assert [r[0] for r in rows] == ["United Kingdom", "Germany", "United States"]
+
+
+@pytest.mark.integration
+def test_a_clone_with_nothing_to_clone_fails_instead_of_completing(
+    persistence: PgPersistence,
+) -> None:
+    """The silent half of the same bug, and the worse half.
+
+    With no tables the whole pipeline ran to COMPLETED having created an
+    empty database. One guard at job creation covers every cause — wrong
+    database, no SELECT grants, an empty source, or a schema nobody named —
+    and the message has to say where the tables actually are, or it is true
+    and useless.
+    """
+    source_conn, dest_conn = _pg_connections(persistence)
+    request = {
+        "source_connection_id": source_conn["connection_id"],
+        "source_database": "source_demo",
+        "source_schema": "tenant_b",
+        "destination_connection_id": dest_conn["connection_id"],
+        "destination_database": f"clone_empty_{uuid.uuid4().hex[:8]}",
+        "autodetect_field_types": False,
+        "field_configs": {},
+    }
+
+    with pytest.raises(clone_executor.CloneJobStateError) as exc:
+        clone_executor.create_clone_job(
+            persistence, request={**request, "source_schema": "tenant_empty"}
+        )
+    message = str(exc.value)
+    assert "No tables to clone" in message
+    assert "schema 'tenant_empty'" in message
+
+    # This source's DEFAULT schema does hold tables, so reaching the guard
+    # at all proves the named schema is really what was looked in — and the
+    # same request with a populated schema succeeds.
+    job = clone_executor.create_clone_job(persistence, request=request)
+    assert job["tables"] == ["scoped_source"]

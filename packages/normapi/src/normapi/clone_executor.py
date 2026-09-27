@@ -95,12 +95,15 @@ def bootstrap_database(engine: str) -> str:
 
 
 def build_source_connector(
-    conn: dict[str, Any], database: str
+    conn: dict[str, Any], database: str, schema: str | None = None
 ) -> PostgresConnector | ClickHouseConnector:
+    """`schema` is Postgres-only and names the namespace inside `database`
+    that table names are relative to. ClickHouse has no layer between
+    database and table, so its `database` argument already is this."""
     password = secrets.decrypt(conn["encrypted_password"])
     if conn["engine"] == "postgres":
         dsn = f"postgresql://{conn['username']}:{password}@{conn['host']}:{conn['port']}/{database}"
-        return PostgresConnector(conn["connection_id"], dsn)
+        return PostgresConnector(conn["connection_id"], dsn, schema)
     if conn["engine"] == "clickhouse":
         return ClickHouseConnector(
             conn["connection_id"],
@@ -281,6 +284,45 @@ def _infer_field_configs(
     return inferred
 
 
+def _require_tables(source: Any, tables: list[str], request: Mapping[str, Any]) -> None:
+    """A clone of nothing is a failure, not a success.
+
+    With no tables the whole pipeline runs to `COMPLETED` having created an
+    empty database — the most expensive kind of wrong answer, because
+    nothing anywhere says so. It is one guard here rather than a fix aimed
+    at any single cause, because every cause arrives at the same place:
+    the wrong database, no SELECT grants, a genuinely empty source, or the
+    one measured below.
+
+    Postgres table lookups are relative to a SCHEMA, and the default one is
+    `public`. A real 13-table source kept every table in a named schema, so
+    `list_tables()` returned `[]`, the job was created with no tables, and
+    it reported COMPLETED having copied nothing.
+
+    The schema is NOT guessed, even when exactly one candidate has tables:
+    picking for the operator is the kind of plausible answer this project
+    refuses everywhere else, and with two populated schemas it would pick
+    arbitrarily. The message names the candidates instead.
+    """
+    if tables:
+        return
+    where = f"database {request['source_database']!r}"
+    schema = request.get("source_schema")
+    if schema:
+        where += f", schema {schema!r}"
+    hint = ""
+    if not schema and hasattr(source, "list_schemas"):
+        populated = [s for s in source.list_schemas() if s != "public"]
+        if populated:
+            hint = (
+                f" Tables were found in {', '.join(repr(s) for s in populated)} — "
+                "set `source_schema` to the one you want (one schema per job, "
+                "so that the clone's table names stay unqualified)."
+            )
+    msg = f"No tables to clone in {where}.{hint}"
+    raise CloneJobStateError(msg)
+
+
 def create_clone_job(
     persistence: PgPersistence,
     *,
@@ -296,7 +338,9 @@ def create_clone_job(
     if source_conn is None:
         msg = f"No such connection: {request['source_connection_id']}"
         raise CloneJobNotFoundError(msg)
-    source = build_source_connector(source_conn, request["source_database"])
+    source = build_source_connector(
+        source_conn, request["source_database"], request.get("source_schema")
+    )
     # In-place normalizes the source itself, so the destination is not the
     # caller's to choose — taking it from the request would let a typo
     # write staging tables into some other database and swap nothing.
@@ -311,6 +355,7 @@ def create_clone_job(
     inferred_configs: dict[str, dict[str, str]] = {}
     try:
         tables = list(source.list_tables())
+        _require_tables(source, tables, request)
         if registry is not None and request.get("autodetect_field_types", True):
             inferred_configs = _infer_field_configs(
                 source,
@@ -340,6 +385,12 @@ def create_clone_job(
         "status": CloneJobStatus.PENDING_DB_CREATE.value,
         "source_connection_id": request["source_connection_id"],
         "source_database": request["source_database"],
+        # Saved, not just used at creation: Phase 1 and Phase 2 reopen the
+        # source from the JOB, and a schema that reached only the discovery
+        # read let the tables be found and then not exist. Live run: Phase 1
+        # raised `NoSuchTableError: company` from the destination DDL's key
+        # lookup, after the job had been created listing all 13 tables.
+        "source_schema": request.get("source_schema"),
         "destination_connection_id": destination_connection_id,
         "destination_database": destination_database,
         "tables": tables,
@@ -613,7 +664,7 @@ def plan_job(persistence: PgPersistence, job_id: str) -> dict[str, Any]:
         raise CloneJobNotFoundError(job_id)
     dest_conn = _require_connection(persistence, job["destination_connection_id"])
     source_conn = _require_connection(persistence, job["source_connection_id"])
-    source = build_source_connector(source_conn, job["source_database"])
+    source = build_source_connector(source_conn, job["source_database"], job.get("source_schema"))
     inferred = job.get("inferred_field_configs", {})
     tables = []
     try:
@@ -754,7 +805,9 @@ def verify_and_create_schema(persistence: PgPersistence, job_id: str) -> dict[st
             raise CloneJobStateError(msg)
 
         source_conn = _require_connection(persistence, job["source_connection_id"])
-        source = build_source_connector(source_conn, job["source_database"])
+        source = build_source_connector(
+            source_conn, job["source_database"], job.get("source_schema")
+        )
         destination_plan: dict[str, dict[str, dict[str, str]]] = {}
         try:
             for table in job["tables"]:
@@ -1942,7 +1995,7 @@ def _run_phase2(
         raise CloneJobNotFoundError(job_id)
     source_conn = _require_connection(persistence, job["source_connection_id"])
     dest_conn = _require_connection(persistence, job["destination_connection_id"])
-    source = build_source_connector(source_conn, job["source_database"])
+    source = build_source_connector(source_conn, job["source_database"], job.get("source_schema"))
     dest = build_destination_writer(dest_conn)
     # `cache` is deliberately NOT passed to the planner. The persistent
     # (DuckDB) tier stores one row per distinct value forever, which the

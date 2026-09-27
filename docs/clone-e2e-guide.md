@@ -120,6 +120,20 @@ a saved connection (decision #13) — it's picked fresh on the next screen.
 1. **Source connection** → the read-only one. **Source database** →
    picked from a live, server-queried dropdown (decision #1 — never a
    network port scan).
+   - **Postgres: `source_schema`.** Every Postgres table lookup is
+     relative to a schema, and the default is `public`. If your tables
+     live in a named schema, set it — `GET
+     /connections/{id}/databases/{db}/schemas` lists the ones that
+     actually hold tables. One schema per job, so the clone's own table
+     names stay unqualified: `diffbot.company` is cloned as `company` in
+     the destination's `public`.
+   - Leave it unset for ClickHouse, which has no layer between database
+     and table.
+   - **A job with no tables is rejected** (422) rather than created. It
+     used to be created, create nothing in Phase 1, and report
+     `COMPLETED` — the most expensive kind of wrong answer, because
+     nothing said so. The error names the schemas that do hold tables;
+     it does not pick one for you, even when there is only one candidate.
 2. **Destination connection** → the write-capable one. **Destination
    database** → a *new* name you choose (e.g. `your_origin_db_clone`) —
    you'll create it yourself in the next step.
@@ -405,6 +419,7 @@ psql "postgresql://norm_writable:...@YOUR_HOST:5432/your_origin_db_clone" \
 
 | Symptom | Cause |
 |---|---|
+| `POST /clone-jobs` returns 422 "No tables to clone" | The database (or the schema, on Postgres) holds no tables the connection can see. The detail names the schemas that do — set `source_schema`. Wrong database and missing SELECT grants land here too |
 | Discovery/clone-job routes 503 | `NORM_PG_DSN` isn't configured for the `api` process — the clone feature needs the app's own metadata Postgres (decisions #10's resumability requires durable storage, no in-memory fallback exists for this feature) |
 | `connection failed` / `Connection refused` from the API | Wrong host for where the API actually runs — `localhost` inside the `api` container means the container, not your host or another container; use the Docker network service name or the machine's real address (§1a/§1b above) |
 | `CREATE DATABASE` step never appears / Verify fails with "does not exist yet" | You haven't run the `CREATE DATABASE` command shown on the job page yet, or ran it against the wrong server/credential |

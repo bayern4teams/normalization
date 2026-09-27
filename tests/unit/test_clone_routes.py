@@ -17,6 +17,7 @@ from cryptography.fernet import Fernet
 from fastapi.testclient import TestClient
 from normapi.app import create_app
 from normapi.dependencies import get_connections
+from normapi.schemas import CloneJobCreateRequest
 from normio.connector import ColumnInfo
 
 from normapi import clone_executor, secrets
@@ -226,14 +227,43 @@ def test_start_rejects_job_not_yet_schema_ready(client: TestClient) -> None:
     assert client.get("/normalization/clone-jobs/job-1").json()["status"] == "PENDING_DB_CREATE"
 
 
+# Request fields that deliberately do NOT appear verbatim on the job, each
+# with the reason it cannot:
+_NOT_STORED = frozenset(
+    {
+        # in_place derives both from the source, so the request's values
+        # are ignored on purpose.
+        "destination_connection_id",
+        "destination_database",
+        # Creation-time switches: they decide what `field_configs` ends up
+        # containing and mean nothing afterwards.
+        "autodetect_field_types",
+        "normalize_unconfigured_text",
+        # Stored MERGED with what detection inferred, so it is not the
+        # value that was sent.
+        "field_configs",
+    }
+)
+
+
 @pytest.mark.unit
 def test_every_request_field_reaches_the_stored_job(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Regression: the route used to hand-copy 8 of the request's fields
-    into the executor's dict, so `typed_destination_columns` and
-    `in_place` were unreachable over HTTP however they were sent — the
-    request model accepted them and the job never saw them."""
+    """Regression, twice over: the route used to hand-copy 8 of the
+    request's fields into the executor's dict, so
+    `typed_destination_columns` and `in_place` were unreachable over HTTP
+    however they were sent. Then `source_schema` was added and reached the
+    discovery read but not the SAVED job, so Phase 1 reopened the source
+    without it and raised `NoSuchTableError` on a table the job had just
+    listed.
+
+    So the expectation is derived from `CloneJobCreateRequest` rather than
+    written out: a field added to the model and never stored fails here
+    until someone either stores it or says in `_NOT_STORED` why not. A
+    hand-written list of assertions has the same failure mode as the
+    hand-written dict it is guarding.
+    """
 
     class _Source:
         def list_tables(self):
@@ -251,7 +281,9 @@ def test_every_request_field_reaches_the_stored_job(
         def close(self):
             pass
 
-    monkeypatch.setattr(clone_executor, "build_source_connector", lambda conn, db: _Source())
+    monkeypatch.setattr(
+        clone_executor, "build_source_connector", lambda conn, db, schema=None: _Source()
+    )
     client.post(
         "/normalization/connections",
         json={
@@ -264,27 +296,32 @@ def test_every_request_field_reaches_the_stored_job(
     )
     connection_id = client.get("/normalization/connections").json()[0]["connection_id"]
 
-    resp = client.post(
-        "/normalization/clone-jobs",
-        json={
-            "source_connection_id": connection_id,
-            "source_database": "src",
-            "in_place": True,
-            "country": "GB",
-            "locale": "en-GB",
-            "typed_destination_columns": False,
-            "max_new_null_rate": 0.25,
-            "field_configs": {"Company": {"revenue": "MONEY"}},
-        },
-    )
+    sent = {
+        "source_connection_id": connection_id,
+        "source_database": "src",
+        "source_schema": "diffbot",
+        "in_place": True,
+        "country": "GB",
+        "locale": "en-GB",
+        "typed_destination_columns": False,
+        "max_new_null_rate": 0.25,
+        "cross_table_entity_key": "companyID",
+        "field_configs": {"Company": {"revenue": "MONEY"}},
+    }
+    resp = client.post("/normalization/clone-jobs", json=sent)
     assert resp.status_code == 201, resp.text
 
     job = client.get(f"/normalization/clone-jobs/{resp.json()['job_id']}").json()
-    assert job["in_place"] is True
-    assert job["country"] == "GB"
-    assert job["locale"] == "en-GB"
-    assert job["typed_destination_columns"] is False
-    assert job["max_new_null_rate"] == 0.25
+    for field, value in sent.items():
+        if field in _NOT_STORED:
+            continue
+        assert job[field] == value, f"{field} did not reach the stored job"
+
+    # Every field on the model is either sent above or deliberately not
+    # stored — so adding one cannot quietly skip this test either.
+    unchecked = set(CloneJobCreateRequest.model_fields) - set(sent) - _NOT_STORED
+    assert unchecked == set(), f"new request field(s) not covered here: {sorted(unchecked)}"
+
     # in_place derives the destination from the source rather than taking
     # it from the request.
     assert job["destination_database"] == "src"
@@ -316,7 +353,9 @@ class _PlanSource:
 
 
 def _plan_job(client: TestClient, monkeypatch: pytest.MonkeyPatch, **overrides: Any) -> str:
-    monkeypatch.setattr(clone_executor, "build_source_connector", lambda conn, db: _PlanSource())
+    monkeypatch.setattr(
+        clone_executor, "build_source_connector", lambda conn, db, schema=None: _PlanSource()
+    )
     client.post(
         "/normalization/connections",
         json={

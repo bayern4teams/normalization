@@ -195,6 +195,12 @@ class CloneJobCreateRequest(BaseModel):
 
     source_connection_id: str
     source_database: str
+    # Postgres only: the namespace inside `source_database` that table names
+    # are relative to. Unset uses the connection's default (`public`), which
+    # is why a source keeping its tables in a named schema used to produce a
+    # job with no tables that still reported COMPLETED. One schema per job,
+    # so the clone's own table names stay unqualified.
+    source_schema: str | None = None
     # Empty is valid only for in_place, which derives both from the
     # source (see the validator below).
     destination_connection_id: str = ""

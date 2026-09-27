@@ -246,3 +246,27 @@ INSERT INTO quality_source (zip_no_country, bad_country, messy_company) VALUES
 
 GRANT SELECT ON keyed_email TO readonly_user;
 GRANT SELECT ON quality_source TO readonly_user;
+
+-- Postgres table lookups are relative to a SCHEMA, and the default is
+-- `public`. A real 13-table source kept every table in a named schema, so
+-- `list_tables()` answered `[]` and the clone reported COMPLETED having
+-- copied nothing. Same table NAME as a public one on purpose: bare names
+-- are what the job carries, so a lookup in the wrong namespace must not
+-- silently find the other table.
+CREATE SCHEMA IF NOT EXISTS tenant_b;
+
+CREATE TABLE IF NOT EXISTS tenant_b.scoped_source (
+    id SERIAL PRIMARY KEY,
+    country TEXT
+);
+
+INSERT INTO tenant_b.scoped_source (country) VALUES
+    ('united kingdom'), ('DEU'), ('U.S.');
+
+-- An existing but EMPTY schema, so the "nothing to clone" guard can be
+-- reached without depending on a wrong database or missing grants.
+CREATE SCHEMA IF NOT EXISTS tenant_empty;
+GRANT USAGE ON SCHEMA tenant_empty TO readonly_user;
+
+GRANT USAGE ON SCHEMA tenant_b TO readonly_user;
+GRANT SELECT ON ALL TABLES IN SCHEMA tenant_b TO readonly_user;
