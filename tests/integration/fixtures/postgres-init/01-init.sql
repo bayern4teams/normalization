@@ -171,3 +171,40 @@ INSERT INTO mistyped_source (looks_like_a_country)
 SELECT 'Country located primarily in North America ' || i FROM generate_series(1, 25) AS i;
 
 GRANT SELECT ON mistyped_source TO readonly_user;
+
+-- The entity map's signal sources beyond a COUNTRY column. Neither table
+-- here has a COUNTRY column at all: the country comes from a phone that
+-- carries its own +CC and from a postcode only one country's format
+-- accepts, and reaches the OTHER table through the entity id.
+--
+--   entity 1: phone says +44 -> GB, so `zip` is validated as GB. The zip
+--             is a valid GB postcode, so it passes.
+--   entity 2: postcode 'M5V 3L9' is Canadian and nothing else, so the
+--             bare local phone parses as CA.
+--   entity 3: phone has no +CC and the postcode is a bare five-digit
+--             number valid in 56 countries — no signal either way, which
+--             is the honest answer rather than the most populous guess.
+CREATE TABLE IF NOT EXISTS signal_phone (
+    id SERIAL PRIMARY KEY,
+    entity_key INTEGER,
+    tel TEXT
+);
+
+INSERT INTO signal_phone (entity_key, tel) VALUES
+    (1, '+44 20 7930 4832'),
+    (2, '416 392 2489'),
+    (3, '555 0100');
+
+CREATE TABLE IF NOT EXISTS signal_zip (
+    id SERIAL PRIMARY KEY,
+    entity_key TEXT,
+    zip TEXT
+);
+
+INSERT INTO signal_zip (entity_key, zip) VALUES
+    ('1', 'SW1A 1AA'),
+    ('2', 'M5V 3L9'),
+    ('3', '94043');
+
+GRANT SELECT ON signal_phone TO readonly_user;
+GRANT SELECT ON signal_zip TO readonly_user;

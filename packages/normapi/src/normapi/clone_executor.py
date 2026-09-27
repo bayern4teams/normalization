@@ -33,6 +33,7 @@ import uuid
 from concurrent.futures import ProcessPoolExecutor
 from typing import TYPE_CHECKING, Any
 
+from normalizers.postcode_validation import country_from_postcode_format
 from normanalysis.type_detection import suggest_semantic_type
 from normexec.planner import DistinctValuePlanner
 from normio.connectors import (
@@ -57,7 +58,7 @@ from normcore import (
 from normio import storage_types
 
 if TYPE_CHECKING:
-    from collections.abc import Collection, Mapping
+    from collections.abc import Callable, Collection, Mapping
 
     from normcore.dispatch import NormalizerRegistry
     from normexec.cache import NormalizationCache
@@ -398,6 +399,55 @@ def is_stale(job: Mapping[str, Any], *, now: dt.datetime | None = None) -> bool:
 
 _MONEY = FieldSemanticType.MONEY.value
 _COUNTRY = FieldSemanticType.COUNTRY.value
+
+
+def _country_from_country(result: NormalizedValue) -> str | None:
+    return result.structured.get("alpha2")
+
+
+def _country_from_phone(result: NormalizedValue) -> str | None:
+    """Only when the NUMBER said so. `region_source` is `number_prefix`
+    when the value carried its own +CC, and `explicit`/`default_region`
+    when the region came from context — trusting those would feed a
+    country back to itself. Measured on a real source: 247,469 of
+    1,021,941 phone numbers (24.2%) carry their own country code."""
+    if result.structured.get("region_source") != "number_prefix":
+        return None
+    region = result.structured.get("region")
+    return region if isinstance(region, str) else None
+
+
+def _country_from_postcode(result: NormalizedValue) -> str | None:
+    """`comparison` is the uppercased form the format rules expect. Returns
+    a country only where exactly one country's postcode format fits, so a
+    bare five-digit number (valid in 56 countries) yields nothing."""
+    if result.comparison is None:
+        return None
+    return country_from_postcode_format(result.comparison)
+
+
+# What a normalized value of each semantic type can say about which country
+# its row is in. One table so a new signal is one entry, not a fourth place
+# that knows how to read `structured`.
+#
+# Deliberately NOT here:
+#   - URL/domain ccTLD. No authoritative source separates national from
+#     generic ccTLD use, and a two-letter TLD looked up as an alpha-2 puts
+#     `.io` in the British Indian Ocean Territory, `.co` in Colombia (6,281
+#     domains on one real source), `.me` in Montenegro, `.tv` in Tuvalu and
+#     `.ai` in Anguilla. The alternative is a hand-written exclusion list
+#     that grows one found example at a time, which is what this codebase
+#     prefers authoritative data over.
+#   - ADDRESS. libpostal does return a country, but as a raw string
+#     ("USA", "united states") needing a second normalization pass. Cheap
+#     to add here once that is worth a dispatcher call per distinct
+#     address.
+_COUNTRY_FROM: dict[FieldSemanticType, Callable[[NormalizedValue], str | None]] = {
+    FieldSemanticType.COUNTRY: _country_from_country,
+    FieldSemanticType.PHONE: _country_from_phone,
+    FieldSemanticType.POSTCODE: _country_from_postcode,
+}
+_SIGNAL_TYPE_VALUES = frozenset(t.value for t in _COUNTRY_FROM)
 _TEXT_TYPE = {"postgres": "TEXT", "clickhouse": "String"}
 
 
@@ -446,6 +496,190 @@ def _require_connection(persistence: PgPersistence, connection_id: str) -> dict[
     return connection
 
 
+def plan_one_table(
+    source: Any,
+    dest_engine: str,
+    table: str,
+    job: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Everything Phase 1 needs to know about one table before it writes
+    any DDL, and everything a reviewer needs to see to know what it will
+    write.
+
+    Both callers go through here rather than each deriving it, because a
+    preview that merely resembles the DDL is worse than no preview: it
+    invites sign-off on something else. The only thing Phase 1 adds is
+    executing it.
+    """
+    semantic_types = {
+        column: semantic_type
+        for column, semantic_type in job["field_configs"].get(table, {}).items()
+        if semantic_type
+    }
+    table_engine: str | None = None
+    if isinstance(source, ClickHouseConnector):
+        table_engine, key_columns = source.get_table_engine_info(table)
+    else:
+        key_columns = list(source.get_primary_key(table))
+    overrides, extras, typed_columns = _destination_plan(
+        semantic_types,
+        dest_engine,
+        key_columns,
+        typed=job.get("typed_destination_columns", True),
+    )
+    return {
+        "columns": source.get_columns(table),
+        "semantic_types": semantic_types,
+        "key_columns": key_columns,
+        "table_engine": table_engine,
+        "column_overrides": overrides,
+        "extra_columns": extras,
+        "typed_columns": typed_columns,
+        "currency_columns": {
+            column: f"{column}{_CURRENCY_SUFFIX}"
+            for column, st in semantic_types.items()
+            if st == _MONEY
+        },
+        "code_columns": {
+            column: f"{column}{_CODE_SUFFIX}"
+            for column, st in semantic_types.items()
+            if st in _CODE_TYPES
+        },
+    }
+
+
+def plan_job(persistence: PgPersistence, job_id: str) -> dict[str, Any]:
+    """The whole plan, per table and per column, WITHOUT executing any of
+    it — what autodetect decided, where each decision came from, what
+    native type each column will get, and which companion columns will
+    appear.
+
+    This exists because detection is the part of a clone nobody could see.
+    On a real 13-table source it claimed 8 columns out of 114 and missed
+    the two highest-value ones, and the only trace was a JSON blob on the
+    job. Signing off on a clone meant running it and reading the result.
+
+    Read-only: it opens the SOURCE (as the read-only credential) and reads
+    the destination's ENGINE off the saved connection row without
+    connecting — the destination database need not exist yet, which is the
+    whole point of reviewing before `CREATE DATABASE`.
+    """
+    job = persistence.get_clone_job(job_id)
+    if job is None:
+        raise CloneJobNotFoundError(job_id)
+    dest_conn = _require_connection(persistence, job["destination_connection_id"])
+    source_conn = _require_connection(persistence, job["source_connection_id"])
+    source = build_source_connector(source_conn, job["source_database"])
+    inferred = job.get("inferred_field_configs", {})
+    tables = []
+    try:
+        for table in job["tables"]:
+            plan = plan_one_table(source, dest_conn["engine"], table, job)
+            companions = {**plan["currency_columns"], **plan["code_columns"]}
+            tables.append(
+                {
+                    "table": table,
+                    "destination_table": (staging_name(table) if job.get("in_place") else table),
+                    "table_engine": plan["table_engine"],
+                    "key_columns": list(plan["key_columns"]),
+                    "columns": [
+                        {
+                            "column": column.name,
+                            "source_type": column.native_type,
+                            "semantic_type": plan["semantic_types"].get(column.name),
+                            # EXPLICIT beats INFERRED beats nothing — the
+                            # distinction a reviewer is actually here for.
+                            "decided_by": _decided_by(
+                                column.name, plan["semantic_types"], inferred.get(table, {})
+                            ),
+                            "destination_type": plan["column_overrides"].get(column.name),
+                            "companion_column": companions.get(column.name),
+                        }
+                        for column in plan["columns"]
+                    ],
+                    "extra_columns": plan["extra_columns"],
+                }
+            )
+    finally:
+        source.close()
+    return {
+        "job_id": job_id,
+        "status": job["status"],
+        "amendable": job["status"] == CloneJobStatus.PENDING_DB_CREATE.value,
+        "country": job.get("country"),
+        "locale": job.get("locale"),
+        "typed_destination_columns": job.get("typed_destination_columns", True),
+        "cross_table_entity_key": job.get("cross_table_entity_key"),
+        "max_new_null_rate": job.get("max_new_null_rate"),
+        "in_place": job.get("in_place", False),
+        "tables": tables,
+    }
+
+
+def _decided_by(
+    column: str, semantic_types: Mapping[str, str], inferred: Mapping[str, str]
+) -> str | None:
+    if column not in semantic_types:
+        return None
+    return "INFERRED" if column in inferred else "EXPLICIT"
+
+
+def amend_clone_job(
+    persistence: PgPersistence, job_id: str, changes: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Apply a reviewer's changes to a job that has not built anything yet.
+
+    Only before Phase 1: after it, the DDL has been executed and the
+    destination's columns are what they are, so changing the plan would
+    make the job's own record disagree with the tables it already created.
+
+    `field_configs` MERGES per table and per column, so amending one column
+    does not silently drop the other 113 that autodetect got right. An
+    explicit null clears a column back to passthrough, which is the only
+    way to say "do not normalize this one" — omitting it means "leave it as
+    planned".
+    """
+    job = persistence.get_clone_job(job_id)
+    if job is None:
+        raise CloneJobNotFoundError(job_id)
+    if job["status"] != CloneJobStatus.PENDING_DB_CREATE.value:
+        msg = (
+            f"Clone job {job_id} is {job['status']}; the plan can only be amended while it is "
+            f"{CloneJobStatus.PENDING_DB_CREATE.value}, before any table has been created."
+        )
+        raise CloneJobStateError(msg)
+
+    field_configs = changes.get("field_configs")
+    if field_configs is not None:
+        merged = {table: dict(columns) for table, columns in job["field_configs"].items()}
+        for table, columns in field_configs.items():
+            merged.setdefault(table, {}).update(columns)
+            # A null means passthrough; keeping the key would make Phase 2
+            # try to build a FieldSemanticType out of None.
+            merged[table] = {c: t for c, t in merged[table].items() if t}
+        job["field_configs"] = merged
+
+    for field in _AMENDABLE_FIELDS:
+        if field in changes:
+            job[field] = changes[field]
+
+    persistence.save_clone_job(job_id, job)
+    return job
+
+
+# Everything a review can change. Deliberately excludes the connections,
+# the databases, `in_place` and the table list: those are what the job IS,
+# and a job pointed somewhere else is a different job — cheap to create,
+# since nothing has been built yet.
+_AMENDABLE_FIELDS = (
+    "country",
+    "locale",
+    "typed_destination_columns",
+    "max_new_null_rate",
+    "cross_table_entity_key",
+)
+
+
 def verify_and_create_schema(persistence: PgPersistence, job_id: str) -> dict[str, Any]:
     """Phase 1 (decision #5): verifies the user has run the returned
     `CREATE DATABASE` command, then creates every table completely empty
@@ -480,54 +714,40 @@ def verify_and_create_schema(persistence: PgPersistence, job_id: str) -> dict[st
         destination_plan: dict[str, dict[str, dict[str, str]]] = {}
         try:
             for table in job["tables"]:
-                columns = source.get_columns(table)
+                plan = plan_one_table(source, dest_conn["engine"], table, job)
                 # In-place: build beside the original, swap in Phase 2.
                 # A leftover staging table from an abandoned run would
                 # make CREATE TABLE fail, so it is cleared first.
                 target = staging_name(table) if in_place else table
                 if in_place:
                     dest.drop_table(job["destination_database"], target)
-                semantic_types = {
-                    column: semantic_type
-                    for column, semantic_type in job["field_configs"].get(table, {}).items()
-                    if semantic_type
+                shared = {
+                    "semantic_types": plan["semantic_types"],
+                    "column_overrides": plan["column_overrides"],
+                    "extra_columns": plan["extra_columns"],
                 }
-                engine = dest_conn["engine"]
-                typed = job.get("typed_destination_columns", True)
                 # isinstance, not `engine == "postgres"`: the two branches
                 # call methods that exist on only one connector/destination
                 # each, and the engine string is opaque to the type checker
                 # even though it does decide which pair was built.
                 if isinstance(source, PostgresConnector) and isinstance(dest, PostgresDestination):
-                    primary_key = source.get_primary_key(table)
-                    overrides, extras, typed_columns = _destination_plan(
-                        semantic_types, engine, primary_key, typed=typed
-                    )
                     dest.create_table(
                         job["destination_database"],
                         target,
-                        columns,
-                        primary_key=primary_key,
-                        semantic_types=semantic_types,
-                        column_overrides=overrides,
-                        extra_columns=extras,
+                        plan["columns"],
+                        primary_key=plan["key_columns"],
+                        **shared,
                     )
                 elif isinstance(source, ClickHouseConnector) and isinstance(
                     dest, ClickHouseDestination
                 ):
-                    engine_name, order_by = source.get_table_engine_info(table)
-                    overrides, extras, typed_columns = _destination_plan(
-                        semantic_types, engine, order_by, typed=typed
-                    )
                     dest.create_table(
                         job["destination_database"],
                         target,
-                        columns,
-                        order_by=order_by,
-                        engine=engine_name,
-                        semantic_types=semantic_types,
-                        column_overrides=overrides,
-                        extra_columns=extras,
+                        plan["columns"],
+                        order_by=plan["key_columns"],
+                        engine=plan["table_engine"],
+                        **shared,
                     )
                 else:
                     msg = (
@@ -540,17 +760,9 @@ def verify_and_create_schema(persistence: PgPersistence, job_id: str) -> dict[st
                 # agree with the DDL that was actually executed here, even
                 # if the source's keys or the job's flags changed since.
                 destination_plan[table] = {
-                    "typed_columns": typed_columns,
-                    "currency_columns": {
-                        column: f"{column}{_CURRENCY_SUFFIX}"
-                        for column, st in semantic_types.items()
-                        if st == _MONEY
-                    },
-                    "code_columns": {
-                        column: f"{column}{_CODE_SUFFIX}"
-                        for column, st in semantic_types.items()
-                        if st in _CODE_TYPES
-                    },
+                    "typed_columns": plan["typed_columns"],
+                    "currency_columns": plan["currency_columns"],
+                    "code_columns": plan["code_columns"],
                 }
         finally:
             source.close()
@@ -903,7 +1115,7 @@ def _record_country_signal(
     first, or the more confident, is exactly the guess this codebase does
     not make.
     """
-    alpha2 = result.structured.get("alpha2")
+    alpha2 = _COUNTRY_FROM[FieldSemanticType.COUNTRY](result)
     if not alpha2:
         return
     seen = signals.setdefault(offset, (column, alpha2))
@@ -1011,8 +1223,9 @@ def _build_entity_country_map(
     planner: DistinctValuePlanner,
     key_column: str,
 ) -> tuple[dict[str, str], dict[str, int]]:
-    """`entity id -> alpha-2`, read from every COUNTRY column that sits in a
-    table also carrying `key_column`.
+    """`entity id -> alpha-2`, read from every column that can name a
+    country (`_COUNTRY_FROM`) sitting in a table that also carries
+    `key_column`.
 
     This is the cross-table half of within-row country propagation. A
     company's country lives in its Location rows; the phone that needs a
@@ -1028,36 +1241,47 @@ def _build_entity_country_map(
     Entities whose rows disagree about the country are dropped, not
     resolved: on a real 1.76M-row source, 1,565,512 entities had exactly
     one country and 741 (0.047%) had two, and picking one of those two is
-    the guess this codebase does not make.
+    the guess this codebase does not make. "Disagree" is judged within one
+    rank — see the scan ordering below.
     """
     mapping: dict[str, str] = {}
     conflicted: set[str] = set()
+    stated: set[str] = set()
     alpha2_of: dict[str, str | None] = {}
     counts = {"entities": 0, "conflicts": 0, "over_cap": 0}
 
-    for table in job["tables"]:
-        country_columns = [
-            column
-            for column, semantic_type in job["field_configs"].get(table, {}).items()
-            if semantic_type == _COUNTRY
-        ]
-        if not country_columns:
+    scans = [
+        (table, column, FieldSemanticType(semantic_type))
+        for table in job["tables"]
+        for column, semantic_type in job["field_configs"].get(table, {}).items()
+        if semantic_type in _SIGNAL_TYPE_VALUES
+    ]
+    # A COUNTRY column STATES the entity's country; a phone or a postcode
+    # only IMPLIES one, and a company legitimately has phone numbers in
+    # several countries while having one registered country. So the stated
+    # signals are read first and an implied one never overrides or
+    # contradicts them — without this ordering, one +1 number in a company's
+    # contact rows silently dropped its stated GB.
+    scans.sort(key=lambda scan: scan[2] is not FieldSemanticType.COUNTRY)
+    available: dict[str, set[str]] = {}
+    for table, column, semantic_type in scans:
+        if table not in available:
+            available[table] = {c.name for c in source.get_columns(table)}
+        if key_column not in available[table]:
             continue
-        available = {c.name for c in source.get_columns(table)}
-        if key_column not in available:
-            continue
-        for column in country_columns:
-            _scan_entity_countries(
-                source,
-                table,
-                key_column=key_column,
-                country_column=column,
-                planner=planner,
-                mapping=mapping,
-                conflicted=conflicted,
-                alpha2_of=alpha2_of,
-                counts=counts,
-            )
+        _scan_entity_countries(
+            source,
+            table,
+            key_column=key_column,
+            signal_column=column,
+            semantic_type=semantic_type,
+            planner=planner,
+            mapping=mapping,
+            conflicted=conflicted,
+            stated=stated,
+            alpha2_of=alpha2_of,
+            counts=counts,
+        )
 
     counts["entities"] = len(mapping)
     counts["conflicts"] = len(conflicted)
@@ -1069,46 +1293,58 @@ def _scan_entity_countries(
     table: str,
     *,
     key_column: str,
-    country_column: str,
+    signal_column: str,
+    semantic_type: FieldSemanticType,
     planner: DistinctValuePlanner,
     mapping: dict[str, str],
     conflicted: set[str],
+    stated: set[str],
     alpha2_of: dict[str, str | None],
     counts: dict[str, int],
 ) -> None:
-    """One (table, country column) pass. `alpha2_of` caches the country
-    normalization across batches and tables — a real source had 617
-    distinct country strings behind 1.76M rows, so this is a few hundred
-    dispatcher calls for the whole scan."""
+    """One (table, signal column) pass, for any column type that can say
+    which country its row is in — see `_COUNTRY_FROM`.
+
+    The context carries no country on purpose: a PHONE must say
+    `number_prefix` (the number's own +CC) to be trusted here, and handing
+    it a country would make it say `explicit` instead and feed a country
+    straight back to itself.
+
+    `alpha2_of` caches the extraction per distinct raw value, across
+    batches and tables — a real source had 617 distinct country strings
+    and 149,261 distinct postcodes behind 1.76M rows, so the scan costs
+    one dispatcher call per distinct value, not per row."""
+    extract = _COUNTRY_FROM[semantic_type]
+    implied = semantic_type is not FieldSemanticType.COUNTRY
     ctx = NormalizationContext(
-        field_name=country_column,
-        semantic_type=FieldSemanticType.COUNTRY,
+        field_name=signal_column,
+        semantic_type=semantic_type,
         table=table,
         error_policy=ErrorPolicy.RETURN_ORIGINAL,
         include_trace=False,
     )
     for batch in source.read_table(
-        table, columns=[key_column, country_column], batch_size=SOURCE_READ_BATCH_ROWS
+        table, columns=[key_column, signal_column], batch_size=SOURCE_READ_BATCH_ROWS
     ):
         rows = batch.to_pylist()
         unseen = {
-            row[country_column]
+            row[signal_column]
             for row in rows
-            if row[country_column] is not None and row[country_column] not in alpha2_of
+            if row[signal_column] is not None and row[signal_column] not in alpha2_of
         }
         if unseen:
             resolved = _normalize_distinct(
                 None,
                 planner,
                 list(unseen),
-                semantic_type=FieldSemanticType.COUNTRY,
+                semantic_type=semantic_type,
                 context=ctx,
                 profile=SCAFFOLD_PROFILE,
             )
             for value, result in resolved.items():
-                alpha2_of[value] = result.structured.get("alpha2")
+                alpha2_of[value] = extract(result)
         for row in rows:
-            key, raw = row[key_column], row[country_column]
+            key, raw = row[key_column], row[signal_column]
             if key is None or raw is None:
                 continue
             alpha2 = alpha2_of.get(raw)
@@ -1118,15 +1354,18 @@ def _scan_entity_countries(
             # Nullable(Int64) in another on a real source, so the map is
             # keyed by the one form both sides agree on.
             entity = str(key)
-            if entity in conflicted:
+            if entity in conflicted or (implied and entity in stated):
                 continue
             seen = mapping.setdefault(entity, alpha2)
             if seen != alpha2:
                 del mapping[entity]
                 conflicted.add(entity)
+                stated.discard(entity)
             elif len(mapping) > _ENTITY_MAP_MAX:
                 del mapping[entity]
                 counts["over_cap"] += 1
+            elif not implied:
+                stated.add(entity)
 
 
 # Real rows report under their own source-row offset, which is always >= 0.
@@ -1202,6 +1441,13 @@ def _normalize_chunk(
         key=lambda item: item[1] is not FieldSemanticType.COUNTRY,
     )
     for column, semantic_type in country_first:
+        # COUNTRY only, even though PHONE and POSTCODE can also name a
+        # country (`_COUNTRY_FROM`). Those two also CONSUME one, so making
+        # them within-row providers would mean normalizing them before the
+        # row's own COUNTRY column is known — losing the country they
+        # currently get from it, which is worth 73.8 points of E.164
+        # coverage on a real source. They feed the cross-table entity map
+        # instead, which is built in its own pass and has no such ordering.
         provides_country = semantic_type is FieldSemanticType.COUNTRY
         # No country column resolved anything (or there is none), so this
         # is one group with the job-level country — identical to the

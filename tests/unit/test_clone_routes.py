@@ -10,12 +10,14 @@ routes/`clone_executor` call (real DB behavior is proven separately by
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 from cryptography.fernet import Fernet
 from fastapi.testclient import TestClient
 from normapi.app import create_app
 from normapi.dependencies import get_connections
+from normio.connector import ColumnInfo
 
 from normapi import clone_executor, secrets
 
@@ -110,6 +112,7 @@ def test_clone_routes_published_in_openapi_schema() -> None:
         "/normalization/connections/{connection_id}/databases/{database}/tables/{table}/columns",
         "/normalization/clone-jobs",
         "/normalization/clone-jobs/{job_id}",
+        "/normalization/clone-jobs/{job_id}/plan",
         "/normalization/clone-jobs/{job_id}/verify-database",
         "/normalization/clone-jobs/{job_id}/start",
         "/normalization/clone-jobs/{job_id}/errors",
@@ -276,3 +279,166 @@ def test_every_request_field_reaches_the_stored_job(
     # in_place derives the destination from the source rather than taking
     # it from the request.
     assert job["destination_database"] == "src"
+
+
+class _PlanSource:
+    """A source with just enough shape for the plan preview: columns, a
+    primary key, and nothing writable."""
+
+    def __init__(self) -> None:
+        self._columns = [
+            ColumnInfo(name="companyID", native_type="text"),
+            ColumnInfo(name="revenue", native_type="text"),
+            ColumnInfo(name="CountryCode", native_type="text"),
+            ColumnInfo(name="created_at", native_type="timestamp"),
+        ]
+
+    def list_tables(self):
+        return ["Company"]
+
+    def get_columns(self, table):
+        return self._columns
+
+    def get_primary_key(self, table):
+        return ["companyID"]
+
+    def close(self):
+        pass
+
+
+def _plan_job(client: TestClient, monkeypatch: pytest.MonkeyPatch, **overrides: Any) -> str:
+    monkeypatch.setattr(clone_executor, "build_source_connector", lambda conn, db: _PlanSource())
+    client.post(
+        "/normalization/connections",
+        json={
+            "engine": "postgres",
+            "host": "localhost",
+            "port": 5432,
+            "username": "u",
+            "password": "p",
+        },
+    )
+    connection_id = client.get("/normalization/connections").json()[0]["connection_id"]
+    body = {
+        "source_connection_id": connection_id,
+        "source_database": "src",
+        "destination_connection_id": connection_id,
+        "destination_database": "dst",
+        "field_configs": {"Company": {"revenue": "MONEY", "CountryCode": "COUNTRY"}},
+        **overrides,
+    }
+    resp = client.post("/normalization/clone-jobs", json=body)
+    assert resp.status_code == 201, resp.text
+    return str(resp.json()["job_id"])
+
+
+@pytest.mark.unit
+def test_the_plan_shows_what_phase_1_will_do_before_it_does_it(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Detection is the part of a clone nobody could see: on a real
+    13-table source it claimed 8 columns of 114 and the only trace was a
+    JSON blob on the job."""
+    job_id = _plan_job(client, monkeypatch)
+    plan = client.get(f"/normalization/clone-jobs/{job_id}/plan").json()
+
+    assert plan["amendable"] is True
+    assert plan["typed_destination_columns"] is True
+    table = plan["tables"][0]
+    assert table["table"] == "Company"
+    assert table["key_columns"] == ["companyID"]
+    by_column = {c["column"]: c for c in table["columns"]}
+
+    # A MONEY column: native type so it can be summed, plus the companion
+    # that stops its currency being dropped on the floor.
+    assert by_column["revenue"]["semantic_type"] == "MONEY"
+    assert by_column["revenue"]["decided_by"] == "EXPLICIT"
+    assert by_column["revenue"]["destination_type"] is not None
+    assert by_column["revenue"]["companion_column"] == "revenue_currency"
+
+    # A COUNTRY column keeps TEXT and gains the ISO code column.
+    assert by_column["CountryCode"]["companion_column"] == "CountryCode_code"
+    assert by_column["CountryCode"]["destination_type"] is None
+
+    # The key column is never given a native type, and an unconfigured
+    # column is visible as unconfigured rather than absent — "what is NOT
+    # being normalized" is half of what a review is for.
+    assert by_column["companyID"]["destination_type"] is None
+    assert by_column["created_at"]["semantic_type"] is None
+    assert by_column["created_at"]["decided_by"] is None
+    assert by_column["created_at"]["source_type"] == "timestamp"
+
+    assert table["extra_columns"] == {
+        "revenue_currency": "TEXT",
+        "CountryCode_code": "TEXT",
+    }
+
+
+@pytest.mark.unit
+def test_a_review_can_amend_one_column_without_restating_the_rest(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    job_id = _plan_job(client, monkeypatch)
+    resp = client.patch(
+        f"/normalization/clone-jobs/{job_id}/plan",
+        json={"field_configs": {"Company": {"revenue": "NUMERIC"}}, "locale": "en-US"},
+    )
+    assert resp.status_code == 200, resp.text
+
+    plan = client.get(f"/normalization/clone-jobs/{job_id}/plan").json()
+    by_column = {c["column"]: c for c in plan["tables"][0]["columns"]}
+    assert by_column["revenue"]["semantic_type"] == "NUMERIC"
+    # The column the review did not mention is untouched, and so is every
+    # setting it did not send.
+    assert by_column["CountryCode"]["semantic_type"] == "COUNTRY"
+    assert plan["locale"] == "en-US"
+    assert plan["country"] is None
+    assert plan["typed_destination_columns"] is True
+    # MONEY's companion goes when MONEY does.
+    assert by_column["revenue"]["companion_column"] is None
+
+
+@pytest.mark.unit
+def test_a_review_can_turn_a_column_off_entirely(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An explicit null is the only way to say "do not normalize this
+    one" — omitting a column means "leave it as planned"."""
+    job_id = _plan_job(client, monkeypatch)
+    client.patch(
+        f"/normalization/clone-jobs/{job_id}/plan",
+        json={"field_configs": {"Company": {"revenue": None}}},
+    )
+    plan = client.get(f"/normalization/clone-jobs/{job_id}/plan").json()
+    by_column = {c["column"]: c for c in plan["tables"][0]["columns"]}
+    assert by_column["revenue"]["semantic_type"] is None
+    assert by_column["revenue"]["companion_column"] is None
+    assert plan["tables"][0]["extra_columns"] == {"CountryCode_code": "TEXT"}
+
+
+@pytest.mark.unit
+def test_the_plan_cannot_be_amended_once_tables_exist(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """After Phase 1 the destination's columns are what they are, so
+    amending the plan would make the job disagree with its own tables."""
+    job_id = _plan_job(client, monkeypatch)
+    # Phase 1 has run: the job is past the one status a plan may change in.
+    persistence = client.app.dependency_overrides[get_connections]()
+    job = persistence.get_clone_job(job_id)
+    job["status"] = "SCHEMA_READY"
+    persistence.save_clone_job(job_id, job)
+
+    resp = client.patch(
+        f"/normalization/clone-jobs/{job_id}/plan",
+        json={"locale": "en-US"},
+    )
+    assert resp.status_code == 409
+    assert "PENDING_DB_CREATE" in resp.json()["detail"]
+    assert client.get(f"/normalization/clone-jobs/{job_id}/plan").json()["amendable"] is False
+
+
+@pytest.mark.unit
+def test_plan_routes_404_on_unknown_job(client: TestClient) -> None:
+    assert client.get("/normalization/clone-jobs/nope/plan").status_code == 404
+    assert client.patch("/normalization/clone-jobs/nope/plan", json={}).status_code == 404

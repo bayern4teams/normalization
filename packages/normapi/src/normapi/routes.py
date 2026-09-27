@@ -69,6 +69,7 @@ from normapi.dependencies import (
 from normapi.pg_persistence import PgPersistence
 from normapi.scaffold_profile import SCAFFOLD_PROFILE
 from normapi.schemas import (
+    CloneJobAmendRequest,
     CloneJobCreateRequest,
     CloneJobCreateResponse,
     ColumnInfoResponse,
@@ -932,6 +933,52 @@ def get_clone_job(
     # caller can restart it (claim already allows RUNNING -> RUNNING), and
     # a merely slow job must not be declared dead on its behalf.
     return {**job, "stale": clone_executor.is_stale(job)}
+
+
+@router.get("/clone-jobs/{job_id}/plan")
+def get_clone_job_plan(
+    job_id: str,
+    connections: Annotated[PgPersistence, Depends(get_connections)],
+) -> dict[str, Any]:
+    """The plan Phase 1 will execute, before it executes any of it: per
+    column, the detected or configured semantic type, which of the two it
+    was, the native destination type it will get, and the companion column
+    it will gain.
+
+    Detection is the part of a clone nobody could see. On a real 13-table
+    source it claimed 8 columns out of 114 and missed the two highest-value
+    ones, and the only trace was a JSON blob on the job — so signing off on
+    a clone meant running it and reading the result. Computed from the same
+    function Phase 1 uses, so it cannot describe something else.
+
+    Read-only, and does not touch the destination database, which need not
+    exist yet."""
+    try:
+        return clone_executor.plan_job(connections, job_id)
+    except CloneJobNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.patch("/clone-jobs/{job_id}/plan")
+def amend_clone_job_plan(
+    job_id: str,
+    body: CloneJobAmendRequest,
+    connections: Annotated[PgPersistence, Depends(get_connections)],
+) -> dict[str, Any]:
+    """Change the plan after reading it and before Phase 1 builds anything.
+
+    `exclude_unset`: only fields the caller actually sent are applied, so
+    omitting one means "leave it" rather than "set it to null" — the
+    difference between amending one column and silently clearing the
+    country."""
+    try:
+        return clone_executor.amend_clone_job(
+            connections, job_id, body.model_dump(mode="json", exclude_unset=True)
+        )
+    except CloneJobNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except CloneJobStateError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.post("/clone-jobs/{job_id}/verify-database")

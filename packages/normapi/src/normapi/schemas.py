@@ -279,6 +279,28 @@ class CloneJobCreateRequest(BaseModel):
     field_configs: dict[str, dict[str, FieldSemanticType | None]] = Field(default_factory=dict)
 
 
+class CloneJobAmendRequest(BaseModel):
+    """Body for `PATCH /clone-jobs/{id}/plan` — what a reviewer may change
+    after reading the plan and before anything is built.
+
+    Every field is optional and only what was SENT is applied, so a review
+    that changes one column does not have to restate the other 113 that
+    autodetect got right. `field_configs` merges per table and per column;
+    an explicit null on a column clears it back to passthrough.
+
+    Absent on purpose: the connections, the databases, `in_place` and the
+    table list. Those are what the job is, and nothing has been built yet,
+    so a job pointed somewhere else is cheap to create rather than amend.
+    """
+
+    field_configs: dict[str, dict[str, FieldSemanticType | None]] | None = None
+    country: str | None = None
+    locale: str | None = None
+    typed_destination_columns: bool | None = None
+    max_new_null_rate: float | None = Field(default=None, ge=0.0, le=1.0)
+    cross_table_entity_key: str | None = None
+
+
 class CloneJobCreateResponse(BaseModel):
     job_id: str
     status: CloneJobStatus

@@ -162,10 +162,10 @@ def test_postgres_clone_pipeline_ddl_population_errors_and_resume(
     job = _wait_for_terminal(persistence, job_id)
     assert job["status"] == "COMPLETED", job.get("error")
     # 3 customers + 2 clone_source + 3 typed_source + 4 context_source
-    # + 6 entity_country + 5 entity_phone + 25 mistyped_source: a clone
-    # copies EVERY table in the source database, so adding a fixture table
-    # moves this.
-    assert job["progress"]["rows_done"] == 48
+    # + 6 entity_country + 5 entity_phone + 25 mistyped_source
+    # + 3 signal_phone + 3 signal_zip: a clone copies EVERY table in the
+    # source database, so adding a fixture table moves this.
+    assert job["progress"]["rows_done"] == 54
     assert sorted(job["progress"]["tables_completed"]) == sorted(job["tables"])
 
     with psycopg.connect(dest_dsn) as conn:
@@ -197,7 +197,7 @@ def test_postgres_clone_pipeline_ddl_population_errors_and_resume(
     assert started_again is True
     job = _wait_for_terminal(persistence, job_id)
     assert job["status"] == "COMPLETED"
-    assert job["progress"]["rows_done"] == 48  # unchanged — nothing re-inserted
+    assert job["progress"]["rows_done"] == 54  # unchanged — nothing re-inserted
 
     with psycopg.connect(dest_dsn) as conn:
         assert conn.execute("SELECT count(*) FROM clone_source").fetchone()[0] == 2
@@ -772,6 +772,14 @@ def test_a_siblings_country_reaches_a_phone_in_another_table(
     # not a mis-mapped one.
     assert ("entity_country", "country_name") not in column_level
 
+    # And a signal-precedence assertion, because this table exercises it:
+    # entity 11's second phone carries +1, which as an IMPLIED country
+    # contradicts the GB its country column STATES. Stated wins, so entity
+    # 11 keeps GB rather than being dropped as contradictory — which is what
+    # happened the moment PHONE became a signal source, silently, because a
+    # company legitimately has numbers in more than one country.
+    assert phones["+44 20 7930 4832"] == "+442079304832"
+
 
 @pytest.mark.integration
 def test_a_column_that_is_not_its_semantic_type_is_reported_once(
@@ -817,3 +825,70 @@ def test_a_column_that_is_not_its_semantic_type_is_reported_once(
     # reading every row to learn one fact about the column.
     per_row = [e for e in errors if e["row_index"] >= 0]
     assert len(per_row) == 25
+
+
+def _signal_dispatcher() -> Dispatcher:
+    registry = NormalizerRegistry()
+    registry.register(PassthroughNormalizer())
+    registry.register(PhoneNormalizer())
+    registry.register(PostcodeNormalizer())
+    return Dispatcher(registry, env_id="test-signal-clone")
+
+
+@pytest.mark.integration
+def test_a_phone_and_a_postcode_can_name_the_country_too(persistence: PgPersistence) -> None:
+    """Neither table here has a COUNTRY column, and both still get a
+    country — from a phone that carries its own +CC (247,469 values on a
+    real source) and from a postcode only one country's format accepts
+    (18.9% of 20,000 real distinct postcodes).
+
+    Each signal reaches the OTHER table through the entity id, which is the
+    point: a phone's +44 is useless to the phone itself and decisive for
+    the postcode two tables over.
+    """
+    dest_database = f"clone_sig_{uuid.uuid4().hex[:8]}"
+    source_conn, dest_conn = _pg_connections(persistence)
+
+    job = clone_executor.create_clone_job(
+        persistence,
+        request={
+            "source_connection_id": source_conn["connection_id"],
+            "source_database": "source_demo",
+            "destination_connection_id": dest_conn["connection_id"],
+            "destination_database": dest_database,
+            "autodetect_field_types": False,
+            "cross_table_entity_key": "entity_key",
+            "field_configs": {
+                "signal_phone": {"tel": "PHONE"},
+                "signal_zip": {"zip": "POSTCODE"},
+            },
+        },
+    )
+    job_id = job["job_id"]
+    job = _run_to_completion(persistence, _signal_dispatcher(), job_id, dest_database)
+
+    errors = persistence.load_clone_job_errors_page(job_id, limit=200, offset=0)
+    column_level = {
+        (e["table_name"], e["field"]): e["error"] for e in errors if e["row_index"] == -1
+    }
+    summary = column_level[("", "")]
+    # Entity 1 from the phone's +44, entity 2 from the Canadian postcode.
+    # Entity 3 has neither: a phone with no country code and a five-digit
+    # postcode valid in 56 countries.
+    assert "2 entities with one country" in summary
+    assert "0 dropped for disagreeing" in summary
+
+    dest_dsn = f"postgresql://writable_user:writable_pass@{PG_HOST}:{PG_PORT}/{dest_database}"
+    with psycopg.connect(dest_dsn) as conn:
+        phones = dict(
+            conn.execute("SELECT entity_key, tel_code FROM signal_phone ORDER BY id").fetchall()
+        )
+
+    # Entity 2's phone is a bare Toronto local number. Nothing in its own
+    # table could parse it; the POSTCODE in the other table could.
+    assert phones[2] == "+14163922489"
+    # Entity 1 carried its own +44 and is unaffected by any of this.
+    assert phones[1] == "+442079304832"
+    # Entity 3 had no signal anywhere, so it stays unparsed rather than
+    # being given the most popular country in the map.
+    assert phones[3] is None

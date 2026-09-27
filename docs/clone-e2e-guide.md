@@ -162,7 +162,73 @@ a saved connection (decision #13) — it's picked fresh on the next screen.
    the country is dropped (7 of 179,810), a value the inferred country
    turns out not to fit keeps its no-country result and says so (128
    rows, 0.31%), and a value carrying its own country code is untouched.
+
+   **A COUNTRY column is not the only thing that can name a country.** A
+   PHONE that carries its own `+CC` and a POSTCODE only one country's
+   format accepts both feed the same map:
+
+   | signal | when it counts | measured |
+   |---|---|---|
+   | COUNTRY column | always — it *states* the country | 617 distinct values behind 1.76M rows |
+   | PHONE | only when the number itself carries `+CC` | 247,469 of 1,021,941 (24.2%) |
+   | POSTCODE | only when exactly one country's format fits | 18.9% of 20,000 distinct |
+
+   On a real two-table source with **no country column at all**, those two
+   gave 22,025 entities a country and took the phone column from 7,930 to
+   10,005 parsed numbers — numbers resolved from a postcode two tables
+   over. A stated country always wins over an implied one: without that,
+   one `+1` number among a company's contacts silently dropped the `GB` its
+   country column stated, because a company legitimately has numbers in
+   more than one country.
+
+   Deliberately *not* a signal: a URL's ccTLD. No authoritative source
+   separates national from generic ccTLD use, so `.io` would resolve to the
+   British Indian Ocean Territory, `.co` to Colombia (6,281 domains on one
+   real source), `.me` to Montenegro and `.tv` to Tuvalu. The alternative
+   is a hand-written exclusion list that grows one found example at a time.
 6. **Create clone job.**
+
+## 3a. Read the plan before anything is built
+
+`GET /clone-jobs/{id}/plan` (`PATCH` the same path to change it). This is
+worth doing every time, because detection is the part of a clone nobody
+could see. On the real 7-table source this was measured against:
+
+```
+8 of 45 columns will be normalized, across 7 tables
+Company.companyName      COMPANY_NAME  INFERRED
+Company.website          URL           INFERRED
+Location.CountryCode     COUNTRY       INFERRED   -> CountryCode_code
+Location.Zip             POSTCODE      INFERRED
+...
+```
+
+Eight of forty-five, every one of them guessed, and the two highest-value
+columns in the database — `companyPhone` and `companyRevenue` — absent.
+Nothing said so before; finding it out meant running the clone and
+reading the result.
+
+Per column the plan gives the semantic type, whether it was `EXPLICIT` or
+`INFERRED`, the native destination type it will get, and the companion
+column it will gain. Unconfigured columns are listed too: *what is not
+being normalized* is half of what a review is for. It is computed by the
+same function Phase 1 executes, so it cannot describe something else, and
+it touches only the source — the destination database need not exist yet.
+
+`PATCH` applies only the fields you send, and `field_configs` merges per
+table and per column, so fixing one column does not restate the other 44:
+
+```json
+{ "field_configs": {"Company": {"companyPhone": "PHONE",
+                                "companyRevenue": "MONEY",
+                                "companyName": null}},
+  "locale": "en-US",
+  "cross_table_entity_key": "companyID" }
+```
+
+An explicit `null` turns a column off (passthrough); omitting it leaves it
+as planned. Amendable only while the job is `PENDING_DB_CREATE` — after
+Phase 1 the destination's columns are what they are.
 
 ## 4. Run `CREATE DATABASE` by hand
 

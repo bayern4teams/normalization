@@ -15,6 +15,7 @@ from typing import Any
 import pytest
 from normalizers.phone import PhoneNormalizer
 from normapi.clone_executor import (
+    _COUNTRY_FROM,
     CloneJobStateError,
     _ColumnStats,
     _drop_rejected_country,
@@ -368,3 +369,100 @@ class TestDroppingARejectedInferredCountry:
         _drop_rejected_country(by_value, pool=None, planner=planner, ctx=ctx, country="IT")
 
         assert not any("inferred from a sibling table" in e for e in by_value[value].errors)
+
+
+def _phone_result(region: str | None, region_source: str) -> NormalizedValue:
+    return NormalizedValue(
+        original="whatever",
+        structured={"region": region, "region_source": region_source},
+        normalization_status=NormalizationStatus.PARSED,
+        profile_version="",
+        env_id="",
+        semantic_type=FieldSemanticType.PHONE,
+        context_hash="",
+    )
+
+
+def _postcode_result(comparison: str | None) -> NormalizedValue:
+    return NormalizedValue(
+        original="whatever",
+        comparison=comparison,
+        normalization_status=NormalizationStatus.AMBIGUOUS,
+        profile_version="",
+        env_id="",
+        semantic_type=FieldSemanticType.POSTCODE,
+        context_hash="",
+    )
+
+
+@pytest.mark.unit
+class TestCountrySignalSources:
+    """Which columns may say what country a row is in. One table, so adding
+    a signal is one entry rather than a fourth place that reads
+    `structured` by hand."""
+
+    def test_a_phone_that_carries_its_own_country_code_is_a_signal(self) -> None:
+        """247,469 of 1,021,941 phone numbers on a real source (24.2%)."""
+        extract = _COUNTRY_FROM[FieldSemanticType.PHONE]
+        assert extract(_phone_result("GB", "number_prefix")) == "GB"
+
+    @pytest.mark.parametrize("source", ["explicit", "default_region", "unknown"])
+    def test_a_phone_region_that_came_from_context_is_not_a_signal(self, source: str) -> None:
+        """`explicit` means the region came from ctx.country — the very
+        thing this is trying to produce. Trusting it would feed a country
+        back to itself and make any wrong guess look corroborated."""
+        extract = _COUNTRY_FROM[FieldSemanticType.PHONE]
+        assert extract(_phone_result("GB", source)) is None
+
+    def test_a_postcode_only_one_country_accepts_is_a_signal(self) -> None:
+        extract = _COUNTRY_FROM[FieldSemanticType.POSTCODE]
+        assert extract(_postcode_result("SW1A 1AA")) == "GB"
+
+    def test_a_bare_numeric_postcode_is_not_a_signal(self) -> None:
+        """Valid in 56 countries, measured. Returning the most populous
+        candidate is exactly the guess this codebase does not make."""
+        extract = _COUNTRY_FROM[FieldSemanticType.POSTCODE]
+        assert extract(_postcode_result("94043")) is None
+
+    def test_a_missing_postcode_is_not_a_signal(self) -> None:
+        extract = _COUNTRY_FROM[FieldSemanticType.POSTCODE]
+        assert extract(_postcode_result(None)) is None
+
+    def test_a_country_column_is_still_read_through_the_same_table(self) -> None:
+        assert _COUNTRY_FROM[FieldSemanticType.COUNTRY](_resolved("DE")) == "DE"
+
+    def test_a_url_is_deliberately_not_a_signal(self) -> None:
+        """No authoritative source separates national from generic ccTLD
+        use: `.io` is the British Indian Ocean Territory, `.co` is Colombia
+        (6,281 domains on one real source), `.me` Montenegro, `.tv` Tuvalu.
+        The alternative is a hand-written exclusion list that grows one
+        found example at a time."""
+        assert FieldSemanticType.URL not in _COUNTRY_FROM
+        assert FieldSemanticType.CURRENCY not in _COUNTRY_FROM
+
+
+@pytest.mark.unit
+class TestSignalPrecedence:
+    """A COUNTRY column STATES the country; a phone or postcode only
+    IMPLIES one. The distinction is not decorative: the moment PHONE became
+    a signal source, one company's second phone number carrying +1 silently
+    dropped the GB its own country column stated, because a company
+    legitimately has numbers in more than one country."""
+
+    def test_stated_signals_are_scanned_before_implied_ones(self) -> None:
+        """The ordering IS the precedence — an implied signal skips an
+        entity a stated one already decided, which only works if stated
+        runs first."""
+        scans = [
+            ("t", "tel", FieldSemanticType.PHONE),
+            ("t", "zip", FieldSemanticType.POSTCODE),
+            ("t", "cc", FieldSemanticType.COUNTRY),
+        ]
+        scans.sort(key=lambda scan: scan[2] is not FieldSemanticType.COUNTRY)
+        assert scans[0][2] is FieldSemanticType.COUNTRY
+
+    def test_country_is_the_only_stated_signal(self) -> None:
+        """If another type ever states rather than implies a country, the
+        ordering key above has to learn about it."""
+        implied = set(_COUNTRY_FROM) - {FieldSemanticType.COUNTRY}
+        assert implied == {FieldSemanticType.PHONE, FieldSemanticType.POSTCODE}
