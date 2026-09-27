@@ -65,6 +65,21 @@ _VALUE_ONLY_CONFIDENCE = 0.9
 # made.)
 _NEGATIVE_CONTROL = "zz~not~a~value~zz"
 
+# A SECOND negative control, for the value-only path only. A validator that
+# accepts a bare integer cannot identify a column from its values alone,
+# because a column of digit strings is the most common thing in any
+# database: MONEY accepts `368938835` as cleanly as it accepts `$17.6
+# Million`, so on values alone it claimed every ID column in a real 7-table
+# source — six false positives, each one a primary key. BOOLEAN accepts
+# `1`/`0` the same way, and a column of 1s and 0s is just as likely a
+# count.
+#
+# Such a type is still allowed to CONFIRM a name match, where the name
+# already said what the column is; it is only barred from naming a column
+# by itself. Probed rather than hand-listed so a normalizer that starts
+# accepting bare numbers is caught without anyone remembering to add it.
+_BARE_NUMBER_CONTROL = "12345"
+
 
 @dataclass(frozen=True)
 class TypeSuggestion:
@@ -100,7 +115,7 @@ _FIELD_NAME_PATTERNS: tuple[tuple[re.Pattern[str], FieldSemanticType, float], ..
         (r"\b(zip|postal|postcode)([-_]?code)?\b", FieldSemanticType.POSTCODE, 0.9),
         (r"\bcountry\b", FieldSemanticType.COUNTRY, 0.9),
         (r"\blang(uage)?\b", FieldSemanticType.LANGUAGE, 0.85),
-        (r"\b(url|website|link|homepage)\b", FieldSemanticType.URL, 0.9),
+        (r"\b(url|website|link|homepage|domain)\b", FieldSemanticType.URL, 0.9),
         (r"\b(uuid|guid)\b", FieldSemanticType.UUID, 0.95),
         (
             r"\b(user|customer|account|order|product)[-_]?id\b",
@@ -110,11 +125,26 @@ _FIELD_NAME_PATTERNS: tuple[tuple[re.Pattern[str], FieldSemanticType, float], ..
         (r"\b(tax[-_]?id|vat[-_]?number|ein)\b", FieldSemanticType.TAX_ID, 0.9),
         (r"\bcurrency\b", FieldSemanticType.CURRENCY, 0.85),
         # The separator is optional: `is_public`, `isPublic` and the very
-        # common flat `ispublic` are the same convention. `\b` still keeps
-        # this from firing inside a word (no boundary before "is" in
-        # "this"), and a wrong guess is demoted by real sample values below.
-        (r"\b(is|has)[-_]?[a-z]|[-_]flag\b", FieldSemanticType.BOOLEAN, 0.8),
+        # common flat `ispublic` are the same convention. ANCHORED, because
+        # `\b` does not keep this out of the middle of a word once the
+        # relaxed pass (below) drops the boundaries: measured on a real
+        # source, `displayName` matched on the "is" in "display" and
+        # `personHashtags` on the "has" in "Hashtags". Both survived only
+        # because their values demoted the guess — which is luck, not a
+        # rule. `is`/`has` is a PREFIX convention, so say so.
+        (r"^(is|has)[-_]?[a-z]|[-_]flag\b", FieldSemanticType.BOOLEAN, 0.8),
         (r"\b(quantity|qty|weight|height|length|volume)\b", FieldSemanticType.QUANTITY, 0.75),
+        # Only words that mean money and nothing else. `price`/`amount`/
+        # `cost`/`balance` stay NUMERIC below: they are just as often a bare
+        # number with the currency held elsewhere (or nowhere), and MONEY
+        # writes a second companion column — too much to do on a name alone.
+        # Deliberately under the apply threshold, like QUANTITY: a MONEY
+        # guess only sticks once real values parse as money.
+        (
+            r"\b(revenue|salary|income|turnover|valuation|arr|mrr|fee|wage|payroll)\b",
+            FieldSemanticType.MONEY,
+            0.75,
+        ),
         (r"\b(price|amount|cost|total|balance|count|number|num)\b", FieldSemanticType.NUMERIC, 0.6),
     )
 )
@@ -132,6 +162,7 @@ _SAMPLE_VALIDATORS: dict[FieldSemanticType, FieldSemanticType] = {
     FieldSemanticType.COUNTRY: FieldSemanticType.COUNTRY,
     FieldSemanticType.CURRENCY: FieldSemanticType.CURRENCY,
     FieldSemanticType.BOOLEAN: FieldSemanticType.BOOLEAN,
+    FieldSemanticType.MONEY: FieldSemanticType.MONEY,
 }
 
 
@@ -156,10 +187,48 @@ _RELAXED_NAME_PATTERNS: tuple[tuple[re.Pattern[str], FieldSemanticType, float], 
 
 
 def _name_variants(field_name: str) -> tuple[str, ...]:
-    """`firstHireDate` also matched as `first_Hire_Date`, so camelCase gets
-    the same word boundaries snake_case already has."""
+    """Every spelling of one column name the curated patterns may match,
+    tried in order; any one matching is a match.
+
+    `firstHireDate` becomes `first_Hire_Date` so camelCase gets the word
+    boundaries snake_case already has — and then `first Hire Date`, because
+    `_` is a WORD character, so `\b` finds no boundary inside
+    `company_Phone` at all and `\bphone\b` simply never matched it. That is
+    why detection missed `companyPhone` on a real 1.27M-row source: not a
+    missing keyword, a boundary that cannot see the separator most column
+    names actually use. Splitting on the separator lets every `\b...\b`
+    pattern in the table work on camelCase and snake_case alike, with no
+    pattern rewritten.
+
+    The separator-joined spellings are kept too: a pattern that spells the
+    separator itself (`\b(company|...)[-_]?name?\b`) matches those and not
+    the spaced form.
+    """
     snaked = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "_", field_name)
-    return (field_name,) if snaked == field_name else (field_name, snaked)
+    spaced = re.sub(r"[-_]+", " ", snaked).strip()
+    return tuple(dict.fromkeys(v for v in (field_name, snaked, spaced) if v))
+
+
+def _sample_context(
+    validator_type: FieldSemanticType, country: str | None, locale: str | None
+) -> NormalizationContext:
+    """The context a sampled value is validated under.
+
+    `country`/`locale` matter more here than anywhere else: without a
+    country, PHONE validates only numbers carrying their own `+CC` and
+    without a locale MONEY refuses every comma-grouped amount — so a
+    column really full of phones or money gets DEMOTED for holding what it
+    holds. Measured on a real source, `companyPhone` came out PHONE at
+    0.27 (name matched, values "disagreed") purely because detection asked
+    the question with no country. The job already knows both; detection
+    just was not told.
+    """
+    return NormalizationContext(
+        field_name="__type_detection_sample__",
+        semantic_type=validator_type,
+        country=country,
+        locale=locale,
+    )
 
 
 def suggest_semantic_type(
@@ -167,6 +236,8 @@ def suggest_semantic_type(
     *,
     sample_values: Sequence[str | None] | None = None,
     registry: NormalizerRegistry | None = None,
+    country: str | None = None,
+    locale: str | None = None,
 ) -> list[TypeSuggestion]:
     """Returns candidates ranked by confidence, highest first. Always
     includes a FREE_TEXT fallback at low confidence so callers never get
@@ -192,9 +263,9 @@ def suggest_semantic_type(
             )
 
     if sample_values is not None and registry is not None:
-        _refine_with_sample_values(candidates, sample_values, registry)
+        _refine_with_sample_values(candidates, sample_values, registry, country, locale)
         if not any(c.confidence >= _VALUE_ONLY_CONFIDENCE for c in candidates.values()):
-            _suggest_from_values_alone(candidates, sample_values, registry)
+            _suggest_from_values_alone(candidates, sample_values, registry, country, locale)
 
     if not candidates:
         candidates[FieldSemanticType.FREE_TEXT] = TypeSuggestion(
@@ -242,6 +313,8 @@ def _suggest_from_values_alone(
     candidates: dict[FieldSemanticType, TypeSuggestion],
     sample_values: Sequence[str | None],
     registry: NormalizerRegistry,
+    country: str | None = None,
+    locale: str | None = None,
 ) -> None:
     non_null_sample = _flatten_sample(sample_values)
     if not non_null_sample:
@@ -253,10 +326,10 @@ def _suggest_from_values_alone(
         normalizer = registry.get(validator_type)
         if normalizer is None:
             continue
-        ctx = NormalizationContext(
-            field_name="__type_detection_sample__", semantic_type=validator_type
-        )
+        ctx = _sample_context(validator_type, country, locale)
         if not _discriminates(normalizer, ctx):
+            continue
+        if normalizer.validate(_BARE_NUMBER_CONTROL, ctx).is_valid:
             continue
         # Only CLEANLY parsed values are evidence here. A normalizer that
         # had to repair the value accepted it on a guess, and a guess is
@@ -288,6 +361,8 @@ def _refine_with_sample_values(
     candidates: dict[FieldSemanticType, TypeSuggestion],
     sample_values: Sequence[str | None],
     registry: NormalizerRegistry,
+    country: str | None = None,
+    locale: str | None = None,
 ) -> None:
     non_null_sample = _flatten_sample(sample_values)
     if not non_null_sample:
@@ -301,9 +376,7 @@ def _refine_with_sample_values(
         if normalizer is None:
             continue
 
-        ctx = NormalizationContext(
-            field_name="__type_detection_sample__", semantic_type=validator_type
-        )
+        ctx = _sample_context(validator_type, country, locale)
         if not _discriminates(normalizer, ctx):
             continue
         matches = sum(1 for v in non_null_sample if normalizer.validate(v, ctx).is_valid)

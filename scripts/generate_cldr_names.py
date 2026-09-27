@@ -18,6 +18,17 @@ all four tables is most of the cost), but `_cldr_country_names` alone is
 make `CurrencyNormalizer` pay for the language table it never reads. Each
 normalizer imports only its own.
 
+# ponytail: CLDR's STANDARD territory names only. Babel exposes no
+# `alt-short` variants, so the colloquial short form a person is most likely
+# to type is missing for every territory that has one: `HK` in zh is only
+# `中国香港特别行政区`, never `香港`; `KR` in ko is only `대한민국`, never
+# `한국`. This is a ceiling in the data source, not in the generator —
+# closing it means reading CLDR's own XML (`<territory type="HK"
+# alt="short">`) instead of Babel's parsed locale data, or shipping a hand
+# table of short forms, which is the thing this file exists to avoid.
+# Upgrade path: if Babel ever exposes alt forms, emit them here; until then
+# the gap is real and known rather than surprising.
+
 Only names the existing authority does NOT already resolve are emitted.
 pycountry stays the authority for countries and languages, so shipping
 its overlapping names here would be dead weight and would risk shadowing

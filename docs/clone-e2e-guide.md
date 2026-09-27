@@ -208,6 +208,46 @@ columns in the database — `companyPhone` and `companyRevenue` — absent.
 Nothing said so before; finding it out meant running the clone and
 reading the result.
 
+**Give the job a `country` and `locale` and the plan gets better on its
+own.** Detection validates a sample of each column's real values, and it
+now does so under the job's own context. Measured on that same source
+(non-key textual columns, against a ground truth stated in
+`tests/unit/test_type_detection_coverage.py`'s fixture):
+
+| | recall | precision | columns applied |
+|---|---|---|---|
+| before | 58.3% | 100% | 7 |
+| after, no `country`/`locale` | 75.0% | 100% | 9 |
+| after, `country=US locale=en-US` | **83.3%** | **100%** | 10 |
+
+Precision is the number that may not move. A false positive rewrites a
+column; a false negative leaves it exactly as it arrived — so detection is
+tuned to the second kind of mistake, and two columns are still deliberately
+missed:
+
+- A column literally named `name` is PERSON_NAME at 0.8, below the apply
+  threshold. Raising it would also claim `Industry.name` and
+  `Industry.displayName`, which are industry labels.
+- `Street` is not matched as ADDRESS. There is no validator for ADDRESS, so
+  it would be a pure name guess sent to libpostal.
+
+**Two kinds of column are never inferred, by rule rather than by name:**
+
+1. **Columns the source already types** (timestamp, numeric, boolean,
+   uuid). The database already guarantees the format, and configuring one
+   would downgrade it to text.
+2. **Columns in the table's own key** (primary key, or ClickHouse's sorting
+   key). Normalization is many-to-one — `GB`, `uk` and `Great Britain` all
+   become `United Kingdom` — so applying it to a key merges rows that were
+   distinct, and on a `ReplacingMergeTree` the merge is silent and
+   permanent. Measured on a real source, detection mapped
+   `PersonContact.freeMails` to EMAIL at 0.95 confidence, and `freeMails`
+   is that table's entire sorting key.
+
+Both read the source's structure, never column names — `_version` and
+`created_at` are excluded because of their types. An explicit
+`field_config` overrides either: the rules govern what is *guessed*.
+
 Per column the plan gives the semantic type, whether it was `EXPLICIT` or
 `INFERRED`, the native destination type it will get, and the companion
 column it will gain. Unconfigured columns are listed too: *what is not
@@ -307,6 +347,49 @@ report. Set `typed_destination_columns: false` to keep everything text.
     went wrong, because a map that silently supplied nothing (wrong key
     column, no COUNTRY column in a table carrying it) and a map that
     worked look identical from the destination.
+  - `N of M normalized values in this column change again when normalized a
+    second time ... not converging` — the idempotency gate. §71 requires
+    `normalize(normalize(x)) == normalize(x)`, so this finding has **no
+    threshold**: one value that will not settle is a defect. Each chunk
+    feeds back up to `NORM_CLONE_IDEMPOTENCY_SAMPLE` (50) of the column's
+    distinct *changed* outputs; a value equal to its input is a fixed point
+    by inspection and costs nothing. Reported, never repaired — silently
+    applying the second answer would make the destination depend on how
+    many times the pipeline ran.
+- **The count is this job's.** `GET /clone-jobs/{id}/errors` returns
+  `X-Total-Count` scoped by `job_id`. The table holds every job's rows: on
+  one real run the job had produced **16,201** of the table's
+  **4,758,656**, and a page of 100 cannot tell you which number you are
+  looking at.
+
+### `GET /clone-jobs/{id}/quality` — what each column achieved
+
+The error report says what went wrong. This says what happened, per column,
+and its categories sum to the column's own value count:
+
+```
+Company.companyPhone     values=45,887   PARSED=45,843  INVALID=44
+Company.companyRevenue   values=46,956   NORMALIZED=46,956    emptied=0
+Company.companyName      values=50,000   UNCHANGED=48,416  NORMALIZED=1,584
+Location.Zip             values=40,155   NORMALIZED=39,780  INVALID=375
+```
+
+Every member of `NormalizationStatus` is counted, so `UNCHANGED` — a value
+that was already clean — is visible rather than missing. The same source
+run **without** `locale=en-US` for comparison:
+
+```
+Company.companyPhone     values=45,887   AMBIGUOUS=42,788  PARSED=3,055
+Company.companyRevenue   values=46,956   AMBIGUOUS=16,200  NORMALIZED=30,756   emptied=34.5%
+```
+
+That is the same data, the same code, and one missing field on the job.
+AMBIGUOUS is not a failure — it is the normalizer refusing to guess — but a
+column that is 93% AMBIGUOUS is telling you it is missing context.
+
+A table appears in the report as it completes, so a long job's numbers are
+readable while it runs. Kept off `GET /clone-jobs/{id}` on purpose: the UI
+polls that every two seconds and this is a row per configured column.
 - Diff origin vs. destination directly to confirm normalized-in-place
   values, untouched passthrough columns, and — most importantly — that
   the origin is byte-for-byte unchanged:

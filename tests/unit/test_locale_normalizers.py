@@ -510,3 +510,41 @@ class TestUkConstituentCountries:
         these too, which is a much larger claim than normalizing a country
         field. A state is not a country."""
         assert resolve_country_alpha2(value) is None
+
+
+@pytest.mark.unit
+class TestSeparatorsAtTheEdgesOfALookupValue:
+    """`/türkiye` and `, , , , United Kingdom` are a country name wrapped in
+    the packaging of whatever produced the cell. Both were found in real
+    columns and neither resolved.
+
+    The rule is EDGES ONLY: an interior separator is genuinely ambiguous, so
+    `US, GB` must stay unresolved rather than become a guess about which one
+    was meant.
+    """
+
+    @pytest.mark.parametrize(
+        ("raw", "alpha2"),
+        [
+            ("/türkiye", "TR"),
+            ("/turkey", "TR"),
+            (", , , , United Kingdom", "GB"),
+            ("United Kingdom,", "GB"),
+            ("/united states", "US"),
+            ("|DE|", "DE"),
+        ],
+    )
+    def test_a_wrapped_country_name_resolves(self, raw: str, alpha2: str) -> None:
+        assert resolve_country_alpha2(raw) == alpha2
+
+    @pytest.mark.parametrize("raw", ["US, GB", "France / Germany", "-", ", , ,"])
+    def test_an_interior_separator_is_still_ambiguous(self, raw: str) -> None:
+        assert resolve_country_alpha2(raw) is None
+
+    @pytest.mark.parametrize(
+        ("raw", "alpha2"),
+        [("U.S.", "US"), ("U.K.", "GB"), ("Guinea-Bissau", "GW"), ("Timor-Leste", "TL")],
+    )
+    def test_separators_that_are_part_of_the_name_survive(self, raw: str, alpha2: str) -> None:
+        """ "." and "-" are deliberately NOT in the stripped set."""
+        assert resolve_country_alpha2(raw) == alpha2

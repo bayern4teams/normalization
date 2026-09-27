@@ -80,6 +80,9 @@ class _FakePersistence:
     def load_clone_job_errors_page(self, job_id, *, limit, offset):
         return self._errors.get(job_id, [])[offset : offset + limit]
 
+    def count_clone_job_errors(self, job_id):
+        return len(self._errors.get(job_id, []))
+
 
 @pytest.fixture(autouse=True)
 def _secret_key(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -238,6 +241,12 @@ def test_every_request_field_reaches_the_stored_job(
 
         def get_columns(self, table):
             return []
+
+        def get_primary_key(self, table):
+            # Every real source reports its key, and detection now REFUSES
+            # to infer a semantic type for a key column — so a fake without
+            # this is a fake that cannot exercise the exclusion.
+            return ["companyID"]
 
         def close(self):
             pass
@@ -442,3 +451,78 @@ def test_the_plan_cannot_be_amended_once_tables_exist(
 def test_plan_routes_404_on_unknown_job(client: TestClient) -> None:
     assert client.get("/normalization/clone-jobs/nope/plan").status_code == 404
     assert client.patch("/normalization/clone-jobs/nope/plan", json={}).status_code == 404
+
+
+def _error_row(index: int) -> dict[str, Any]:
+    return {
+        "row_index": index,
+        "table_name": "Company",
+        "field": "revenue",
+        "original": "$1,234.56",
+        "error": "could not parse",
+    }
+
+
+@pytest.mark.unit
+class TestTheReportSaysHowMuchOfItIsThisJobs:
+    def test_the_total_is_scoped_to_the_job_not_the_table(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """One page cannot say how many rows there are, and the table holds
+        every job's: 4.3M rows from an earlier run were once read as one
+        run's output. Both jobs' rows are stored here on purpose."""
+        persistence = client.app.dependency_overrides[get_connections]()
+        mine = _plan_job(client, monkeypatch)
+        someone_else = _plan_job(client, monkeypatch)
+        persistence.save_clone_job_errors(mine, [_error_row(i) for i in range(3)])
+        persistence.save_clone_job_errors(someone_else, [_error_row(i) for i in range(40)])
+
+        response = client.get(f"/normalization/clone-jobs/{mine}/errors", params={"limit": 2})
+        assert response.status_code == 200
+        assert len(response.json()) == 2
+        assert response.headers["X-Total-Count"] == "3"
+
+    def test_a_job_with_no_errors_says_zero_rather_than_nothing(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        job_id = _plan_job(client, monkeypatch)
+        response = client.get(f"/normalization/clone-jobs/{job_id}/errors")
+        assert response.json() == []
+        assert response.headers["X-Total-Count"] == "0"
+
+
+@pytest.mark.unit
+class TestQualityReport:
+    def test_it_is_empty_before_any_table_finishes(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        job_id = _plan_job(client, monkeypatch)
+        body = client.get(f"/normalization/clone-jobs/{job_id}/quality").json()
+        assert body["tables"] == {}
+        assert body["status"] == "PENDING_DB_CREATE"
+
+    def test_it_reports_what_each_column_achieved(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        persistence = client.app.dependency_overrides[get_connections]()
+        job_id = _plan_job(client, monkeypatch)
+        job = persistence.get_clone_job(job_id)
+        job["quality"] = {
+            "Company": {
+                "revenue": {
+                    "values": 46956,
+                    "statuses": {"NORMALIZED": 30756, "INVALID": 16200},
+                    "emptied": 16200,
+                    "checked_idempotent": 50,
+                    "not_idempotent": 0,
+                }
+            }
+        }
+        persistence.save_clone_job(job_id, job)
+        body = client.get(f"/normalization/clone-jobs/{job_id}/quality").json()
+        column = body["tables"]["Company"]["revenue"]
+        assert column["emptied"] == 16200
+        assert column["not_idempotent"] == 0
+
+    def test_an_unknown_job_is_404(self, client: TestClient) -> None:
+        assert client.get("/normalization/clone-jobs/nope/quality").status_code == 404

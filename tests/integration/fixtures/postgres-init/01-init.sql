@@ -208,3 +208,41 @@ INSERT INTO signal_zip (entity_key, zip) VALUES
 
 GRANT SELECT ON signal_phone TO readonly_user;
 GRANT SELECT ON signal_zip TO readonly_user;
+
+-- #8: a table whose PRIMARY KEY is a textual column of a detectable
+-- semantic type. Inferring EMAIL here and normalizing it would fold two
+-- distinct keys into one — on a real source this exact shape existed
+-- (`PersonContact`'s whole sorting key was an email column).
+CREATE TABLE IF NOT EXISTS keyed_email (
+    contact_email TEXT PRIMARY KEY,
+    work_email TEXT
+);
+
+-- The first two differ ONLY in the domain's case, which EMAIL
+-- normalization folds (the local part is case-sensitive per RFC 5321, the
+-- domain is not). So they are two distinct keys with one normalized form —
+-- exactly the collision the exclusion exists to prevent.
+INSERT INTO keyed_email (contact_email, work_email) VALUES
+    ('ada@EXAMPLE.COM', 'ada@EXAMPLE.COM'),
+    ('ada@example.com', 'ada@example.com'),
+    ('grace@Example.com', 'grace@Example.com');
+
+-- #9/#13: one table whose columns land in three different outcomes, so a
+-- quality report has something to distinguish. `zip_no_country` is
+-- AMBIGUOUS (a postcode with no country is not a failure), `amount` is
+-- NORMALIZED, `bad_country` is INVALID.
+CREATE TABLE IF NOT EXISTS quality_source (
+    id SERIAL PRIMARY KEY,
+    zip_no_country TEXT,
+    bad_country TEXT,
+    messy_company TEXT
+);
+
+INSERT INTO quality_source (zip_no_country, bad_country, messy_company) VALUES
+    ('94043', 'Country located primarily in North America', 'Acme  Corporation'),
+    ('SW1A 1AA', 'A sovereign state in Western Europe', 'Globex   Inc.'),
+    ('M5V 3L9', 'Not a country at all', 'Initech—Systems'),
+    ('10115', 'United States', 'Umbrella  Corp');
+
+GRANT SELECT ON keyed_email TO readonly_user;
+GRANT SELECT ON quality_source TO readonly_user;

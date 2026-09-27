@@ -30,6 +30,7 @@ import multiprocessing
 import os
 import threading
 import uuid
+from collections import Counter
 from concurrent.futures import ProcessPoolExecutor
 from typing import TYPE_CHECKING, Any
 
@@ -177,10 +178,41 @@ _NEVER_INFERRED = frozenset({FieldSemanticType.FREE_TEXT, FieldSemanticType.UNKN
 # String/Nullable(String)/LowCardinality(String), MySQL longtext, etc.
 _TEXTUAL_NATIVE_TYPE_MARKERS = ("char", "text", "string", "clob", "enum", "json")
 
+# The second structural exclusion: a column in the table's own KEY is never
+# given an inferred semantic type.
+#
+# Normalization is many-to-one by design — `GB`, `uk` and `Great Britain`
+# all become `United Kingdom` — and applying that to a key silently merges
+# rows that were distinct. On ClickHouse the merge is not even visible:
+# `ReplacingMergeTree` deduplicates by the sorting key, so two keys folded
+# into one become ONE ROW. Measured on a real source, autodetect confidently
+# mapped `PersonContact.freeMails` to EMAIL at 0.95 — and `freeMails` is
+# that table's entire sorting key. Every join to the rest of the database
+# goes through these columns too.
+#
+# Read from the source's structure (`get_primary_key` /
+# `get_table_engine_info`), never from names: `_version` and `created_at`
+# are excluded because the source types them, not because of what they are
+# called. An operator can still configure a key column explicitly — an
+# explicit `field_config` is checked before this and always wins.
+
 
 def _is_textual(native_type: str) -> bool:
     lowered = native_type.lower()
     return any(marker in lowered for marker in _TEXTUAL_NATIVE_TYPE_MARKERS)
+
+
+def _key_columns(source: Any, table: str) -> list[str]:
+    """The table's own key, read from the source's structure.
+
+    One function because two callers need the same answer and must not
+    disagree about it: `plan_one_table` (which refuses to give a key column
+    a native destination type) and `_infer_field_configs` (which refuses to
+    infer a semantic type for one at all).
+    """
+    if isinstance(source, ClickHouseConnector):
+        return list(source.get_table_engine_info(table)[1])
+    return list(source.get_primary_key(table))
 
 
 def _sample_column_values(source: Any, table: str, columns: list[str]) -> dict[str, list[str]]:
@@ -209,6 +241,8 @@ def _infer_field_configs(
     registry: NormalizerRegistry,
     *,
     fallback_free_text: bool = False,
+    country: str | None = None,
+    locale: str | None = None,
 ) -> dict[str, dict[str, str]]:
     """`fallback_free_text` sweeps every remaining textual column into
     FREE_TEXT: unicode normalization, zero-width strip, whitespace collapse,
@@ -220,17 +254,22 @@ def _infer_field_configs(
     inferred: dict[str, dict[str, str]] = {}
     for table in tables:
         configured = explicit.get(table, {})
+        keys = set(_key_columns(source, table))
         unconfigured = [
             c.name
             for c in source.get_columns(table)
-            if not configured.get(c.name) and _is_textual(c.native_type)
+            if not configured.get(c.name) and _is_textual(c.native_type) and c.name not in keys
         ]
         if not unconfigured:
             continue
         samples = _sample_column_values(source, table, unconfigured)
         for column in unconfigured:
             best = suggest_semantic_type(
-                column, sample_values=samples.get(column), registry=registry
+                column,
+                sample_values=samples.get(column),
+                registry=registry,
+                country=country,
+                locale=locale,
             )[0]
             if (
                 best.confidence >= _AUTODETECT_MIN_CONFIDENCE
@@ -279,6 +318,12 @@ def create_clone_job(
                 explicit_configs,
                 registry,
                 fallback_free_text=request.get("normalize_unconfigured_text", False),
+                # The job's own country/locale, so a column is judged by
+                # the same context that will normalize it. Without them a
+                # real PHONE column is demoted for holding phones a
+                # region-less parser cannot read.
+                country=request.get("country"),
+                locale=request.get("locale"),
             )
     finally:
         source.close()
@@ -518,9 +563,8 @@ def plan_one_table(
     }
     table_engine: str | None = None
     if isinstance(source, ClickHouseConnector):
-        table_engine, key_columns = source.get_table_engine_info(table)
-    else:
-        key_columns = list(source.get_primary_key(table))
+        table_engine = source.get_table_engine_info(table)[0]
+    key_columns = _key_columns(source, table)
     overrides, extras, typed_columns = _destination_plan(
         semantic_types,
         dest_engine,
@@ -1010,6 +1054,7 @@ def _apply_column(
             ctx=ctx,
             country=country,
         )
+    _check_idempotent(by_value, pool=pool, planner=planner, ctx=ctx, stats=stats)
     for offset, row in pending:
         original = row[column]
         if original is None:
@@ -1024,6 +1069,11 @@ def _apply_column(
         # ("maybe", "N/A") is counted: that one really was information.
         counted = result.original_kind is not MissingKind.EMPTY_STRING
         stats.total += counted
+        if counted:
+            # The SAME gate `total` uses. Counting statuses for every row
+            # while counting `total` for only some produced a report whose
+            # own categories exceeded its own denominator.
+            stats.record_status(result.normalization_status)
         errors = _apply_value(
             row,
             result,
@@ -1133,17 +1183,34 @@ _SAMPLE_VALUES_PER_COLUMN = 3
 class _ColumnStats:
     """What one column of one table did, summed across every chunk.
 
-    Both findings it feeds are about the COLUMN, not about any one row, and
+    Every finding it feeds is about the COLUMN, not about any one row, and
     nothing in this pipeline used to say anything at that level: a column
     that arrived 34.5% NULL, and a column where 99.2% of the values are not
     the type they were mapped to, both looked from the destination exactly
     like a column that simply held what it held.
+
+    The per-status counts are the same tally read the other way round — what
+    the column achieved rather than what went wrong with it. They cost
+    nothing extra to keep (the status of every value is already in hand) and
+    they are the one thing that previously had to be reconstructed by
+    querying the destination column by column after the fact.
     """
 
     total: int = 0
     nulled: int = 0
     invalid: int = 0
+    unstable: int = 0
+    checked_stable: int = 0
+    # Keyed by NormalizationStatus VALUE, counted for every status there is
+    # rather than for a chosen few. Hand-picking three of the nine members
+    # of `NormalizationStatus` silently dropped the rest: measured on a real
+    # column, 48,416 of 50,000 values were UNCHANGED (already clean) and the
+    # report simply did not mention them, so its own numbers did not add up
+    # to the column's. A Counter also cannot fall behind a status added
+    # later.
+    statuses: Counter[str] = dataclasses.field(default_factory=Counter)
     samples: list[str] = dataclasses.field(default_factory=list)
+    unstable_samples: list[str] = dataclasses.field(default_factory=list)
 
     def record_invalid(self, value: str) -> None:
         self.invalid += 1
@@ -1152,6 +1219,85 @@ class _ColumnStats:
         # "Country located primarily in North America" is the answer.
         if len(self.samples) < _SAMPLE_VALUES_PER_COLUMN and value not in self.samples:
             self.samples.append(value)
+
+    def record_status(self, status: NormalizationStatus) -> None:
+        self.statuses[status.value] += 1
+
+    def record_unstable(self, value: str, again: str) -> None:
+        self.unstable += 1
+        if len(self.unstable_samples) < _SAMPLE_VALUES_PER_COLUMN:
+            self.unstable_samples.append(f"{value!r} -> {again!r}")
+
+    def quality(self) -> dict[str, Any]:
+        """The per-column report, as stored on the job.
+
+        `statuses` sums to `values` by construction — that is the property
+        that makes the report readable, and the first version did not have
+        it.
+        """
+        return {
+            "values": self.total,
+            "statuses": dict(sorted(self.statuses.items())),
+            "emptied": self.nulled,
+            "checked_idempotent": self.checked_stable,
+            "not_idempotent": self.unstable,
+        }
+
+
+# How many of a column's distinct NORMALIZED outputs are fed back in per
+# chunk to check that normalizing them again changes nothing (§71's
+# `normalize(normalize(x)) == normalize(x)`).
+#
+# A property test already searches for counterexamples, but only over
+# GenericTextNormalizer and only over generated strings. Real data is a
+# different search: it reaches every semantic type, under the job's real
+# country/locale, with values no generator would produce. Bounded per chunk
+# because it costs one extra normalize per value checked — and only values
+# normalization actually CHANGED are worth checking, since an output equal
+# to its input is a fixed point by inspection.
+_IDEMPOTENCY_SAMPLE = int(os.environ.get("NORM_CLONE_IDEMPOTENCY_SAMPLE", "50"))
+
+
+def _check_idempotent(
+    by_value: dict[str, NormalizedValue],
+    *,
+    pool: Any,
+    planner: DistinctValuePlanner,
+    ctx: NormalizationContext,
+    stats: _ColumnStats,
+) -> None:
+    """Feed this column's own outputs back in; a different answer is a bug.
+
+    Only outputs normalization CHANGED are checked: an output identical to
+    its input is a fixed point by inspection, so checking it would spend a
+    normalize call to learn nothing. That also makes the check free for a
+    column that is already clean.
+
+    Reported, never repaired. A value that will not settle is a defect in a
+    normalizer, and quietly applying the second answer would hide it while
+    making the destination depend on how many times the pipeline ran.
+    """
+    changed = [
+        result.display
+        for original, result in by_value.items()
+        if result.display is not None and result.display != original
+    ]
+    sample = sorted(set(changed))[:_IDEMPOTENCY_SAMPLE]
+    if not sample:
+        return
+    again = _normalize_distinct(
+        pool,
+        planner,
+        sample,
+        semantic_type=ctx.semantic_type,
+        context=ctx,
+        profile=SCAFFOLD_PROFILE,
+    )
+    for value in sample:
+        stats.checked_stable += 1
+        settled = again.get(value)
+        if settled is not None and settled.display != value:
+            stats.record_unstable(value, settled.display or "")
 
 
 def _drop_rejected_country(
@@ -1535,6 +1681,10 @@ def _report_column_findings(
     AMBIGUOUS deliberately does not count toward the second. A POSTCODE
     column with no country is 100% AMBIGUOUS and perfectly well typed — the
     normalizer refused to guess, which is not the column being wrong.
+
+    The third finding, **not idempotent**, has no threshold: §71 says
+    `normalize(normalize(x)) == normalize(x)`, so ONE value that will not
+    settle is a defect worth a row, not a rate to tolerate.
     """
     rows = []
     for column, stat in sorted(stats.items()):
@@ -1554,6 +1704,13 @@ def _report_column_findings(
                     f"max_new_null_rate of {ceiling}"
                 )
                 raise CloneJobStateError(msg)
+        if stat.unstable:
+            findings.append(
+                f"{stat.unstable} of {stat.checked_stable} normalized values in this column "
+                f"change again when normalized a second time, e.g. "
+                f"{'; '.join(stat.unstable_samples)} — normalization is not converging "
+                "(Source.txt §71)"
+            )
         if mistyped >= _TYPE_MISMATCH_REPORT and stat.total >= _TYPE_MISMATCH_MIN_VALUES:
             examples = ", ".join(repr(v) for v in stat.samples)
             findings.append(
@@ -1749,6 +1906,13 @@ def _normalize_table(
         semantic_types=configured_columns,
         ceiling=job.get("max_new_null_rate"),
     )
+    # What each column achieved, not only what went wrong with it. Kept on
+    # the job rather than in the error report because it is a result, not a
+    # finding — and read separately from `GET /clone-jobs/{id}`, which the
+    # UI polls every two seconds and should not carry a per-column table.
+    job.setdefault("quality", {})[table] = {
+        column: stat.quality() for column, stat in sorted(stats.items()) if stat.total
+    }
 
     if in_place:
         # Swap only after the table is fully written, and BEFORE

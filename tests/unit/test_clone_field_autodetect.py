@@ -27,12 +27,24 @@ from normapi import clone_executor
 class _FakeSource:
     """Just enough connector surface for the inference pass."""
 
-    def __init__(self, columns: dict[str, list[str]], rows: dict[str, list[Any]]) -> None:
+    def __init__(
+        self,
+        columns: dict[str, list[str]],
+        rows: dict[str, list[Any]],
+        keys: dict[str, list[str]] | None = None,
+    ) -> None:
         self._columns = columns
         self._rows = rows
+        self._keys = keys or {}
 
     def list_tables(self) -> list[str]:
         return list(self._columns)
+
+    def get_primary_key(self, table: str) -> list[str]:
+        """Every real source reports its key, and inference now refuses to
+        touch a key column — so a fake without this cannot stand in for
+        one."""
+        return self._keys.get(table, [])
 
     def get_columns(self, table: str) -> list[ColumnInfo]:
         return [ColumnInfo(name=c, native_type="text") for c in self._columns[table]]

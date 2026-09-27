@@ -42,6 +42,7 @@ from normcore.pii import character_class_mask, content_hash
 from normcore.rules import ComponentVersionInfo, ExplanationText, ValidationOutcome
 from normcore.trace import TraceStep
 
+from normalizers import text_ops
 from normalizers._cldr_language_names import CLDR_LANGUAGE_NAMES
 
 if TYPE_CHECKING:
@@ -86,7 +87,9 @@ class LanguageNormalizer:
         if value.strip() == "":
             return _missing(value, MissingKind.EMPTY_STRING, ctx)
 
-        cleaned = value.strip()
+        # Same edge set COUNTRY resolves by: a lookup value wrapped in
+        # list or path separators (`/en`, `, , , , USD`) is the value.
+        cleaned, _ = text_ops.strip_enclosing_separators(value)
         subtag, tag_parts = _split_language_tag(cleaned)
         language = _resolve_language(subtag)
         if language is None:

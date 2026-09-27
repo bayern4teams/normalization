@@ -712,6 +712,22 @@ class PgPersistence:
                     rows,
                 )
 
+    def count_clone_job_errors(self, job_id: str) -> int:
+        """How many report rows belong to THIS job.
+
+        A page of results cannot answer that, and the table holds every
+        job's rows: 4.3M rows from an earlier run were read as one run's
+        output before anyone checked the `job_id`. The listing was always
+        correctly scoped — the TOTAL simply was not available anywhere, so
+        the only number a reader had was the table's.
+        """
+        with self._engine.begin() as conn:
+            total = conn.execute(
+                sa.text("SELECT count(*) FROM normalization_clone_job_errors WHERE job_id = :jid"),
+                {"jid": job_id},
+            ).scalar_one()
+        return int(total)
+
     def load_clone_job_errors_page(
         self, job_id: str, *, limit: int, offset: int
     ) -> list[dict[str, Any]]:

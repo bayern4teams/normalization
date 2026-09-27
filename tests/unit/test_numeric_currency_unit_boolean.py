@@ -432,3 +432,41 @@ class TestCurrencyCldrNamesAndSymbols:
         ):
             result = currency_normalizer.normalize(value, _ctx(FieldSemanticType.CURRENCY))
             assert result.structured["canonical_currency"] == expected, value
+
+
+@pytest.mark.unit
+class TestADollarSignInsideProseIsNotACurrency:
+    """`"$" in cleaned` made any string CONTAINING a dollar sign resolve to
+    the context country's dollar. Measured on a real source, a column of
+    revenue RANGE strings came back VALID USD at 0.8 confidence under
+    `country=US` — a guess about arbitrary prose, which §47 forbids.
+    """
+
+    @pytest.mark.parametrize(
+        "value", ["$5 mil. - $10 mil.", "Under $500,000", "$500,000 - $1 mil.", "costs $5"]
+    )
+    def test_prose_containing_a_dollar_sign_stays_unresolved(self, value: str) -> None:
+        normalizer = CurrencyNormalizer()
+        ctx = NormalizationContext(
+            field_name="c", semantic_type=FieldSemanticType.CURRENCY, country="US"
+        )
+        result = normalizer.normalize(value, ctx)
+        assert result.normalization_status is NormalizationStatus.AMBIGUOUS
+        assert result.comparison is None
+
+    def test_a_bare_dollar_sign_still_resolves_from_the_country(self) -> None:
+        """The behaviour the substring check existed for is unchanged."""
+        normalizer = CurrencyNormalizer()
+        for country, expected in (("US", "USD"), ("CA", "CAD"), ("AU", "AUD")):
+            ctx = NormalizationContext(
+                field_name="c", semantic_type=FieldSemanticType.CURRENCY, country=country
+            )
+            assert normalizer.normalize("$", ctx).comparison == expected
+            # Surrounding whitespace is not a different value.
+            assert normalizer.normalize(" $ ", ctx).comparison == expected
+
+    def test_a_wrapped_currency_code_resolves(self) -> None:
+        """Same edge-stripping COUNTRY got: `, USD` is USD."""
+        normalizer = CurrencyNormalizer()
+        ctx = NormalizationContext(field_name="c", semantic_type=FieldSemanticType.CURRENCY)
+        assert normalizer.normalize(", USD", ctx).comparison == "USD"

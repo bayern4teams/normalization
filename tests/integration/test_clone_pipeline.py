@@ -26,12 +26,14 @@ import decimal
 import os
 import time
 import uuid
+from pathlib import Path
 
 import clickhouse_connect
 import psycopg
 import pytest
 from cryptography.fernet import Fernet
 from normalizers.boolean import BooleanNormalizer
+from normalizers.company import CompanyNormalizer
 from normalizers.country import CountryNormalizer
 from normalizers.date import DateNormalizer
 from normalizers.email import EmailNormalizer
@@ -41,6 +43,7 @@ from normalizers.passthrough import PassthroughNormalizer
 from normalizers.phone import PhoneNormalizer
 from normalizers.postcode import PostcodeNormalizer
 from normapi.pg_persistence import PgPersistence
+from normdict.loader import DictionaryLoader
 
 from normapi import clone_executor
 from normcore import Dispatcher, NormalizerRegistry
@@ -163,9 +166,10 @@ def test_postgres_clone_pipeline_ddl_population_errors_and_resume(
     assert job["status"] == "COMPLETED", job.get("error")
     # 3 customers + 2 clone_source + 3 typed_source + 4 context_source
     # + 6 entity_country + 5 entity_phone + 25 mistyped_source
-    # + 3 signal_phone + 3 signal_zip: a clone copies EVERY table in the
-    # source database, so adding a fixture table moves this.
-    assert job["progress"]["rows_done"] == 54
+    # + 3 signal_phone + 3 signal_zip + 3 keyed_email + 4 quality_source:
+    # a clone copies EVERY table in the source database, so adding a
+    # fixture table moves this.
+    assert job["progress"]["rows_done"] == 61
     assert sorted(job["progress"]["tables_completed"]) == sorted(job["tables"])
 
     with psycopg.connect(dest_dsn) as conn:
@@ -197,7 +201,7 @@ def test_postgres_clone_pipeline_ddl_population_errors_and_resume(
     assert started_again is True
     job = _wait_for_terminal(persistence, job_id)
     assert job["status"] == "COMPLETED"
-    assert job["progress"]["rows_done"] == 54  # unchanged — nothing re-inserted
+    assert job["progress"]["rows_done"] == 61  # unchanged — nothing re-inserted
 
     with psycopg.connect(dest_dsn) as conn:
         assert conn.execute("SELECT count(*) FROM clone_source").fetchone()[0] == 2
@@ -892,3 +896,127 @@ def test_a_phone_and_a_postcode_can_name_the_country_too(persistence: PgPersiste
     # Entity 3 had no signal anywhere, so it stays unparsed rather than
     # being given the most popular country in the map.
     assert phones[3] is None
+
+
+def _quality_dispatcher() -> Dispatcher:
+    registry = NormalizerRegistry()
+    registry.register(PassthroughNormalizer())
+    registry.register(PostcodeNormalizer())
+    registry.register(CountryNormalizer())
+    registry.register(EmailNormalizer())
+    registry.register(
+        CompanyNormalizer(DictionaryLoader(Path(__file__).parents[2] / "data" / "dictionaries"))
+    )
+    return Dispatcher(registry, env_id="test-quality-clone")
+
+
+@pytest.mark.integration
+def test_a_key_column_is_never_given_an_inferred_semantic_type(
+    persistence: PgPersistence,
+) -> None:
+    """`keyed_email.contact_email` is the table's PRIMARY KEY and looks
+    exactly like an email column, because it is one.
+
+    Normalization is many-to-one: `ada@EXAMPLE.COM` and `ada@example.com`
+    differ only in the domain's case, which EMAIL normalization folds, so
+    they are two distinct keys with ONE normalized form. Inferring EMAIL
+    here merges them — silently, and on a ReplacingMergeTree permanently.
+    `work_email` holds the same data in a non-key column and IS detected,
+    which is what makes this an exclusion rather than a gap in detection.
+    """
+    dest_database = f"clone_keyed_{uuid.uuid4().hex[:8]}"
+    source_conn, dest_conn = _pg_connections(persistence)
+
+    job = clone_executor.create_clone_job(
+        persistence,
+        request={
+            "source_connection_id": source_conn["connection_id"],
+            "source_database": "source_demo",
+            "destination_connection_id": dest_conn["connection_id"],
+            "destination_database": dest_database,
+            "autodetect_field_types": True,
+            "field_configs": {},
+        },
+        registry=_quality_dispatcher().registry,
+    )
+    configs = job["field_configs"].get("keyed_email", {})
+    assert "contact_email" not in configs
+    assert configs.get("work_email") == "EMAIL"
+
+    _run_to_completion(persistence, _quality_dispatcher(), job["job_id"], dest_database)
+
+    dest_dsn = f"postgresql://writable_user:writable_pass@{PG_HOST}:{PG_PORT}/{dest_database}"
+    with psycopg.connect(dest_dsn) as conn:
+        rows = conn.execute(
+            "SELECT contact_email, work_email FROM keyed_email ORDER BY contact_email"
+        ).fetchall()
+    # All three keys survive as they arrived; the two that differ only in
+    # case are still two rows.
+    assert [r[0] for r in rows] == ["ada@EXAMPLE.COM", "ada@example.com", "grace@Example.com"]
+    # The non-key copy of the same data WAS normalized — and the first two
+    # collapsed to the same value there, which is what would have happened
+    # to the key.
+    assert sorted(r[1] for r in rows) == [
+        "ada@example.com",
+        "ada@example.com",
+        "grace@example.com",
+    ]
+
+
+@pytest.mark.integration
+def test_the_job_reports_what_each_column_achieved(persistence: PgPersistence) -> None:
+    """Three columns, three different outcomes, one report.
+
+    `zip_no_country` is 100% AMBIGUOUS and perfectly well typed — the
+    normalizer refused to guess a country, which is not a failure and must
+    not read as one. `bad_country` is mostly INVALID. `messy_company`
+    normalizes cleanly. Reconstructing this previously meant querying the
+    destination column by column after the fact.
+    """
+    dest_database = f"clone_qual_{uuid.uuid4().hex[:8]}"
+    source_conn, dest_conn = _pg_connections(persistence)
+
+    job = clone_executor.create_clone_job(
+        persistence,
+        request={
+            "source_connection_id": source_conn["connection_id"],
+            "source_database": "source_demo",
+            "destination_connection_id": dest_conn["connection_id"],
+            "destination_database": dest_database,
+            "autodetect_field_types": False,
+            "field_configs": {
+                "quality_source": {
+                    "zip_no_country": "POSTCODE",
+                    "bad_country": "COUNTRY",
+                    "messy_company": "COMPANY_NAME",
+                }
+            },
+        },
+    )
+    job_id = job["job_id"]
+    job = _run_to_completion(persistence, _quality_dispatcher(), job_id, dest_database)
+
+    quality = job["quality"]["quality_source"]
+    # 3 of 4 postcodes had no country to validate against, so the
+    # normalizer refused to guess. The fourth is the row whose own
+    # `bad_country` column says "United States" — within-row country
+    # propagation handed it over, and `10115` validated. The report
+    # distinguishes those two outcomes; the destination column cannot.
+    assert quality["zip_no_country"]["statuses"] == {"AMBIGUOUS": 3, "NORMALIZED": 1}
+    assert quality["bad_country"]["statuses"] == {"INVALID": 3, "NORMALIZED": 1}
+    assert quality["messy_company"]["statuses"] == {"NORMALIZED": 4}
+    # Whatever the mix, the categories sum to the column's own value count.
+    for column in quality.values():
+        assert sum(column["statuses"].values()) == column["values"]
+    # Nothing in this column changed, so nothing needed re-checking; the
+    # one column normalization did rewrite was checked in full.
+    assert quality["zip_no_country"]["checked_idempotent"] == 0
+    assert quality["messy_company"]["checked_idempotent"] == 4
+
+    # A column that refused to guess produces no finding at all.
+    errors = persistence.load_clone_job_errors_page(job_id, limit=200, offset=0)
+    column_level = {e["field"] for e in errors if e["row_index"] == -1}
+    assert "zip_no_country" not in column_level
+
+    assert all(c["not_idempotent"] == 0 for c in quality.values())
+    assert persistence.count_clone_job_errors(job_id) == len(errors)

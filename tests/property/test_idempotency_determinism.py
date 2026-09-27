@@ -16,7 +16,10 @@ import pytest
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 from normalizers.generic_text import GenericTextNormalizer
+from normapi.app import build_normalizer_registry
+from normapi.scaffold_profile import SCAFFOLD_PROFILE
 from normcore.context import NormalizationContext
+from normcore.dispatch import Dispatcher
 from normcore.enums import FieldSemanticType
 from normdict.loader import DictionaryLoader
 
@@ -84,3 +87,55 @@ def test_normalize_never_raises_or_fails_on_arbitrary_unicode(value: str) -> Non
     abort a run")."""
     result = _normalizer.normalize(value, _ctx)
     assert result.errors == []
+
+
+# §71 is a claim about the whole pipeline, not about one normalizer, but
+# only GenericTextNormalizer was ever fuzzed for it. These reach every
+# semantic type a clone job can configure, through the Dispatcher that a
+# clone job actually calls — including the multivalue and missing-sentinel
+# paths, which live in the Dispatcher and so were never covered above.
+_ALL_TYPES = [
+    FieldSemanticType.COUNTRY,
+    FieldSemanticType.LANGUAGE,
+    FieldSemanticType.CURRENCY,
+    FieldSemanticType.MONEY,
+    FieldSemanticType.NUMERIC,
+    FieldSemanticType.POSTCODE,
+    FieldSemanticType.PHONE,
+    FieldSemanticType.EMAIL,
+    FieldSemanticType.URL,
+    FieldSemanticType.DATE,
+    FieldSemanticType.BOOLEAN,
+    FieldSemanticType.IDENTIFIER,
+    FieldSemanticType.COMPANY_NAME,
+    FieldSemanticType.PERSON_NAME,
+]
+
+
+@pytest.fixture(scope="module")
+def dispatcher() -> Dispatcher:
+    return Dispatcher(
+        build_normalizer_registry(DictionaryLoader(_DICT_ROOT)), env_id="property-test"
+    )
+
+
+@pytest.mark.property
+@pytest.mark.parametrize("semantic_type", _ALL_TYPES, ids=lambda t: t.value)
+@settings(max_examples=60, suppress_health_check=_SUPPRESSED_HEALTH_CHECKS, deadline=None)
+@given(value=_TEXT_STRATEGY)
+def test_every_semantic_type_converges_in_one_pass(
+    dispatcher: Dispatcher, semantic_type: FieldSemanticType, value: str
+) -> None:
+    """`normalize(normalize(x)) == normalize(x)`, for each type, with a
+    country and locale supplied — the context a clone job runs under, and
+    the one where a normalizer has the most freedom to rewrite a value."""
+    ctx = NormalizationContext(
+        field_name="probe", semantic_type=semantic_type, country="US", locale="en-US"
+    )
+    first = dispatcher.normalize(value, semantic_type, ctx, SCAFFOLD_PROFILE)
+    if first.display is None:
+        return
+    second = dispatcher.normalize(first.display, semantic_type, ctx, SCAFFOLD_PROFILE)
+    assert second.display == first.display, (
+        f"{semantic_type.value}: {value!r} -> {first.display!r} -> {second.display!r}"
+    )

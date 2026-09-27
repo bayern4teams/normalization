@@ -224,6 +224,30 @@ def trim(value: str) -> tuple[str, bool]:
     return output, output != value
 
 
+# List and path separators, plus the whitespace that usually comes with
+# them. NOT ".", which is load-bearing in "U.S." and "U.K.", and not "-",
+# which is inside real names ("Guinea-Bissau", "Timor-Leste").
+_ENCLOSING_SEPARATORS = " \t\n\r/\\,;:|" + "\u00b7\u2022\u2219"
+
+
+def strip_enclosing_separators(value: str) -> tuple[str, bool]:
+    """Drop list/path separators from BOTH ENDS of a value.
+
+    A LOOKUP KEY transform, like `strip_diacritics`: for values that are
+    supposed to BE a code or a name, a separator at the edge is packaging
+    left over from whatever produced the cell, not part of the value.
+    Measured on real sources, `/türkiye` (a URL path fragment that reached a
+    country column) and `, , , , United Kingdom` (a list that lost all but
+    one element) were both unresolvable purely because of their edges.
+
+    Only the ends. An interior separator is genuinely ambiguous — `US, GB`
+    stays unresolved rather than becoming a guess about which one was meant
+    — and that is the whole difference between this and splitting.
+    """
+    output = value.strip(_ENCLOSING_SEPARATORS)
+    return output, output != value
+
+
 def normalize_punctuation(value: str) -> tuple[str, bool]:
     output = "".join(_PUNCTUATION_MAP.get(ch, ch) for ch in value)
     return output, output != value

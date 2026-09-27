@@ -31,6 +31,7 @@ from normcore.pii import character_class_mask, content_hash
 from normcore.rules import ComponentVersionInfo, ExplanationText, ValidationOutcome
 from normcore.trace import TraceStep
 
+from normalizers import text_ops
 from normalizers._cldr_currency_names import CLDR_CURRENCY_NAMES, CLDR_CURRENCY_SYMBOLS
 
 if TYPE_CHECKING:
@@ -140,7 +141,9 @@ class CurrencyNormalizer:
         if value.strip() == "":
             return _missing(value, MissingKind.EMPTY_STRING, ctx)
 
-        cleaned = value.strip()
+        # Same edge set COUNTRY resolves by: a lookup value wrapped in
+        # list or path separators (`/en`, `, , , , USD`) is the value.
+        cleaned, _ = text_ops.strip_enclosing_separators(value)
         canonical, confidence = _resolve_currency(cleaned, ctx)
 
         if canonical is None:
@@ -285,7 +288,16 @@ def _resolve_currency(cleaned: str, ctx: NormalizationContext) -> tuple[str | No
     # "$" reaches here only when it is NOT one of the disambiguated forms
     # above ("A$", "CA$", "$US"), so a bare "$" needs context or stays
     # ambiguous — never guessed (§47).
-    if "$" in cleaned:
+    #
+    # The value must BE the sign, not merely contain it. `"$" in cleaned`
+    # made any string with a dollar sign anywhere in it resolve to the
+    # context country's dollar: measured on a real source, the range
+    # strings `$5 mil. - $10 mil.` and `Under $500,000` all came back VALID
+    # USD at 0.8 confidence under `country=US`. That is a guess about
+    # arbitrary prose, which §47 and this project's "never guess on
+    # ambiguous data" rule both forbid — and it is the same class of bug
+    # the disambiguated forms above exist to avoid.
+    if cleaned.strip() == "$":
         country = (ctx.country or "").upper()
         if country in _DOLLAR_COUNTRY_MAP:
             return _DOLLAR_COUNTRY_MAP[country], 0.8

@@ -112,6 +112,12 @@ def resolve_country_alpha2(raw: str) -> str | None:
       even though "US"/"USA" resolve fine (found empirically in M4
       against §33's own "U.S." example). This also lets one alias entry
       cover both "US Virgin Islands" and "U.S. Virgin Islands".
+    - list/path separators stripped from the ends: `/türkiye` and
+      `, , , , United Kingdom` are a real country name wrapped in the
+      packaging of whatever produced the cell (a URL path, a list that
+      lost every other element). Both were found in real columns. Only
+      the ENDS — `US, GB` stays unresolved, because which one was meant
+      is a guess.
     - diacritics stripped: "Panamá", "México", "Perú", "Sénégal",
       "Israël" are the country's real name in its own language and
       resolve once the accents are folded. Found empirically in a real
@@ -130,8 +136,9 @@ def resolve_country_alpha2(raw: str) -> str | None:
         return None
 
     deaccented, _ = text_ops.strip_diacritics(candidate)
+    unwrapped, _ = text_ops.strip_enclosing_separators(candidate)
     seen: set[str] = set()
-    for variant in (candidate, candidate.replace(".", ""), deaccented):
+    for variant in (candidate, candidate.replace(".", ""), deaccented, unwrapped):
         if not variant or variant in seen:
             continue
         seen.add(variant)

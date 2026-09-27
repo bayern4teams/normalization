@@ -40,7 +40,7 @@ from __future__ import annotations
 import uuid
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Body, Depends, HTTPException
+from fastapi import APIRouter, Body, Depends, HTTPException, Response
 from normcore.pii import safe_preview
 from normexec.cache import NormalizationCache
 
@@ -981,6 +981,28 @@ def amend_clone_job_plan(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
+@router.get("/clone-jobs/{job_id}/quality")
+def get_clone_job_quality(
+    job_id: str,
+    connections: Annotated[PgPersistence, Depends(get_connections)],
+) -> dict[str, Any]:
+    """Per column, what normalization achieved: how many values came out
+    NORMALIZED, PARSED, AMBIGUOUS, INVALID, how many were emptied, and how
+    many were checked for idempotency.
+
+    Separate from `GET /clone-jobs/{id}` because that one is polled every
+    two seconds and this is a table of every configured column in every
+    table. Separate from the error report because these are results, not
+    findings — a 100% AMBIGUOUS POSTCODE column has nothing wrong with it.
+
+    Empty until Phase 2 has finished a table; a table appears as it
+    completes, so a long job's numbers are readable while it runs."""
+    job = connections.get_clone_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"No such clone job: {job_id}")
+    return {"job_id": job_id, "status": job["status"], "tables": job.get("quality", {})}
+
+
 @router.post("/clone-jobs/{job_id}/verify-database")
 def verify_clone_job_database(
     job_id: str,
@@ -1029,16 +1051,24 @@ _MAX_CLONE_ERRORS_PAGE_SIZE = 1000
 @router.get("/clone-jobs/{job_id}/errors", response_model=list[NormalizationError])
 def get_clone_job_errors(
     job_id: str,
+    response: Response,
     connections: Annotated[PgPersistence, Depends(get_connections)],
     limit: int = 100,
     offset: int = 0,
 ) -> list[NormalizationError]:
     """Decision #9: a complete, paginated error/warning report. Same
-    `NormalizationError`-shaped response as `GET /runs/{run_id}/errors`."""
+    `NormalizationError`-shaped response as `GET /runs/{run_id}/errors`.
+
+    `X-Total-Count` is THIS job's row count. A header rather than a wrapper
+    object so the existing response shape is unchanged: the number was the
+    thing missing, not the list. Without it the only count available to a
+    reader was the table's, which holds every job's rows — 4.3M of them
+    from an earlier run were once read as one run's output."""
     limit = max(1, min(limit, _MAX_CLONE_ERRORS_PAGE_SIZE))
     offset = max(0, offset)
     if connections.get_clone_job(job_id) is None:
         raise HTTPException(status_code=404, detail=f"No such clone job: {job_id}")
+    response.headers["X-Total-Count"] = str(connections.count_clone_job_errors(job_id))
     rows = connections.load_clone_job_errors_page(job_id, limit=limit, offset=offset)
     return [
         NormalizationError(
