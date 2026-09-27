@@ -38,6 +38,7 @@ from normalizers.email import EmailNormalizer
 from normalizers.money import MoneyNormalizer
 from normalizers.numeric import NumericNormalizer
 from normalizers.passthrough import PassthroughNormalizer
+from normalizers.phone import PhoneNormalizer
 from normalizers.postcode import PostcodeNormalizer
 from normapi.pg_persistence import PgPersistence
 
@@ -160,10 +161,11 @@ def test_postgres_clone_pipeline_ddl_population_errors_and_resume(
     assert started is True
     job = _wait_for_terminal(persistence, job_id)
     assert job["status"] == "COMPLETED", job.get("error")
-    # 3 customers + 2 clone_source + 3 typed_source + 4 context_source: a
-    # clone copies EVERY table in the source database, so adding a fixture
-    # table moves this.
-    assert job["progress"]["rows_done"] == 12
+    # 3 customers + 2 clone_source + 3 typed_source + 4 context_source
+    # + 6 entity_country + 5 entity_phone + 25 mistyped_source: a clone
+    # copies EVERY table in the source database, so adding a fixture table
+    # moves this.
+    assert job["progress"]["rows_done"] == 48
     assert sorted(job["progress"]["tables_completed"]) == sorted(job["tables"])
 
     with psycopg.connect(dest_dsn) as conn:
@@ -195,7 +197,7 @@ def test_postgres_clone_pipeline_ddl_population_errors_and_resume(
     assert started_again is True
     job = _wait_for_terminal(persistence, job_id)
     assert job["status"] == "COMPLETED"
-    assert job["progress"]["rows_done"] == 12  # unchanged — nothing re-inserted
+    assert job["progress"]["rows_done"] == 48  # unchanged — nothing re-inserted
 
     with psycopg.connect(dest_dsn) as conn:
         assert conn.execute("SELECT count(*) FROM clone_source").fetchone()[0] == 2
@@ -676,3 +678,142 @@ def test_row_country_reaches_the_rest_of_its_row(persistence: PgPersistence) -> 
     # Columns that lost nothing are not reported — one row per gutted
     # column, not one per column.
     assert set(column_report) == {"active"}
+
+
+def _entity_dispatcher() -> Dispatcher:
+    registry = NormalizerRegistry()
+    registry.register(PassthroughNormalizer())
+    registry.register(CountryNormalizer())
+    registry.register(PhoneNormalizer())
+    return Dispatcher(registry, env_id="test-entity-clone")
+
+
+@pytest.mark.integration
+def test_a_siblings_country_reaches_a_phone_in_another_table(
+    persistence: PgPersistence,
+) -> None:
+    """The cross-table half of country propagation, and the column-level
+    wrong-semantic-type finding, in one pass because they are one pass.
+
+    A company's country lives in its location rows; the phone that needs a
+    country to parse lives in its company row. Phase 2 streams one table at
+    a time and never holds two, so nothing could connect them — a UK
+    landline stayed AMBIGUOUS next to a column that knew it was in the UK.
+    Measured on a real source, this reaches 339,596 phone numbers across
+    357 countries.
+
+    Every guard is exercised: an entity whose rows disagree is dropped
+    rather than resolved, an entity whose country column never resolved
+    contributes nothing, a self-describing value is unaffected, and the
+    entity id being TEXT in one table and INTEGER in the other still joins.
+    """
+    dest_database = f"clone_xtab_{uuid.uuid4().hex[:8]}"
+    source_conn, dest_conn = _pg_connections(persistence)
+
+    job = clone_executor.create_clone_job(
+        persistence,
+        request={
+            "source_connection_id": source_conn["connection_id"],
+            "source_database": "source_demo",
+            "destination_connection_id": dest_conn["connection_id"],
+            "destination_database": dest_database,
+            "autodetect_field_types": False,
+            "cross_table_entity_key": "company_key",
+            "field_configs": {
+                "entity_country": {"country_name": "COUNTRY"},
+                "entity_phone": {"tel": "PHONE"},
+            },
+        },
+    )
+    job_id = job["job_id"]
+    job = _run_to_completion(persistence, _entity_dispatcher(), job_id, dest_database)
+
+    dest_dsn = f"postgresql://writable_user:writable_pass@{PG_HOST}:{PG_PORT}/{dest_database}"
+    with psycopg.connect(dest_dsn) as conn:
+        phones = dict(conn.execute("SELECT tel, tel_code FROM entity_phone ORDER BY id").fetchall())
+
+    # Entity 11: only the map knows this is a UK number. A London landline
+    # is not parseable at all without a region, and this is the assertion
+    # the whole feature exists for.
+    assert phones["+44 20 7930 4832"] == "+442079304832"
+    # Entity 22: same, for a Berlin number — so it is the row's OWN entity
+    # being looked up, not one country leaking across all rows.
+    assert phones["+49 30 26431234"] == "+493026431234"
+
+    # Entity 33's two location rows disagree (France vs Italy). Neither is
+    # used, so its phone is untouched — picking one is the guess this
+    # codebase does not make, even though guessing would have "worked"
+    # here (the number is French).
+    assert "01 42 60 30 30" in phones
+    assert phones["01 42 60 30 30"] is None
+    # Entity 44's country column held a description, not a country, so it
+    # never entered the map.
+    assert phones["0118 496 0000"] is None
+    # A number that carries its own country code is unaffected by any of
+    # this.
+    assert phones["+1 650-253-0000"] == "+16502530000"
+
+    errors = persistence.load_clone_job_errors_page(job_id, limit=200, offset=0)
+    column_level = {
+        (e["table_name"], e["field"]): e["error"] for e in errors if e["row_index"] == -1
+    }
+
+    # The map reports what it found, even when nothing went wrong: a map
+    # that silently supplied nothing and a map that worked look identical
+    # from the destination.
+    summary = column_level[("", "")]
+    assert "cross-table entity map on 'company_key'" in summary
+    assert "2 entities with one country" in summary  # 11 and 22
+    assert "1 dropped for disagreeing" in summary  # 33
+
+    # The wrong-semantic-type finding: 1 of 6 values is not a country here,
+    # which is under the reporting threshold, so `country_name` must NOT be
+    # accused. The threshold is the whole point — a merely messy column is
+    # not a mis-mapped one.
+    assert ("entity_country", "country_name") not in column_level
+
+
+@pytest.mark.integration
+def test_a_column_that_is_not_its_semantic_type_is_reported_once(
+    persistence: PgPersistence,
+) -> None:
+    """Mapping the SAME column to a type it mostly is not produces one
+    column-level finding instead of a per-row finding nobody aggregates.
+
+    `mistyped_source.looks_like_a_country` holds Wikidata-style
+    descriptions, reproducing the real source where a COUNTRY-mapped column
+    came back 99.2% INVALID.
+    """
+    dest_database = f"clone_mistyped_{uuid.uuid4().hex[:8]}"
+    source_conn, dest_conn = _pg_connections(persistence)
+
+    job = clone_executor.create_clone_job(
+        persistence,
+        request={
+            "source_connection_id": source_conn["connection_id"],
+            "source_database": "source_demo",
+            "destination_connection_id": dest_conn["connection_id"],
+            "destination_database": dest_database,
+            "autodetect_field_types": False,
+            "field_configs": {"mistyped_source": {"looks_like_a_country": "COUNTRY"}},
+        },
+    )
+    job_id = job["job_id"]
+    _run_to_completion(persistence, _entity_dispatcher(), job_id, dest_database)
+
+    errors = persistence.load_clone_job_errors_page(job_id, limit=200, offset=0)
+    column_level = [
+        e for e in errors if e["row_index"] == -1 and e["field"] == "looks_like_a_country"
+    ]
+    assert len(column_level) == 1
+    error = column_level[0]["error"]
+    assert "100.0% of this column is not a COUNTRY" in error
+    assert "wrong semantic type" in error
+    # Real examples, because "100% is not a COUNTRY" is a number and
+    # "Country located primarily in North America" is the answer.
+    assert "Country located primarily in North America" in error
+
+    # One row for 25 bad values, not 25 rows. Reading it per row means
+    # reading every row to learn one fact about the column.
+    per_row = [e for e in errors if e["row_index"] >= 0]
+    assert len(per_row) == 25

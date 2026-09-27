@@ -145,7 +145,24 @@ a saved connection (decision #13) — it's picked fresh on the next screen.
    in one measured 50,000-row table, which no single job-level default
    could have covered. Two country columns in one row that disagree are
    reported and neither is used.
-5. **Create clone job.**
+5. **Set an entity key** (`cross_table_entity_key`) if the same
+   real-world thing appears in more than one table under one id — a
+   company id, say. A COUNTRY column in *any* table carrying that id then
+   supplies the country for every row of every *other* table sharing the
+   entity, which is the case a within-row signal cannot reach: Phase 2
+   streams one table at a time and never holds two, so a UK landline sat
+   AMBIGUOUS next to a table that knew the company was in the UK.
+
+   Measured on a real 41,805-company source, this took E.164 coverage of
+   the phone column from **23.6% to 97.4%** — 30,827 numbers. It is
+   declared, never guessed: `_version` and `created_at` appear in every
+   table of both real sources this was built against, and a wrong join
+   key propagates a *wrong* country, which is worse than none. Three
+   guards, all measured on that run: an entity whose rows disagree about
+   the country is dropped (7 of 179,810), a value the inferred country
+   turns out not to fit keeps its no-country result and says so (128
+   rows, 0.31%), and a value carrying its own country code is untouched.
+6. **Create clone job.**
 
 ## 4. Run `CREATE DATABASE` by hand
 
@@ -208,8 +225,22 @@ report. Set `typed_destination_columns: false` to keep everything text.
     arrived 34.5% NULL looked exactly like a column that was merely
     sparse at source. Set `max_new_null_rate` on the job to FAIL rather
     than report.
+  - `N% of this column is not a <TYPE> ... it may be mapped to the wrong
+    semantic type` — the column's values are not what it was mapped to.
+    Measured on a real source, a column mapped to COUNTRY held Wikidata
+    *descriptions* ("Country located primarily in North America") and came
+    back 99.2% INVALID: one fact about the mapping, previously readable
+    only by reading 3,478 per-row findings. AMBIGUOUS never counts — a
+    POSTCODE column with no country is 100% AMBIGUOUS and perfectly well
+    typed — and a column needs at least 20 values before it is accused,
+    so small lookup tables are never flagged.
   - `country conflict: X says .., Y says ..` — two country columns in one
     row that contradict each other.
+  - `cross-table entity map on '<key>': N entities with one country, M
+    dropped for disagreeing` — one row per job, recorded even when nothing
+    went wrong, because a map that silently supplied nothing (wrong key
+    column, no COUNTRY column in a table carrying it) and a map that
+    worked look identical from the destination.
 - Diff origin vs. destination directly to confirm normalized-in-place
   values, untouched passthrough columns, and — most importantly — that
   the origin is byte-for-byte unchanged:

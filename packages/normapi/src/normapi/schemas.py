@@ -221,6 +221,23 @@ class CloneJobCreateRequest(BaseModel):
     # silently changes what a number MEANS.
     country: str | None = None
     locale: str | None = None
+    # Column name identifying the same real-world entity across tables
+    # (e.g. a company id). Given one, a COUNTRY column in ANY table that
+    # carries it supplies `country` for every row of every OTHER table
+    # sharing that entity — the case a within-row signal cannot reach,
+    # because Phase 2 streams one table at a time and never holds two.
+    # Measured on a real source: 339,596 phone numbers across 357
+    # countries gained a country this way, 79.3% of which then parsed
+    # instead of staying AMBIGUOUS.
+    #
+    # Declared, never inferred. Inferring it would mean picking a column
+    # that happens to appear in two tables, and `_version`/`created_at`
+    # appear in every table of both real sources this was built against;
+    # a wrong join key propagates a WRONG country, which is worse than
+    # none. An entity whose rows disagree about the country is dropped
+    # rather than resolved, and a value the inferred country turns out not
+    # to fit keeps its no-country result.
+    cross_table_entity_key: str | None = None
     # Give NUMERIC/MONEY/BOOLEAN columns a real SQL type (NUMERIC, BOOLEAN)
     # instead of TEXT, so downstream SUM/AVG work without casting. On by
     # default: an untyped clone of a numeric column cannot be summed, which

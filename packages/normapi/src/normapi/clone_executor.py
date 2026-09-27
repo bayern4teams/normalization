@@ -24,6 +24,7 @@ that method would silently lose, for the identical dispatcher-call cost
 
 from __future__ import annotations
 
+import dataclasses
 import datetime as dt
 import multiprocessing
 import os
@@ -50,6 +51,7 @@ from normcore import (
     FieldSemanticType,
     MissingKind,
     NormalizationContext,
+    NormalizationStatus,
     NormalizedValue,
 )
 from normio import storage_types
@@ -301,6 +303,7 @@ def create_clone_job(
         "country": request.get("country"),
         "locale": request.get("locale"),
         "max_new_null_rate": request.get("max_new_null_rate"),
+        "cross_table_entity_key": request.get("cross_table_entity_key"),
         "in_place": in_place,
         "progress": {
             "current_table": None,
@@ -394,6 +397,7 @@ def is_stale(job: Mapping[str, Any], *, now: dt.datetime | None = None) -> bool:
 
 
 _MONEY = FieldSemanticType.MONEY.value
+_COUNTRY = FieldSemanticType.COUNTRY.value
 _TEXT_TYPE = {"postgres": "TEXT", "clickhouse": "String"}
 
 
@@ -748,12 +752,13 @@ def _apply_column(
     country: str | None,
     locale: str | None,
     signals: dict[int, tuple[str, str]] | None,
+    country_is_derived: bool,
+    stats: _ColumnStats,
     errors_buffer: list[dict[str, Any]],
-) -> tuple[int, int]:
+) -> None:
     """Normalize one column across one chunk, in place.
 
-    Returns `(non_empty_source_values, of_which_now_null)` for the
-    column-level null-rate report.
+    Tallies into `stats` for the column-level findings.
 
     Extracted from `_run_phase2` so that adding the pre-insert cast and
     the MONEY companion column did not push an already-oversized function
@@ -785,20 +790,28 @@ def _apply_column(
         context=ctx,
         profile=SCAFFOLD_PROFILE,
     )
-    total = 0
-    nulled = 0
+    if country is not None and country_is_derived:
+        _drop_rejected_country(
+            by_value,
+            pool=pool,
+            planner=planner,
+            ctx=ctx,
+            country=country,
+        )
     for offset, row in pending:
         original = row[column]
         if original is None:
             continue
         result = by_value[original]
+        if result.normalization_status is NormalizationStatus.INVALID:
+            stats.record_invalid(original)
         # An empty string arriving as NULL is the same absence in a better
         # representation, not a value normalization destroyed — counting it
         # would inflate every text column's rate and could fail a job on
         # `max_new_null_rate` for no real loss. A value that MEANS missing
         # ("maybe", "N/A") is counted: that one really was information.
         counted = result.original_kind is not MissingKind.EMPTY_STRING
-        total += counted
+        stats.total += counted
         errors = _apply_value(
             row,
             result,
@@ -810,7 +823,7 @@ def _apply_column(
         # After the cast, not before it: a value that normalized fine and
         # then would not fit its native column is the loss this counts.
         if counted and row[column] is None:
-            nulled += 1
+            stats.nulled += 1
         if signals is not None:
             _record_country_signal(signals, offset, column, result, errors)
 
@@ -824,7 +837,6 @@ def _apply_column(
                     "error": "; ".join(errors),
                 }
             )
-    return total, nulled
 
 
 def _apply_value(
@@ -902,6 +914,221 @@ def _record_country_signal(
         signals[offset] = (column, "")
 
 
+_SAMPLE_VALUES_PER_COLUMN = 3
+
+
+@dataclasses.dataclass
+class _ColumnStats:
+    """What one column of one table did, summed across every chunk.
+
+    Both findings it feeds are about the COLUMN, not about any one row, and
+    nothing in this pipeline used to say anything at that level: a column
+    that arrived 34.5% NULL, and a column where 99.2% of the values are not
+    the type they were mapped to, both looked from the destination exactly
+    like a column that simply held what it held.
+    """
+
+    total: int = 0
+    nulled: int = 0
+    invalid: int = 0
+    samples: list[str] = dataclasses.field(default_factory=list)
+
+    def record_invalid(self, value: str) -> None:
+        self.invalid += 1
+        # A handful of real examples is what makes the finding actionable —
+        # "99.2% of this column is not a COUNTRY" is a number, but
+        # "Country located primarily in North America" is the answer.
+        if len(self.samples) < _SAMPLE_VALUES_PER_COLUMN and value not in self.samples:
+            self.samples.append(value)
+
+
+def _drop_rejected_country(
+    by_value: dict[str, NormalizedValue],
+    *,
+    pool: Any,
+    planner: DistinctValuePlanner,
+    ctx: NormalizationContext,
+    country: str,
+) -> None:
+    """A country taken from a SIBLING TABLE is a hypothesis, not a fact.
+
+    Where the data rejects it — the value normalized INVALID under that
+    country — the hypothesis is dropped for that value and the no-country
+    result stands, which is what this pipeline produced before any of this
+    existed. That keeps the one guarantee cross-table inference could
+    otherwise break: a wrong guess must never replace a raw value with a
+    confident wrong one.
+
+    Measured on 3,000 real (phone, sibling-table country) pairs from a
+    live source: 79.3% of values gained a valid parse from the inferred
+    country and 0.23% landed here, so this is the exception that makes the
+    other 79% safe rather than a cost. It is only ever reached for a
+    cross-table country; a country from the row's own COUNTRY column is
+    evidence about that row and is never second-guessed.
+    """
+    rejected = [
+        value
+        for value, result in by_value.items()
+        if result.normalization_status is NormalizationStatus.INVALID
+    ]
+    if not rejected:
+        return
+    without = _normalize_distinct(
+        pool,
+        planner,
+        rejected,
+        semantic_type=ctx.semantic_type,
+        context=ctx.model_copy(update={"country": None}),
+        profile=SCAFFOLD_PROFILE,
+    )
+    for value, result in without.items():
+        if result.normalization_status is NormalizationStatus.INVALID:
+            # Rejected either way, so the inferred country was not the
+            # problem — a value carrying its own country code, say. Saying
+            # "the inferred country does not fit" about those would be a
+            # misleading report row for a decision that changed nothing.
+            continue
+        result.errors.append(
+            f"country {country} inferred from a sibling table does not fit this value; "
+            "normalized without it"
+        )
+        by_value[value] = result
+
+
+# A cross-table entity map is held in memory for the whole of Phase 2, one
+# entry per entity. Measured at ~180 bytes per entry (dict overhead plus a
+# short str key and a 2-char value), so the default cap is ~360MB worst
+# case on a source with that many distinct entities — sized against
+# compose.yaml's api.mem_limit, not chosen freely. Past the cap the map
+# stops growing and says so: rows whose entity did not make it in simply
+# get no inferred country, which is the behaviour without the feature.
+_ENTITY_MAP_MAX = int(os.environ.get("NORM_CLONE_ENTITY_MAP_MAX", "2000000"))
+
+
+def _build_entity_country_map(
+    source: Any,
+    job: dict[str, Any],
+    planner: DistinctValuePlanner,
+    key_column: str,
+) -> tuple[dict[str, str], dict[str, int]]:
+    """`entity id -> alpha-2`, read from every COUNTRY column that sits in a
+    table also carrying `key_column`.
+
+    This is the cross-table half of within-row country propagation. A
+    company's country lives in its Location rows; the phone that needs a
+    country to parse lives in its Company row; Phase 2 streams one table at
+    a time and never holds two, so nothing could connect them.
+
+    `key_column` is declared by the operator, never guessed. Inferring the
+    join would mean picking a column that happens to appear in two tables,
+    and `_version`/`created_at` appear in every table of both real sources
+    this was built against — a wrong join key propagates a WRONG country,
+    which is worse than none.
+
+    Entities whose rows disagree about the country are dropped, not
+    resolved: on a real 1.76M-row source, 1,565,512 entities had exactly
+    one country and 741 (0.047%) had two, and picking one of those two is
+    the guess this codebase does not make.
+    """
+    mapping: dict[str, str] = {}
+    conflicted: set[str] = set()
+    alpha2_of: dict[str, str | None] = {}
+    counts = {"entities": 0, "conflicts": 0, "over_cap": 0}
+
+    for table in job["tables"]:
+        country_columns = [
+            column
+            for column, semantic_type in job["field_configs"].get(table, {}).items()
+            if semantic_type == _COUNTRY
+        ]
+        if not country_columns:
+            continue
+        available = {c.name for c in source.get_columns(table)}
+        if key_column not in available:
+            continue
+        for column in country_columns:
+            _scan_entity_countries(
+                source,
+                table,
+                key_column=key_column,
+                country_column=column,
+                planner=planner,
+                mapping=mapping,
+                conflicted=conflicted,
+                alpha2_of=alpha2_of,
+                counts=counts,
+            )
+
+    counts["entities"] = len(mapping)
+    counts["conflicts"] = len(conflicted)
+    return mapping, counts
+
+
+def _scan_entity_countries(
+    source: Any,
+    table: str,
+    *,
+    key_column: str,
+    country_column: str,
+    planner: DistinctValuePlanner,
+    mapping: dict[str, str],
+    conflicted: set[str],
+    alpha2_of: dict[str, str | None],
+    counts: dict[str, int],
+) -> None:
+    """One (table, country column) pass. `alpha2_of` caches the country
+    normalization across batches and tables — a real source had 617
+    distinct country strings behind 1.76M rows, so this is a few hundred
+    dispatcher calls for the whole scan."""
+    ctx = NormalizationContext(
+        field_name=country_column,
+        semantic_type=FieldSemanticType.COUNTRY,
+        table=table,
+        error_policy=ErrorPolicy.RETURN_ORIGINAL,
+        include_trace=False,
+    )
+    for batch in source.read_table(
+        table, columns=[key_column, country_column], batch_size=SOURCE_READ_BATCH_ROWS
+    ):
+        rows = batch.to_pylist()
+        unseen = {
+            row[country_column]
+            for row in rows
+            if row[country_column] is not None and row[country_column] not in alpha2_of
+        }
+        if unseen:
+            resolved = _normalize_distinct(
+                None,
+                planner,
+                list(unseen),
+                semantic_type=FieldSemanticType.COUNTRY,
+                context=ctx,
+                profile=SCAFFOLD_PROFILE,
+            )
+            for value, result in resolved.items():
+                alpha2_of[value] = result.structured.get("alpha2")
+        for row in rows:
+            key, raw = row[key_column], row[country_column]
+            if key is None or raw is None:
+                continue
+            alpha2 = alpha2_of.get(raw)
+            if not alpha2:
+                continue
+            # str(): the same entity id is String in one table and
+            # Nullable(Int64) in another on a real source, so the map is
+            # keyed by the one form both sides agree on.
+            entity = str(key)
+            if entity in conflicted:
+                continue
+            seen = mapping.setdefault(entity, alpha2)
+            if seen != alpha2:
+                del mapping[entity]
+                conflicted.add(entity)
+            elif len(mapping) > _ENTITY_MAP_MAX:
+                del mapping[entity]
+                counts["over_cap"] += 1
+
+
 # Real rows report under their own source-row offset, which is always >= 0.
 # A column-level finding belongs to the whole column, so it takes an offset
 # no row can occupy — the report table's primary key is
@@ -912,6 +1139,21 @@ _COLUMN_REPORT_ROW = -1
 # unparseable date here and there) and a report row per column would drown
 # the per-row findings it sits beside.
 _NULL_RATE_REPORT = float(os.environ.get("NORM_CLONE_NULL_RATE_REPORT", "0.05"))
+
+# Half a column failing its own semantic type is a mapping problem; a few
+# percent is dirty data, which the per-row report already covers value by
+# value. Deliberately high: the finding says "you may have told us the
+# wrong type", and saying that about a merely messy column is noise.
+_TYPE_MISMATCH_REPORT = float(os.environ.get("NORM_CLONE_TYPE_MISMATCH_REPORT", "0.5"))
+
+# ...and enough values for the fraction to mean anything. "50% of this
+# column is not an EMAIL" off two rows is not a finding about the mapping,
+# it is one bad row — and small lookup and config tables are everywhere.
+# Not an env var: this is the floor below which the statistic is not a
+# statistic, not a policy to tune. The null-rate finding deliberately has
+# no such floor: losing values is true and worth saying at any scale, where
+# accusing an operator of mis-mapping a column is not.
+_TYPE_MISMATCH_MIN_VALUES = 20
 
 
 def _normalize_chunk(
@@ -925,7 +1167,8 @@ def _normalize_chunk(
     code_columns: dict[str, str],
     pool: Any,
     planner: DistinctValuePlanner,
-    drift: dict[str, list[int]],
+    seeded: Mapping[int, str],
+    stats: dict[str, _ColumnStats],
     errors_buffer: list[dict[str, Any]],
 ) -> None:
     """Every configured column of one chunk, COUNTRY columns first.
@@ -938,11 +1181,11 @@ def _normalize_chunk(
     grouping, because the distinct-value dedup below is per context, and a
     per-row context would defeat it entirely.
 
-    ponytail: within-row only. A country signal in a SIBLING TABLE (the
-    classic case: `Location.CountryCode` next to `Company.companyPhone`,
-    joined on company id) is invisible here, because Phase 2 streams one
-    table at a time and never holds two. That needs a first pass building
-    an entity -> country map; do it when a real source pays for it.
+    `seeded` carries the cross-table country for rows whose entity was
+    found in the job's entity map. A COUNTRY column in the row itself
+    always beats it — evidence about this row beats evidence about the
+    entity — and a seeded country the data then rejects is dropped per
+    value (see `_drop_rejected_country`).
     """
     # Every row must carry the same keys: bulk_insert derives the column
     # list from rows[0], so a companion column that only appears on rows
@@ -964,12 +1207,12 @@ def _normalize_chunk(
         # is one group with the job-level country — identical to the
         # behaviour before signals existed, and identical in cost.
         groups = (
-            {job_country: pending}
-            if provides_country or not signals
-            else _group_by_country(pending, signals, job_country)
+            {(job_country, False): pending}
+            if provides_country or not (signals or seeded)
+            else _group_by_country(pending, signals, seeded, job_country)
         )
-        for country, group in groups.items():
-            total, nulled = _apply_column(
+        for (country, derived), group in groups.items():
+            _apply_column(
                 group,
                 column=column,
                 semantic_type=semantic_type,
@@ -983,65 +1226,169 @@ def _normalize_chunk(
                 country=country,
                 locale=job.get("locale"),
                 signals=signals if provides_country else None,
+                country_is_derived=derived,
+                stats=stats[column],
                 errors_buffer=errors_buffer,
             )
-            drift[column][0] += total
-            drift[column][1] += nulled
 
 
 def _group_by_country(
     pending: list[tuple[int, dict[str, Any]]],
     signals: dict[int, tuple[str, str]],
+    seeded: Mapping[int, str],
     default: str | None,
-) -> dict[str | None, list[tuple[int, dict[str, Any]]]]:
-    """Partition a chunk by the country its own row resolved to. A row with
-    no signal — or with two country columns that contradicted each other —
-    falls back to the job-level country."""
-    groups: dict[str | None, list[tuple[int, dict[str, Any]]]] = {}
+) -> dict[tuple[str | None, bool], list[tuple[int, dict[str, Any]]]]:
+    """Partition a chunk by the country each row resolved to, and by where
+    that country came from.
+
+    Precedence: the row's own COUNTRY column, then the cross-table entity
+    map, then the job-level country. A row with two country columns that
+    contradicted each other has no within-row answer and falls through to
+    the next source, same as a row that had none.
+
+    The second half of the key is whether the country was inferred from
+    another table. Two rows can agree on the country and still belong to
+    different groups, because only the inferred one may be second-guessed
+    by the data."""
+    groups: dict[tuple[str | None, bool], list[tuple[int, dict[str, Any]]]] = {}
     for item in pending:
-        alpha2 = signals.get(item[0], ("", ""))[1]
-        groups.setdefault(alpha2 or default, []).append(item)
+        own = signals.get(item[0], ("", ""))[1]
+        inferred = seeded.get(item[0]) if not own else None
+        groups.setdefault((own or inferred or default, inferred is not None), []).append(item)
     return groups
 
 
-def _report_null_rates(
+def _report_column_findings(
     persistence: PgPersistence,
     job_id: str,
     table: str,
-    drift: dict[str, list[int]],
+    *,
+    stats: Mapping[str, _ColumnStats],
+    semantic_types: Mapping[str, FieldSemanticType],
     ceiling: float | None,
 ) -> None:
-    """One report row per column normalization emptied.
+    """One report row per column with something to say about the column
+    itself rather than about any of its rows.
 
-    Nothing else in this pipeline says this at the COLUMN level. A typed
-    destination column turns every value that will not cast into NULL, and
-    a per-row finding for each one is invisible in aggregate: measured on a
-    real source, typing `companyRevenue` NULLed 38.5% of it (comma-decimal
-    values, with no locale to read them by) and the clone looked exactly
-    like a column that was simply sparse at source.
+    Two findings share the row because the report table is keyed by
+    (job, row_index, table, field) and a column has exactly one slot:
+
+    - **emptied** — normalization turned values into NULL. A typed
+      destination column NULLs everything that will not cast, and a per-row
+      finding for each one is invisible in aggregate: measured on a real
+      source, typing `companyRevenue` NULLed 34.5% of it (comma-grouped
+      values, with no locale to read them by) and the clone looked exactly
+      like a column that was simply sparse.
+    - **not this type** — the values are not what the column was mapped to.
+      Measured on a real source, `location.country` held Wikidata
+      *descriptions* ("Country located primarily in North America"), so
+      99.2% of it came back INVALID. That is one fact about the column's
+      mapping, not 3,478 independent bad rows, and reading it per row means
+      reading 3,478 rows to learn it.
+
+    AMBIGUOUS deliberately does not count toward the second. A POSTCODE
+    column with no country is 100% AMBIGUOUS and perfectly well typed — the
+    normalizer refused to guess, which is not the column being wrong.
     """
     rows = []
-    for column, (total, nulled) in sorted(drift.items()):
-        if not total:
+    for column, stat in sorted(stats.items()):
+        if not stat.total:
             continue
-        rate = nulled / total
-        if rate < _NULL_RATE_REPORT:
-            continue
-        message = f"normalization emptied {rate:.1%} of this column ({nulled}/{total} values)"
-        if ceiling is not None and rate > ceiling:
-            msg = f"{table}.{column}: {message}, over the job's max_new_null_rate of {ceiling}"
-            raise CloneJobStateError(msg)
-        rows.append(
+        findings = []
+        emptied = stat.nulled / stat.total
+        mistyped = stat.invalid / stat.total
+        if emptied >= _NULL_RATE_REPORT:
+            findings.append(
+                f"normalization emptied {emptied:.1%} of this column "
+                f"({stat.nulled}/{stat.total} values)"
+            )
+            if ceiling is not None and emptied > ceiling:
+                msg = (
+                    f"{table}.{column}: {findings[-1]}, over the job's "
+                    f"max_new_null_rate of {ceiling}"
+                )
+                raise CloneJobStateError(msg)
+        if mistyped >= _TYPE_MISMATCH_REPORT and stat.total >= _TYPE_MISMATCH_MIN_VALUES:
+            examples = ", ".join(repr(v) for v in stat.samples)
+            findings.append(
+                f"{mistyped:.1%} of this column is not a "
+                f"{semantic_types[column].value} ({stat.invalid}/{stat.total} values, "
+                f"e.g. {examples}) — it may be mapped to the wrong semantic type"
+            )
+        if findings:
+            rows.append(
+                {
+                    "row_index": _COLUMN_REPORT_ROW,
+                    "table_name": table,
+                    "field": column,
+                    "original": None,
+                    "error": "; ".join(findings),
+                }
+            )
+    if rows:
+        persistence.save_clone_job_errors(job_id, rows)
+
+
+# The entity map is a property of the JOB, not of any table, column or
+# row, so its one report row belongs to no table and no field.
+_JOB_REPORT_FIELD = ""
+
+
+def _report_entity_map(
+    persistence: PgPersistence,
+    job_id: str,
+    key_column: str,
+    counts: Mapping[str, int],
+) -> None:
+    """What the cross-table entity map actually found, recorded once.
+
+    Worth a row even when nothing went wrong: the map silently supplying no
+    countries (wrong key column, no COUNTRY column in a table that carries
+    it) and the map working perfectly look identical from the destination.
+    """
+    message = (
+        f"cross-table entity map on {key_column!r}: {counts['entities']:,} entities "
+        f"with one country, {counts['conflicts']:,} dropped for disagreeing"
+    )
+    if counts["over_cap"]:
+        message += (
+            f", {counts['over_cap']:,} skipped over the "
+            f"NORM_CLONE_ENTITY_MAP_MAX cap of {_ENTITY_MAP_MAX:,}"
+        )
+    persistence.save_clone_job_errors(
+        job_id,
+        [
             {
                 "row_index": _COLUMN_REPORT_ROW,
-                "table_name": table,
-                "field": column,
+                "table_name": _JOB_REPORT_FIELD,
+                "field": _JOB_REPORT_FIELD,
                 "original": None,
                 "error": message,
             }
-        )
-    if rows:
-        persistence.save_clone_job_errors(job_id, rows)
+        ],
+    )
+
+
+def _seed_from_entity_map(
+    pending: list[tuple[int, dict[str, Any]]],
+    key_column: str,
+    entity_countries: Mapping[str, str],
+) -> dict[int, str]:
+    """Row offset -> the country this row's ENTITY resolved to elsewhere.
+
+    An empty key column means the feature is off for this table, which
+    costs one branch per chunk."""
+    if not key_column:
+        return {}
+    seeded = {}
+    for offset, row in pending:
+        key = row.get(key_column)
+        if key is None:
+            continue
+        alpha2 = entity_countries.get(str(key))
+        if alpha2:
+            seeded[offset] = alpha2
+    return seeded
 
 
 def _normalize_table(
@@ -1057,6 +1404,7 @@ def _normalize_table(
     pool: Any,
     progress: dict[str, Any],
     in_place: bool,
+    entity_countries: Mapping[str, str],
 ) -> None:
     """One table, end to end: stream it, normalize every configured
     column, insert, checkpoint, and — in-place only — swap it in.
@@ -1088,9 +1436,16 @@ def _normalize_table(
     typed_columns: dict[str, str] = table_plan.get("typed_columns", {})
     currency_columns: dict[str, str] = table_plan.get("currency_columns", {})
     code_columns: dict[str, str] = table_plan.get("code_columns", {})
-    # column -> [non-null source values seen, of which now NULL], summed
-    # across every chunk of this table.
-    drift: dict[str, list[int]] = {column: [0, 0] for column in configured_columns}
+    stats = {column: _ColumnStats() for column in configured_columns}
+    # Only this table's own key column matters: a table that does not carry
+    # it gets no cross-table country, which is the behaviour without the
+    # feature. Empty means off for this table.
+    declared_key: str = job.get("cross_table_entity_key") or ""
+    key_column = (
+        declared_key
+        if entity_countries and declared_key in {c.name for c in source.get_columns(table)}
+        else ""
+    )
 
     for batch in source.read_table(table, batch_size=SOURCE_READ_BATCH_ROWS):
         rows = batch.to_pylist()
@@ -1103,6 +1458,7 @@ def _normalize_table(
             continue
 
         errors_buffer: list[dict[str, Any]] = []
+        seeded = _seed_from_entity_map(pending, key_column, entity_countries)
         _normalize_chunk(
             pending,
             table=table,
@@ -1113,7 +1469,8 @@ def _normalize_table(
             code_columns=code_columns,
             pool=pool,
             planner=planner,
-            drift=drift,
+            seeded=seeded,
+            stats=stats,
             errors_buffer=errors_buffer,
         )
 
@@ -1138,7 +1495,14 @@ def _normalize_table(
     # max_new_null_rate ceiling in in-place mode must leave the ORIGINAL
     # table in place. Failing after the swap would have already replaced
     # the source with the table the ceiling exists to reject.
-    _report_null_rates(persistence, job_id, table, drift, job.get("max_new_null_rate"))
+    _report_column_findings(
+        persistence,
+        job_id,
+        table,
+        stats=stats,
+        semantic_types=configured_columns,
+        ceiling=job.get("max_new_null_rate"),
+    )
 
     if in_place:
         # Swap only after the table is fully written, and BEFORE
@@ -1191,8 +1555,18 @@ def _run_phase2(
     progress = job["progress"]
     tables_completed = set(progress["tables_completed"])
     in_place = job.get("in_place", False)
+    entity_countries: dict[str, str] = {}
 
     try:
+        key_column = job.get("cross_table_entity_key") or None
+        if key_column:
+            # Rebuilt on resume rather than persisted: it is one bounded
+            # extra read of two columns per country-bearing table (617
+            # distinct country strings behind 1.76M rows on a real source),
+            # and it is advisory context, not state a resumed job must
+            # agree with byte for byte.
+            entity_countries, counts = _build_entity_country_map(source, job, planner, key_column)
+            _report_entity_map(persistence, job_id, key_column, counts)
         for table in job["tables"]:
             if table in tables_completed:
                 continue
@@ -1208,6 +1582,7 @@ def _run_phase2(
                 pool=pool,
                 progress=progress,
                 in_place=in_place,
+                entity_countries=entity_countries,
             )
             tables_completed.add(table)
             progress["tables_completed"] = sorted(tables_completed)

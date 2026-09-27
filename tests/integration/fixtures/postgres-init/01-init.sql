@@ -112,3 +112,62 @@ INSERT INTO context_source (country, other_country, zip, active) VALUES
     (NULL,             NULL,      '94043',     'n/a');
 
 GRANT SELECT ON context_source TO readonly_user;
+
+-- Two tables for the CROSS-TABLE country test. The country lives in one
+-- table and the value that needs a country to parse lives in the other,
+-- joined on an entity id — the shape Phase 2 cannot see within a row,
+-- because it streams one table at a time and never holds two.
+--
+-- `entity_country.country_name` is deliberately mapped to COUNTRY while
+-- holding Wikidata-style DESCRIPTIONS for one entity, reproducing a real
+-- source where 99.2% of a COUNTRY-mapped column came back INVALID. That
+-- entity therefore contributes nothing to the map, which is the point:
+-- the map is built from what resolves, not from what was configured.
+--
+-- Note the entity id is TEXT here and INTEGER in entity_phone: on a real
+-- source the same id was String in one table and Nullable(Int64) in
+-- another, so the map has to be keyed by a form both agree on.
+CREATE TABLE IF NOT EXISTS entity_country (
+    id SERIAL PRIMARY KEY,
+    company_key TEXT,
+    country_name TEXT
+);
+
+INSERT INTO entity_country (company_key, country_name) VALUES
+    ('11', 'United Kingdom'),
+    ('11', 'GB'),                                    -- agrees, no conflict
+    ('22', 'Germany'),
+    ('33', 'France'),
+    ('33', 'Italy'),                                 -- disagrees -> dropped
+    ('44', 'Country located primarily in North America');  -- not a country
+
+CREATE TABLE IF NOT EXISTS entity_phone (
+    id SERIAL PRIMARY KEY,
+    company_key INTEGER,
+    tel TEXT
+);
+
+INSERT INTO entity_phone (company_key, tel) VALUES
+    (11, '020 7930 4832'),   -- only parseable as GB, which only the map knows
+    (22, '030 2643 1234'),   -- only parseable as DE
+    (33, '01 42 60 30 30'),  -- entity 33 conflicted -> no country -> AMBIGUOUS
+    (44, '0118 496 0000'),   -- entity 44 never resolved -> AMBIGUOUS
+    (11, '+1 650-253-0000'); -- self-describing; the map must not break it
+
+GRANT SELECT ON entity_country TO readonly_user;
+GRANT SELECT ON entity_phone TO readonly_user;
+
+-- A table big enough for the wrong-semantic-type finding, which needs
+-- enough values for its fraction to mean anything (see
+-- _TYPE_MISMATCH_MIN_VALUES). Kept separate from the tables above for the
+-- same reason they are separate from each other: other tests assert on
+-- their row counts.
+CREATE TABLE IF NOT EXISTS mistyped_source (
+    id SERIAL PRIMARY KEY,
+    looks_like_a_country TEXT
+);
+
+INSERT INTO mistyped_source (looks_like_a_country)
+SELECT 'Country located primarily in North America ' || i FROM generate_series(1, 25) AS i;
+
+GRANT SELECT ON mistyped_source TO readonly_user;
