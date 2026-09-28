@@ -165,3 +165,45 @@ def test_clickhouse_read_succeeds_and_write_is_rejected() -> None:
             )
     finally:
         client.close()
+
+
+@pytest.mark.integration
+def test_a_half_read_table_does_not_lock_the_connector() -> None:
+    """Reading ONE batch and walking away must leave the connector usable.
+
+    `_sample_column_values` does exactly this for every table — one batch,
+    then return — and the driver's default session serializes every query on
+    the client, so an unconsumed stream left the next query dying with
+    SESSION_IS_LOCKED.
+
+    It survived every test, fixture and probe here because a small table
+    arrives as a single block the driver has already finished sending, so
+    there is nothing left in flight to hold. It only appeared on a real
+    1.27M-row source, where autodetect died on the second table. Hence a
+    test that abandons the stream deliberately rather than one that reads a
+    small table to the end.
+    """
+    connector = ClickHouseConnector(
+        "demo_clickhouse",
+        CLICKHOUSE_HOST,
+        port=CLICKHOUSE_PORT,
+        username="readonly_user",
+        password="readonly_pass",
+        database="default",
+    )
+    try:
+        for _ in connector.read_table("customers"):
+            break  # abandoned mid-iteration, on purpose
+
+        # Any query at all on the same connector. All three of these run
+        # per table during job creation, after exactly this kind of read.
+        assert "customers" in connector.list_tables()
+        assert connector.get_columns("customers")
+        assert connector.get_table_engine_info("customers")
+
+        # And a second abandoned read does not poison it either.
+        for _ in connector.read_table("customers"):
+            break
+        assert connector.list_tables()
+    finally:
+        connector.close()

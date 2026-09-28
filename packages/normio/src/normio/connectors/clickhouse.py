@@ -32,7 +32,29 @@ class ClickHouseConnector:
     ) -> None:
         self.source_id = source_id
         self._client = clickhouse_connect.get_client(
-            host=host, port=port, username=username, password=password, database=database
+            host=host,
+            port=port,
+            username=username,
+            password=password,
+            database=database,
+            # No session. The driver opens one by default, and a session
+            # SERIALIZES every query on the client: a streaming read that is
+            # not consumed to the end leaves it locked, and the next query
+            # on the same connector dies with SESSION_IS_LOCKED.
+            #
+            # `_sample_column_values` reads one batch of each table and
+            # returns, which is exactly that shape. It went unnoticed for as
+            # long as it did because a small table arrives as a single block
+            # the driver has already finished sending — every test, fixture
+            # and probe here. On the first real source (1.27M rows, many
+            # parts) the stream is genuinely mid-flight, and autodetect died
+            # on the second table.
+            #
+            # Closing the generator does NOT release it; only not having a
+            # session does. Nothing in this connector needs one — sessions
+            # exist for temporary tables and session-scoped settings, and a
+            # read-only connector uses neither.
+            autogenerate_session_id=False,
         )
         self._database = database
 
