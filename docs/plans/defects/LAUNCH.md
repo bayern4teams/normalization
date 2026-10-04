@@ -1,4 +1,4 @@
-# Launch guide — Defects D1-D12 (Reza-Sh83/normalization)
+# Launch guide — Defects D1-D12 (bayern4teams/normalization)
 
 Do these in order. Each step says what to check and what to send back.
 
@@ -24,7 +24,7 @@ Network access Full, and paste `phase-kit/templates/environment_setup.sh` (verba
 ## 3. Routine (create it in the claude.ai Routines UI, not from inside a session)
 | Field | Value |
 |---|---|
-| Repository | Reza-Sh83/normalization |
+| Repository | bayern4teams/normalization |
 | Environment | `defects-env` |
 | Model / effort | Opus 5.5, high |
 | Trigger | every hour (cron `0 * * * *`) |
