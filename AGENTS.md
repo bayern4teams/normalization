@@ -109,3 +109,11 @@ uv run ruff check . && uv run ruff format --check . && uv run mypy packages
 ```bash
 ( ulimit -v 16777216; uv run pytest -m "unit or (golden and not slow)" -q )
 ```
+
+## Active implementation plan
+
+Defects D1-D12 of `docs/improvement-report.md` Part 1 are implemented from
+[`docs/plans/DEFECTS_IMPLEMENTATION_PLAN.md`](docs/plans/DEFECTS_IMPLEMENTATION_PLAN.md)
+on branch `feat/defects-fixes`. Live state is in
+[`docs/plans/defects/HANDOFF.md`](docs/plans/defects/HANDOFF.md); read it first.
+`scripts/refresh_graphs.py` is the loud graph refresh (exits non-zero if a graph tool is missing).

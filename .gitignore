@@ -62,3 +62,6 @@ reports/
 # every single commit, since the hook rebuilds them immediately after.
 # Teammates get their own by running the same commands (see CLAUDE.md).
 graphify-out/
+
+# Local scratch (graph refresh log)
+.tmp/

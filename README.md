@@ -21,6 +21,7 @@ and UI. See:
 - [`docs/normalization-tool-evaluation.md`](docs/normalization-tool-evaluation.md) — library evaluation matrix
 - [`docs/dependency-inventory.md`](docs/dependency-inventory.md) — license-audited dependency list
 - [`docs/adr/`](docs/adr/) — architecture decision records
+- [`docs/improvement-report.md`](docs/improvement-report.md) — verified defects D1-D12, research, architecture; implemented per [`docs/plans/DEFECTS_IMPLEMENTATION_PLAN.md`](docs/plans/DEFECTS_IMPLEMENTATION_PLAN.md)
 - [`docs/traceability-matrix.md`](docs/traceability-matrix.md) — spec section → implementation mapping
 - [`docs/verification/`](docs/verification/) — signed milestone gate packs
 
