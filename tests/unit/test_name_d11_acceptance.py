@@ -24,10 +24,13 @@ independent of name.py) and pinned in `_PINNED_BASELINE`. Counts are reported, n
 from __future__ import annotations
 
 import ast
+import hashlib
 import json
+import os
 import re
 import subprocess
 import sys
+import zipfile
 from pathlib import Path
 from typing import Any
 
@@ -364,17 +367,27 @@ def test_no_hand_written_phonetic_rule_rows_in_python() -> None:
     assert not rows, f"rule-row tuples added: {rows[:3]}"
 
 
-def test_rule_data_files_carry_a_licence_notice() -> None:
-    new = [
+def _rule_data_files() -> list[Path]:
+    """Phonetic rule data under packages/, committed OR not (the old check saw only untracked)."""
+    listed = _git(
+        "ls-files", "--cached", "--others", "--exclude-standard", "--", "packages", "data"
+    )
+    return [
         ROOT / p
-        for p in _git(
-            "ls-files", "--others", "--exclude-standard", "--", "packages", "data"
-        ).split()
-        if re.search(r"bmpm|beider|morse|phonet|metaphone", p, re.I) and not p.endswith(".py")
+        for p in listed.split("\n")
+        if p
+        and re.search(r"bmpm|beider|morse|phonet|metaphone", p, re.I)
+        and not p.endswith((".py", ".pyc"))
     ]
-    if not new:
-        pytest.skip("no rule data file added: an installed library supplies the rules")
-    for data_file in new:
+
+
+def test_rule_data_files_carry_a_licence_notice() -> None:
+    data = _rule_data_files()
+    if not data:
+        pytest.skip("no rule data file in the tree: an installed library supplies the rules")
+    rules = [f for f in data if f.suffix == ".txt"]
+    assert rules, "rule data present but no .txt rule files"
+    for data_file in data:
         notices = [
             n
             for d in (data_file.parent, *data_file.parents)
@@ -383,8 +396,34 @@ def test_rule_data_files_carry_a_licence_notice() -> None:
             if re.match(r"(NOTICE|LICEN[CS]E)", n.name, re.I) and n.is_file()
         ]
         assert notices, f"{data_file}: no NOTICE/LICENSE beside or above it"
-        text = notices[0].read_text(encoding="utf-8", errors="replace")
-        assert re.search(r"Apache|MIT|BSD|permissive|Commons Codec", text), notices[0]
+        text = "".join(n.read_text(encoding="utf-8", errors="replace") for n in notices)
+        assert re.search(r"Apache License|MIT License|BSD|permissive", text), notices
+        assert not re.search(r"GNU (Affero |Lesser )?General Public", text), notices
+    # a rule file is attributed on its own, so it stays licensed if it is copied out of the tree
+    for f in rules:
+        head = f.read_text(encoding="utf-8")[:1200]
+        assert "Apache License, Version 2.0" in head, f"{f.name}: no per-file licence header"
+    # provenance: the NOTICE names where the files came from and a checksum of it
+    notice = next(f.parent / "NOTICE" for f in rules if (f.parent / "NOTICE").exists())
+    assert re.search(r"\b[0-9a-f]{64}\b", notice.read_text(encoding="utf-8")), "no source sha256"
+
+
+def test_vendored_rule_files_match_the_upstream_jar() -> None:
+    """Byte-identical to the upstream release the NOTICE names (set D11_COMMONS_CODEC_JAR)."""
+    jar = os.environ.get("D11_COMMONS_CODEC_JAR")
+    if not jar or not Path(jar).exists():
+        pytest.skip("set D11_COMMONS_CODEC_JAR to a commons-codec-1.17.1.jar to compare")
+    data = [f for f in _rule_data_files() if f.name.startswith("gen_") and f.suffix == ".txt"]
+    notice = (data[0].parent / "NOTICE").read_text(encoding="utf-8")
+    assert hashlib.sha256(Path(jar).read_bytes()).hexdigest() in notice
+    with zipfile.ZipFile(jar) as z:
+        upstream = {n.rsplit("/", 1)[-1]: n for n in z.namelist() if "/language/bm/gen_" in n}
+        # the only non-upstream file is the prefix list (it lives in PhoneticEngine.java)
+        local_only = {f.name for f in data} - set(upstream)
+        assert local_only <= {"gen_name_prefixes.txt"}, local_only
+        for f in data:
+            if f.name in upstream:
+                assert f.read_bytes() == z.read(upstream[f.name]), f.name
 
 
 def test_no_fixture_literal_in_production_phonetic_code() -> None:

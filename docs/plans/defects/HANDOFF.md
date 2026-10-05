@@ -3,7 +3,7 @@
 Overwrite this file at every commit. A fresh session reads it first, then
 [the plan](../DEFECTS_IMPLEMENTATION_PLAN.md). Git is the memory; a session's context is not.
 
-**Lock:** 2026-10-05T19:32:43Z · **Autonomy:** unattended-through-phase-5 · **Last heartbeat:** 2026-10-05T19:32:43Z
+**Lock:** 2026-10-05T19:43:50Z · **Autonomy:** unattended-through-phase-5 · **Last heartbeat:** 2026-10-05T19:43:50Z
 
 (Lock/heartbeat protocol: plan §7. A session sets `Lock: <ISO time>`, pushes it, and refreshes it at
 every commit; a lock older than 75 min is stale. `Autonomy` is `off`, `dryrun` (a tick only records
@@ -22,7 +22,7 @@ Only the user changes it.)
 | D5 | 2 | unverified-live | this commit | ACCEPT after round 2: verifier REJECTed (PG 16.14 scratch instance: >16383 fractional digits overflow even NUMERIC(38,4)); lead added that ceiling (ponytail: PG docs 8.1.2), made `engine` required in the executor (verifier nit), narrowed the derive guard "tiny never rejected" to ClickHouse on that evidence; 20k-input fuzz vs exact ROUND_HALF_UP oracle 0 diffs; 589 pass; real ClickHouse INSERT live-only. DATE stays TEXT, flagged for the user (ADR-020) |
 | D3 | 2 | todo | | |
 | D10 | 2 | accepted-cloud | this commit | ACCEPT after round 2: verifier ACCEPT (95 tests fail on main; 4548 inputs x 4 contexts: 0 extension-free diffs; 12,740 fixed-point cases); lead rejected residuals (tel: ext dropped beside isub/phone-context; non-ASCII ext digits), worker fixed both, the verifier's strict xfails for them now pass; `x45 x46` is a ponytail: ceiling. Accepted over-abstain: regionless `tel:+<cc>` without ext stays AMBIGUOUS |
-| D11 | 2 | in-progress | this commit | round 2: BMPM faithful to Commons Codec (131/131 vs jar); 143/170 pairs vs 124 any-key / 119 Soundex; attack verifier running |
+| D11 | 2 | accepted-cloud | this commit | ACCEPT after round 2: lead sent back the BMPM regex reading (faithful to Commons Codec, 131/131 vs jar); verifier ACCEPT (181 fail on 805190b; 0 diffs vs the Java encoder on 7250 inputs; gen_* files byte-identical to commons-codec 1.17.1; env_id moves on a rule edit; 143/170 pairs vs 124 any-key / 119 Soundex; 22 different-name pairs never collide). Verifier F1 (super-linear cost on long values) fixed by lead: no beider_morse beyond 255 chars (ponytail: measured bound) + test. Disclosed: distinct surnames share more codes (any-key 1785 vs 1320 of 798k pairs: Jean/Zhang, Khan/Chan); keys are match candidates, not identity |
 | D6 | 3 | todo | | |
 | D2 | 3 | todo | | |
 | D4 | 3 | todo | | |

@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pyarrow as pa
 import pytest
-from normalizers.name import NameNormalizer
+from normalizers.name import _BEIDER_MORSE_MAX_CHARS, NameNormalizer, _phonetic_fields
 from normcore.context import NormalizationContext
 from normcore.enums import FieldSemanticType, MissingKind, NormalizationStatus
 from normdict.loader import DictionaryLoader
@@ -276,3 +276,13 @@ class TestBatchAndInverse:
 
     def test_inverse_name_parse_step_returns_none(self, normalizer: NameNormalizer) -> None:
         assert normalizer.inverse("name.parse_western", "Smith, John") is None
+
+
+@pytest.mark.unit
+def test_overlong_value_skips_beider_morse_but_keeps_other_keys() -> None:
+    """D11 verdict F1: Beider-Morse cost grows super-linearly with length."""
+    at_bound = _phonetic_fields("a" * _BEIDER_MORSE_MAX_CHARS)["phonetic"]
+    beyond = _phonetic_fields("a" * (_BEIDER_MORSE_MAX_CHARS + 1))["phonetic"]
+    assert "beider_morse" in at_bound
+    assert "beider_morse" not in beyond
+    assert {"soundex", "double_metaphone"} <= set(beyond)

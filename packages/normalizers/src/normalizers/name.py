@@ -123,15 +123,21 @@ def _scripts(value: str) -> frozenset[str]:
     return frozenset(names - {"Common", "Inherited"})
 
 
+_BEIDER_MORSE_MAX_CHARS = 255  # ponytail: measured bound, see _language_aware_codes
+
+
 def _language_aware_codes(value: str) -> dict[str, object]:
     """Double Metaphone (of the anyascii form, lossy and language-agnostic) and
     Beider-Morse (of the name as written) as lists of alternative codes."""
     ascii_form, _ = text_ops.transliterate_ascii(value)
     double = [c for c in phonetics.dmetaphone("".join(filter(str.isalpha, ascii_form))) if c]
-    codes: dict[str, object] = {
-        "double_metaphone": double,
-        "beider_morse": list(_bmpm.encode(value)),
-    }
+    codes: dict[str, object] = {"double_metaphone": double}
+    # ponytail: Beider-Morse output and time grow super-linearly with length
+    # (measured: 255 chars ~15 ms / ~25 KB of codes, 7k chars 3.8 s / 2.4 MB,
+    # identical to Commons Codec), so a longer value, which is no name, gets no
+    # beider_morse key. Upgrade path: encode per token with a total budget.
+    if len(value) <= _BEIDER_MORSE_MAX_CHARS:
+        codes["beider_morse"] = list(_bmpm.encode(value))
     return {k: v for k, v in codes.items() if v}
 
 
