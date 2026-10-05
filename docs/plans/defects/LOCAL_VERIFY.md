@@ -59,6 +59,11 @@ destination is created. Never run these against the production metadata database
   `10000000000000000000000000000000000000000` and a MONEY value of the same size; before D5 they reached the
   INSERT. After D5 they must land as NULL with an error row and the chunk must commit. Check with
   `SELECT count(*)` on the destination and the job's `/errors`.
+- **D5 gate vs the real columns (cloud proved the gate with fakes only):** (a) ClickHouse `Decimal(38,9)`: insert
+  `99999999999999999999999999999.9999999994` (fits after rounding, gate accepts) and `...9999999995` (carries, gate
+  rejects); confirm ClickHouse rounds rather than truncates or errors on the accepted one. (b) Postgres unconstrained
+  `NUMERIC`: a 131072-integer-digit value inserts, `1e131072` does not reach the INSERT. (c) Fractional digits beyond
+  the column scale (`0.00001` into MONEY) are not gated: confirm both engines round silently instead of aborting.
 - **D1 on real Postgres:** `ensure_schema()` creates `normalization_adjudication_queue` and
   `normalization_adjudication_verdicts`; the upsert's `ON CONFLICT ... DO UPDATE` with the `AS q` alias was
   exercised on SQLite only.
