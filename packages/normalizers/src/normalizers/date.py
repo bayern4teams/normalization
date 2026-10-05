@@ -14,10 +14,10 @@ Non-Gregorian calendars (Jalali, Hijri, ...): `dateparser`'s calendar-
 conversion behavior could not be reliably verified against this
 environment's installed version during M4 (see the M4 verification pack)
 — rather than ship unverified conversion logic, non-ISO, non-Gregorian-
-looking input is parsed best-effort via `dateparser` and marked
-`NEEDS_REVIEW` with the original string preserved verbatim in
-`structured.original_value`, instead of asserting confident Gregorian
-conversion.
+looking input is parsed best-effort via `dateparser`; what it cannot read
+falls to the partial-date path or to `INVALID`, with the original string
+preserved. (An earlier version of this note promised `NEEDS_REVIEW`; no
+normalizer emits it — its one producer is an adjudicated value, ADR-018.)
 """
 
 from __future__ import annotations

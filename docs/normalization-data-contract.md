@@ -44,7 +44,7 @@ Per §0/§2, six distinct value types are never collapsed into one:
 | `ascii` | `str \| None` | Optional lossy ASCII transliteration (§2.D, §16) — null unless explicitly requested for the field; never substitutes for the Unicode representation. |
 | `structured` | `dict[str, Any]` | Parsed components (§2.E) — e.g. name/address/phone parts. Domain-specific shape per semantic type. |
 | `validation_status` | `str \| None` | Domain-specific validation outcome (§2.F) — e.g. phone `is_valid`, email `VALID_SYNTAX`. |
-| `normalization_status` | `NormalizationStatus` | One of NORMALIZED / UNCHANGED / REPAIRED / PARSED / AMBIGUOUS / INVALID / FAILED / PARTIAL / NEEDS_REVIEW (§67). |
+| `normalization_status` | `NormalizationStatus` | One of NORMALIZED / UNCHANGED / REPAIRED / PARSED / AMBIGUOUS / INVALID / FAILED / PARTIAL / NEEDS_REVIEW (§67). `AMBIGUOUS`: the engine refused to choose (the value is queued for adjudication, ADR-018). `NEEDS_REVIEW`: a value was emitted and a person must confirm it — produced only when an adjudicated value now normalizes differently than when its verdict was given. |
 | `confidence` | `float \| None` (0.0-1.0) | Per §66 — required for every parser/inference-heavy operation. |
 | `flags` | `list[QualityFlag]` | §114's flag vocabulary (MOJIBAKE_FIXED, AMBIGUOUS_DATE, POTENTIAL_COLLISION, ...). |
 | `warnings` | `list[str]` | Human-readable, non-fatal diagnostics. |
