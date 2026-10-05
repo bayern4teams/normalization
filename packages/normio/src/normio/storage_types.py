@@ -79,11 +79,13 @@ _ENGINE_TYPES: Mapping[str, Mapping[str, str]] = {
 
 _DECIMAL_TYPES = frozenset({"NUMERIC", "MONEY"})
 _PRECISION_SCALE = re.compile(r"\((\d+),\s*(\d+)\)")
-# ponytail: PostgreSQL's documented ceiling for an unconstrained NUMERIC
-# ("up to 131072 digits before the decimal point"); a finite Decimal past
-# it still aborts the INSERT. Typed into the column map if Postgres ever
-# moves it.
+# PostgreSQL's documented NUMERIC ceilings: a finite Decimal past either
+# still aborts the INSERT, typmod or not.
+# ponytail: "up to 131072 digits before the decimal point" (PG docs, 8.1.2);
+# moved into the column map if Postgres ever raises it.
 _PG_UNBOUNDED_INTEGER_DIGITS = 131072
+# ponytail: "up to 16383 digits after the decimal point" (PG docs, 8.1.2).
+_PG_MAX_FRACTION_DIGITS = 16383
 _TRUE = "true"
 _FALSE = "false"
 
@@ -122,7 +124,7 @@ def coerce(
     if semantic_type == "BOOLEAN":
         return _coerce_boolean(text)
     if semantic_type in _DECIMAL_TYPES:
-        return _coerce_decimal(text, sql_type(semantic_type, engine) or "")
+        return _coerce_decimal(text, sql_type(semantic_type, engine) or "", engine)
     return value, None
 
 
@@ -134,7 +136,7 @@ def _coerce_boolean(text: str) -> tuple[object | None, str | None]:
     return None, f"value {text!r} is not a boolean; stored as NULL"
 
 
-def _coerce_decimal(text: str, column_type: str) -> tuple[object | None, str | None]:
+def _coerce_decimal(text: str, column_type: str, engine: str) -> tuple[object | None, str | None]:
     try:
         number = decimal.Decimal(text)
     except (decimal.InvalidOperation, ValueError):
@@ -144,7 +146,13 @@ def _coerce_decimal(text: str, column_type: str) -> tuple[object | None, str | N
     # and ClickHouse Decimal rejects them outright.
     if not number.is_finite():
         return None, f"value {text!r} is not a finite number; stored as NULL"
-    if not _fits(number, column_type):
+    # Postgres parses the literal before the typmod rounds it, so even
+    # `0e-16384` into NUMERIC(38,4) overflows.
+    exponent = number.as_tuple().exponent
+    too_fine = (
+        engine == "postgres" and isinstance(exponent, int) and exponent < -_PG_MAX_FRACTION_DIGITS
+    )
+    if too_fine or not _fits(number, column_type):
         return None, f"value {text!r} does not fit {column_type}; stored as NULL"
     return number, None
 

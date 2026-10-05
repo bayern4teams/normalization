@@ -1077,7 +1077,7 @@ def _apply_column(
     stats: _ColumnStats,
     errors_buffer: list[dict[str, Any]],
     adjudication: Adjudication | None = None,
-    engine: str = "postgres",
+    engine: str,
 ) -> None:
     """Normalize one column across one chunk, in place.
 
@@ -1208,7 +1208,7 @@ def _apply_value(
     typed_as: str | None,
     companion: str | None,
     code_column: str | None,
-    engine: str = "postgres",
+    engine: str,
 ) -> list[str]:
     """One row, one column: write every projection the destination has a
     home for, and hand back whatever needs reporting."""
@@ -1656,7 +1656,7 @@ def _normalize_chunk(
     stats: dict[str, _ColumnStats],
     errors_buffer: list[dict[str, Any]],
     adjudication: Adjudication | None = None,
-    engine: str = "postgres",
+    engine: str,
 ) -> None:
     """Every configured column of one chunk, COUNTRY columns first.
 

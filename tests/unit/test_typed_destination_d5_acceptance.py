@@ -21,13 +21,18 @@ import inspect
 import re
 import signal
 import subprocess
+import tempfile
 from collections import Counter
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 import pytest
+from normapi.app import build_dispatcher
+from normapi.clone_executor import _normalize_table
+from normapi.pg_persistence import PgPersistence
 from normcore.enums import FieldSemanticType, NormalizationStatus
 from normcore.models import NormalizedValue
+from normexec.planner import DistinctValuePlanner
 
 from normapi import clone_executor
 from normio import storage_types
@@ -387,6 +392,10 @@ class TestBoundary:
         self, semantic_type: str, engine: str, text: str
     ) -> None:
         """Overflow is about integer digits only; a near-zero value has none."""
+        if engine == "postgres" and "e-999999999" in text:
+            # Lead, after the attack round: real PG 16.14 rejects more than 16383
+            # fractional digits, typmod or not (TestPostgresScaleCeiling covers it).
+            pytest.skip("beyond Postgres' 16383 fractional digits")
         cast, error = _coerce(semantic_type, text, engine)
         assert error is None, f"{text} has no integer digits but was rejected: {error}"
         assert isinstance(cast, decimal.Decimal)
@@ -752,3 +761,112 @@ class TestSection24Grep:
         needles = {"d1989-12-11", "yes please", "1e30", "1e35", "1e999", 10**40, 10**30}
         literals = {n.value for n in ast.walk(tree) if isinstance(n, ast.Constant)}
         assert not (literals & needles), literals & needles
+
+
+# --------------------------------------------------------------------------- attack round
+# Added by the attack verifier. Each fact below was checked against a real PostgreSQL 16.14
+# (psycopg 3, Decimal bound as a parameter): INSERT of these Decimals into NUMERIC and
+# NUMERIC(38,4) fails with "value overflows numeric format" and aborts the transaction, so the
+# cast gate has to reject them. Source: PostgreSQL docs, "Numeric Types": NUMERIC holds "up to
+# 16383 digits after the decimal point" (the storage_types comment states the same).
+PG_NUMERIC_MAX_SCALE = 16383
+
+
+@pytest.mark.unit
+class TestPostgresScaleCeiling:
+    @pytest.mark.parametrize("semantic_type", DECIMAL_TYPED)
+    @pytest.mark.parametrize(
+        "text",
+        [
+            f"1e-{PG_NUMERIC_MAX_SCALE + 1}",
+            f"5e-{PG_NUMERIC_MAX_SCALE + 1}",
+            f"0.5e-{PG_NUMERIC_MAX_SCALE}",
+            f"12345e-{PG_NUMERIC_MAX_SCALE + 4}",
+            f"-1.5e-{20000}",
+            f"0e-{PG_NUMERIC_MAX_SCALE + 1}",
+            "1e-999999999",
+            "0e-999999999",
+        ],
+    )
+    def test_more_fraction_digits_than_postgres_stores_is_a_cast_failure(
+        self, semantic_type: str, text: str
+    ) -> None:
+        cast, error = _coerce(semantic_type, text, "postgres")
+        assert cast is None and error, f"{text} aborts the INSERT on Postgres but passed the gate"
+
+    @pytest.mark.parametrize("semantic_type", DECIMAL_TYPED)
+    @pytest.mark.parametrize("text", [f"1e-{PG_NUMERIC_MAX_SCALE}", f"0e-{PG_NUMERIC_MAX_SCALE}"])
+    def test_the_stored_scale_itself_still_fits(self, semantic_type: str, text: str) -> None:
+        cast, error = _coerce(semantic_type, text, "postgres")
+        assert error is None
+        assert cast == decimal.Decimal(text)
+
+
+@pytest.mark.unit
+class TestEngineReachesTheCastEndToEnd:
+    """`_normalize_table(source_engine=...)` must hand that engine to `coerce`, not rely on the
+    default: spy on the real `storage_types.coerce` during a real `_normalize_table` pass."""
+
+    @pytest.mark.parametrize("engine", ENGINES)
+    def test_normalize_table_passes_its_engine_to_coerce(
+        self, engine: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+
+        seen: list[object] = []
+        real = storage_types.coerce
+
+        def spy(semantic_type: str, value: object, *args: object, **kwargs: object) -> Any:
+            seen.append(kwargs.get("engine", args[0] if args else "<default>"))
+            return real(semantic_type, value, *args, **kwargs)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(storage_types, "coerce", spy)
+
+        class _B:
+            def to_pylist(self) -> list[dict[str, Any]]:
+                return [{"source_row_key": "t:0", "amt": "12.50"}]
+
+        class _Src:
+            def read_table(self, *a: Any, **k: Any) -> Iterator[_B]:
+                yield _B()
+
+            def get_columns(self, table: str) -> list[Any]:
+                return []
+
+            def get_primary_key(self, table: str) -> list[str]:
+                return []
+
+        class _Dst:
+            rows: ClassVar[list[Any]] = []
+
+            def bulk_insert(self, database: str, table: str, rows: list[Any], **kw: Any) -> None:
+                self.rows.extend(rows)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            store = PgPersistence(f"sqlite:///{tmp}/m.db")
+            store.ensure_schema()
+            job: dict[str, Any] = {
+                "source_connection_id": "s",
+                "destination_database": "d",
+                "field_configs": {"t": {"amt": "MONEY"}},
+                "destination_plan": {"t": {"typed_columns": {"amt": "MONEY"}}},
+                "progress": {"checkpoints": {}, "rows_done": 0, "current_table": None},
+                "country": None,
+                "locale": None,
+            }
+            store.create_clone_job("j", job)
+            _normalize_table(
+                "t",
+                job=job,
+                job_id="j",
+                source=_Src(),
+                dest=_Dst(),
+                source_engine=engine,
+                persistence=store,
+                planner=DistinctValuePlanner(build_dispatcher(env_id="e"), None),
+                pool=None,
+                progress=job["progress"],
+                in_place=False,
+                entity_countries={},
+                adjudication=None,
+            )
+        assert seen == [engine], seen

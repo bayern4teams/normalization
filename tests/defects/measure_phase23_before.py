@@ -190,20 +190,26 @@ def d5_end_to_end(typed: list[str], untyped: list[str]) -> None:
         for label, text in fx.ADVERSARIAL_STRINGS:
             try:
                 res = norm(text, sem)
-                row = {"c": text}
-                errs = _apply_value(
-                    row, res, column="c", typed_as=t, companion=None, code_column=None
-                )
-                v = row["c"]
-                cells["error-row" if errs else ("NULL" if v is None else "typed-value")] += 1
                 for engine in ("postgres", "clickhouse"):
+                    row = {"c": text}
+                    errs = _apply_value(
+                        row,
+                        res,
+                        column="c",
+                        typed_as=t,
+                        companion=None,
+                        code_column=None,
+                        engine=engine,
+                    )
+                    v = row["c"]
+                    cells["error-row" if errs else ("NULL" if v is None else "typed-value")] += 1
                     ddl = storage_types.sql_type(t, engine) or ""
                     if v is not None and not errs and not fx.engine_accepts(ddl, v):
                         cells[f"OVERFLOW-REACHES-INSERT-{engine}"] += 1
                         print(f"      {t} {label}: {engine} {ddl} cannot hold the emitted value")
-                if isinstance(v, str):
-                    cells["RAW-STRING-IN-TYPED-CELL"] += 1
-                    print(f"      {t} {label}: raw string reached the typed cell: {v!r}")
+                    if isinstance(v, str):
+                        cells["RAW-STRING-IN-TYPED-CELL"] += 1
+                        print(f"      {t} {label}: raw string reached the typed cell: {v!r}")
             except Exception as exc:
                 cells[f"raises {type(exc).__name__}"] += 1
         print(f"    {t:8s} {dict(cells)}")
@@ -239,7 +245,13 @@ def d4() -> None:
                 kind_by_value[v] = r.original_kind.value
                 row = {"c": v}
                 errs = _apply_value(
-                    row, r, column="c", typed_as=None, companion=None, code_column=None
+                    row,
+                    r,
+                    column="c",
+                    typed_as=None,
+                    companion=None,
+                    code_column=None,
+                    engine="postgres",
                 )
                 flagged_errors[v] = len(errs)
         print(
