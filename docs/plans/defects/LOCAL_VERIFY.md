@@ -43,7 +43,16 @@ destination is created. Never run these against the production metadata database
 - Result (filled in locally):
 ```
 
-(no entries yet)
+### D7 — TAX_ID verdicts from stdnum discovery
+- Why cloud could not verify: no real tax numbers for the 61 newly classified countries; the cloud tests use
+  check-digit-generated and random numbers only.
+- Command: clone a source with a TAX_ID column whose rows carry a country; then
+  `SELECT validation_status, count(*) ... GROUP BY 1` per country on the destination.
+- Independent check: a sample of 20 rows per country checked by hand against the national registry.
+- Expected evidence: no number the registry accepts comes back INVALID. US/GB/DE/FR rows that were INVALID
+  before may now be UNKNOWN with reason "valid under another <CC> identifier" (DE moves the most: 184 of 1260
+  probes in the verifier's sample). That change is intended.
+- Result (filled in locally):
 
 ## Phase 0 additions
 - **D5 overflow (modelled in the cloud):** on a real ClickHouse destination, insert NUMERIC values `1e999` and

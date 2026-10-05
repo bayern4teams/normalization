@@ -78,8 +78,8 @@ _TAX_ID_TITLE_RE = re.compile(r"\b(?:" + "|".join(_TAX_ID_TITLE_TERMS) + r")", r
 # Backward compatibility: the four countries this normalizer validated before
 # discovery existed keep exactly their old module (their titles match several
 # candidates, e.g. US ein/itin/ssn-style TINs), so their outputs stay unchanged.
-# Deferred alternative: drop this map once an authoritative per-country
-# "the" tax-id choice exists in stdnum itself.
+# ponytail: hand map of four legacy modules; drop it once stdnum itself names
+# "the" tax id per country (deferred alternative).
 _LEGACY_TAX_ID_MODULE = {
     "US": "stdnum.us.ein",
     "GB": "stdnum.gb.vat",
@@ -140,6 +140,12 @@ def tax_id_module_for(country: str | None) -> tuple[str | None, tuple[str, ...]]
     return (candidates[0] if len(candidates) == 1 else None), tuple(candidates)
 
 
+# ponytail: a country whose single title-matched module is a narrower id (AU TFN
+# not ABN, UA RNTRC, LI PEID, ZA TIN) is still "classified"; the sibling rule
+# below turns a number another module accepts into unverifiable, at the cost of
+# running every sibling on a rejection. "EU" is a stdnum package, not an ISO
+# country (multi-candidate, so harmless). Upgrade: a per-country tax-id choice
+# from an authoritative source if one appears.
 def _sibling_acceptors(module_name: str, cleaned: str) -> list[str]:
     """Other modules of the same stdnum country package that accept `cleaned`."""
     package = module_name.split(".")[1]

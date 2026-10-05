@@ -52,6 +52,7 @@ config isn't threaded into `Normalizer.normalize()` yet).
 from __future__ import annotations
 
 import ipaddress
+import re
 from typing import TYPE_CHECKING
 from urllib.parse import SplitResult, urlsplit, urlunsplit
 
@@ -119,8 +120,15 @@ def _looks_like_bare_host(value: str) -> bool:
 # `accept_unknown=False`: a suffix the list does not carry is not guessed.
 # The ICANN-only view exists to tell the PRIVATE section apart: a host is
 # under a private suffix exactly when the two views disagree on its suffix.
+# ponytail: the PSL snapshot is the one bundled in the pinned package; a newer
+# suffix is unknown (-> None, never guessed) until the dependency is bumped,
+# which moves env_id. Upgrade path: a scheduled dependency bump, never a fetch.
 _PSL = PublicSuffixList(accept_unknown=False)
 _PSL_ICANN = PublicSuffixList(accept_unknown=False, only_icann=True)
+
+
+# LDH labels (RFC 1123) plus "_", which DNS carries in service names.
+_HOST_CHARS = re.compile(r"[a-z0-9._-]+")
 
 
 def _registrable(host: str, *, idn_ok: bool) -> dict[str, object]:
@@ -134,6 +142,11 @@ def _registrable(host: str, *, idn_ok: bool) -> dict[str, object]:
         return {**none, "registrable_domain_reason": "no host"}
     if not idn_ok:
         return {**none, "registrable_domain_reason": "host is not valid IDNA"}
+    if not _HOST_CHARS.fullmatch(host):
+        return {
+            **none,
+            "registrable_domain_reason": "host has characters a domain name cannot carry",
+        }
     try:
         ipaddress.ip_address(host)
     except ValueError:

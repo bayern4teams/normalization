@@ -198,6 +198,11 @@ class TestBareHostnameRepair:
 class TestRegistrableDomain:
     """D9: PSL-derived keys are additive and abstain rather than guess."""
 
+    def test_host_with_non_domain_characters_abstains(self, normalizer: URLNormalizer) -> None:
+        s = normalizer.normalize("http://a b.com/", _ctx()).structured
+        assert s["registrable_domain"] is None
+        assert s["registrable_domain_reason"] == "host has characters a domain name cannot carry"
+
     @pytest.mark.parametrize(
         ("value", "domain", "suffix", "private"),
         [

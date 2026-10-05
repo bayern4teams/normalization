@@ -3,7 +3,7 @@
 Overwrite this file at every commit. A fresh session reads it first, then
 [the plan](../DEFECTS_IMPLEMENTATION_PLAN.md). Git is the memory; a session's context is not.
 
-**Lock:** 2026-10-05T14:20:41Z · **Autonomy:** unattended-through-phase-5 · **Last heartbeat:** 2026-10-05T14:20:41Z
+**Lock:** 2026-10-05T14:25:48Z · **Autonomy:** unattended-through-phase-5 · **Last heartbeat:** 2026-10-05T14:25:48Z
 
 (Lock/heartbeat protocol: plan §7. A session sets `Lock: <ISO time>`, pushes it, and refreshes it at
 every commit; a lock older than 75 min is stale. `Autonomy` is `off`, `dryrun` (a tick only records
@@ -16,9 +16,9 @@ Only the user changes it.)
 |---|---|---|---|---|
 | D1 | 1 | unverified-live | this commit | ACCEPT after round 2: verifier REJECTed blank verdict (NULLs cell) and lone-surrogate queue crash; both fixed, 52 acceptance tests green; Postgres DDL/ON CONFLICT live-only |
 | D12 | 1 | accepted-cloud | this commit | ACCEPT: kept, one producer (verdict re-normalizes differently -> NEEDS_REVIEW), tested in test_adjudication_acceptance.py; severity order unchanged |
-| D7 | 1 | in-progress | f9bf560 | attack verifier running |
-| D8 | 1 | in-progress | f9bf560 | attack verifier running |
-| D9 | 1 | in-progress | f48d6a8 | attack verifier running |
+| D7 | 1 | unverified-live | this commit | ACCEPT: verifier ACCEPT (60 acceptance+unit, 21 fail on 47df753; 86 stdnum pkgs hand-classified, no non-tax module chosen; 69 sibling-valid numbers UNKNOWN never INVALID); lead added the missing ponytail: ceilings; real numbers live-only |
+| D8 | 1 | accepted-cloud | this commit | ACCEPT: CODE canonical-only, no check-digit keys, validation_status UNKNOWN; IDENTIFIER unchanged |
+| D9 | 1 | accepted-cloud | this commit | ACCEPT: verifier ACCEPT (33 acceptance fail on 47df753; own PSL algorithm agrees on >15000 hosts; sockets blocked: no network); lead fixed `a b.com` getting a registrable domain (host char check + test) and added the ponytail: ceiling; MPL-2.0 accepted as a warning like certifi/hypothesis/pathspec |
 | D5 | 2 | todo | | |
 | D3 | 2 | todo | | |
 | D10 | 2 | todo | | |
@@ -60,12 +60,12 @@ Derived 2026-10-05 from `graphify affected <file>` and `graft callers <sym> --de
 - Phase 3: worker D6 → lead D2; worker D4.
 
 ## Next action
-Phase 1. D1/D12 accepted (4e4c588). D7+D8 (f9bf560, worker round 2 done) and D9 (f48d6a8) implemented; attack
-verifiers write `.handoff/D7.verdict.md` and `.handoff/D9.verdict.md`; lead then decides each (ACCEPT -> row
-accepted-cloud; REJECT -> SendMessage corrections to the worker, max 2 rounds). Lead decision pending for D9: licence
-gate warns on publicsuffixlist (MPL-2.0, not in policy); psycopg LGPL block reported as pre-existing. When D7, D8, D9
-are decided: Phase 1 gate (§8).
-Tick 2026-10-05T14:16Z: graft/graphs were missing at start; `scripts/cloud_setup.sh` installed them (exit 0, 2m11s).
+Phase 1 gate (§8): all Phase 1 items decided. Run the four CI commands, push, wait for `ci-fast` green on the
+pushed head, `/ponytail-review` of the Phase 1 diff (`git diff 47df753`), refresh graphs, then `[PHASE 1 DONE]`
+and start Phase 2 (lane A lead D5 -> D3; lane B worker D10; lane C worker D11).
+Expectations moved by D7 (lead's round-2 sibling rule): for the legacy four countries, 217 of 1260 verifier probes
+went INVALID -> UNKNOWN ("valid under another <CC> identifier"), DE 184 of them; TAX_ID without a classified
+country VALID -> UNKNOWN; CODE VALID -> UNKNOWN. No golden/clone test asserted these.
 
 ## Notifications
 (append `[PHASE n DONE]`, `[BLOCKED]`, `[Defects D1-D12 COMPLETE]` entries here; the same prefixes go in commit messages)
@@ -79,3 +79,8 @@ Tick 2026-10-05T14:16Z: graft/graphs were missing at start; `scripts/cloud_setup
   defect D4's acceptance names; D4 only reports and will not change it; (c) `05/05/2024` abstains though both
   readings are the same date (over-abstain); (d) `\x00` passes into TEXT columns for 22 untyped types and
   Postgres rejects NUL. None is fixed in this plan (scope); each needs the user's go-ahead.
+- **Outside D1-D12, for the user:** `tests/property/test_idempotency_determinism.py::test_every_semantic_type_converges_in_one_pass[COMPANY_NAME]`
+  fails (Hypothesis finds soft hyphen `\xad` -> `''` -> None, so pass 2 differs). It fails with this branch's Phase 1 changes
+  stashed too, no name/company normalizer is touched here, and `ci-fast` does not select `-m property`, so it does not
+  block the gate. (e) D9 verifier: a unicode IDN with a trailing dot (`https://例え.jp.`) abstains with "not valid IDNA",
+  because `_normalize_host` IDNA-encodes the empty last label; this predates D9.
