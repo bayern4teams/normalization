@@ -3,14 +3,14 @@
 Overwrite this file at every commit. A fresh session reads it first, then
 [the plan](../DEFECTS_IMPLEMENTATION_PLAN.md). Git is the memory; a session's context is not.
 
-**Lock:** 2026-10-05T14:25:48Z · **Autonomy:** unattended-through-phase-5 · **Last heartbeat:** 2026-10-05T14:25:48Z
+**Lock:** 2026-10-05T14:36:41Z · **Autonomy:** unattended-through-phase-5 · **Last heartbeat:** 2026-10-05T14:36:41Z
 
 (Lock/heartbeat protocol: plan §7. A session sets `Lock: <ISO time>`, pushes it, and refreshes it at
 every commit; a lock older than 75 min is stale. `Autonomy` is `off`, `dryrun` (a tick only records
 what works and exits) or `unattended-through-phase-N` (authorises the supervisor to chain phases).
 Only the user changes it.)
 
-**Branch:** `feat/defects-fixes` · **Current phase:** 1
+**Branch:** `feat/defects-fixes` · **Current phase:** 2
 
 | item | phase | state | commit | lead verdict |
 |---|---|---|---|---|
@@ -60,9 +60,10 @@ Derived 2026-10-05 from `graphify affected <file>` and `graft callers <sym> --de
 - Phase 3: worker D6 → lead D2; worker D4.
 
 ## Next action
-Phase 1 gate (§8): all Phase 1 items decided. Run the four CI commands, push, wait for `ci-fast` green on the
-pushed head, `/ponytail-review` of the Phase 1 diff (`git diff 47df753`), refresh graphs, then `[PHASE 1 DONE]`
-and start Phase 2 (lane A lead D5 -> D3; lane B worker D10; lane C worker D11).
+Phase 2. Lane A (lead): D5 (prove the storage_types cast gate adversarially on both engines, fix the stale
+postgres_destination.py:25-44 comment, ADR-020, DATE decision per §9), then D3 (lineage). Lane B: D10 derive ->
+worker -> attack. Lane C: D11 derive -> worker -> attack (pyproject/uv.lock/env_fingerprint owned by D11 this phase).
+Start with the D10 and D11 derive verifiers (2 slots) while the lead does D5.
 Expectations moved by D7 (lead's round-2 sibling rule): for the legacy four countries, 217 of 1260 verifier probes
 went INVALID -> UNKNOWN ("valid under another <CC> identifier"), DE 184 of them; TAX_ID without a classified
 country VALID -> UNKNOWN; CODE VALID -> UNKNOWN. No golden/clone test asserted these.
@@ -71,6 +72,12 @@ country VALID -> UNKNOWN; CODE VALID -> UNKNOWN. No golden/clone test asserted t
 (append `[PHASE n DONE]`, `[BLOCKED]`, `[Defects D1-D12 COMPLETE]` entries here; the same prefixes go in commit messages)
 - [PHASE 0 DONE] 2026-10-05: baseline, re-verification, ownership, fixtures + BEFORE numbers (PHASE0_REPORT.md §4).
   Gate: ruff/format/mypy clean, CI pytest 1319 passed / 12 skipped, `ci-fast` green on 5a93696, ponytail-review: lean.
+- [PHASE 1 DONE] 2026-10-05: D1, D12, D7, D8, D9 decided (D1, D7 unverified-live; D12, D8, D9 accepted-cloud).
+  Gate: ruff/format/mypy clean, CI pytest 1477 passed / 12 skipped (also in a shallow clone), `ci-fast` green on
+  cde8c30 (run 37325386403). `ci-fast` had been red since f48d6a8: the D9 literal test diffed against `main`, absent
+  in CI's shallow checkout; made history-free. ponytail-review of `git diff e6fa923 -- packages`: 3 deliberate keeps
+  (title-term tuple is the named source; `_save_progress` else-branch keeps the old write; optional `adjudication`
+  param used by direct-call tests), net -4 lines possible, none taken.
 
 ## Open escalations (worker/verifier results that passed only written tests or one case)
 - **Outside D1-D12, for the user (Phase 0 fixtures):** (a) `03/2024` normalizes to `2024-03-03` — a day is
