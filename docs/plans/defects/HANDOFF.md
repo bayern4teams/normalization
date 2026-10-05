@@ -3,7 +3,7 @@
 Overwrite this file at every commit. A fresh session reads it first, then
 [the plan](../DEFECTS_IMPLEMENTATION_PLAN.md). Git is the memory; a session's context is not.
 
-**Lock:** 2026-10-05T14:16:54Z · **Autonomy:** unattended-through-phase-5 · **Last heartbeat:** 2026-10-05T14:16:54Z
+**Lock:** 2026-10-05T14:20:41Z · **Autonomy:** unattended-through-phase-5 · **Last heartbeat:** 2026-10-05T14:20:41Z
 
 (Lock/heartbeat protocol: plan §7. A session sets `Lock: <ISO time>`, pushes it, and refreshes it at
 every commit; a lock older than 75 min is stale. `Autonomy` is `off`, `dryrun` (a tick only records
@@ -16,9 +16,9 @@ Only the user changes it.)
 |---|---|---|---|---|
 | D1 | 1 | unverified-live | this commit | ACCEPT after round 2: verifier REJECTed blank verdict (NULLs cell) and lone-surrogate queue crash; both fixed, 52 acceptance tests green; Postgres DDL/ON CONFLICT live-only |
 | D12 | 1 | accepted-cloud | this commit | ACCEPT: kept, one producer (verdict re-normalizes differently -> NEEDS_REVIEW), tested in test_adjudication_acceptance.py; severity order unchanged |
-| D7 | 1 | todo | | |
-| D8 | 1 | todo | | |
-| D9 | 1 | todo | | |
+| D7 | 1 | in-progress | f9bf560 | attack verifier running |
+| D8 | 1 | in-progress | f9bf560 | attack verifier running |
+| D9 | 1 | in-progress | f48d6a8 | attack verifier running |
 | D5 | 2 | todo | | |
 | D3 | 2 | todo | | |
 | D10 | 2 | todo | | |
@@ -60,12 +60,12 @@ Derived 2026-10-05 from `graphify affected <file>` and `graft callers <sym> --de
 - Phase 3: worker D6 → lead D2; worker D4.
 
 ## Next action
-Phase 1. Lane A (lead): D1 implemented as WIP (a2b5e59, ADR-018); verifier `D1` (derive+attack) writes
-`tests/unit/test_adjudication_acceptance.py`, `.handoff/D1.verdict.md`; lead then decides. D12: kept with one
-producer (ADR-018: adjudicated value that re-normalizes differently -> NEEDS_REVIEW); date.py note and data
-contract updated. Lane B: D7 derive -> worker -> attack, then D8. Lane C: D9 derive -> worker -> attack.
-Deviation (one line, plan §3.2/§4): D1 code was written before its derive verifier ran because both subagent
-slots were on Phase 0 fixtures; the D1 verifier was told to write tests from the spec before reading the code.
+Phase 1. D1/D12 accepted (4e4c588). D7+D8 (f9bf560, worker round 2 done) and D9 (f48d6a8) implemented; attack
+verifiers write `.handoff/D7.verdict.md` and `.handoff/D9.verdict.md`; lead then decides each (ACCEPT -> row
+accepted-cloud; REJECT -> SendMessage corrections to the worker, max 2 rounds). Lead decision pending for D9: licence
+gate warns on publicsuffixlist (MPL-2.0, not in policy); psycopg LGPL block reported as pre-existing. When D7, D8, D9
+are decided: Phase 1 gate (§8).
+Tick 2026-10-05T14:16Z: graft/graphs were missing at start; `scripts/cloud_setup.sh` installed them (exit 0, 2m11s).
 
 ## Notifications
 (append `[PHASE n DONE]`, `[BLOCKED]`, `[Defects D1-D12 COMPLETE]` entries here; the same prefixes go in commit messages)
