@@ -61,8 +61,7 @@ def _lines(name: str) -> list[str]:
 
 def _unquote(token: str) -> str:
     """Drop ONE leading and ONE trailing quote (the pattern `\\"` keeps its escape)."""
-    token = token.removeprefix('"')
-    return token.removesuffix('"')
+    return token.removeprefix('"').removesuffix('"')
 
 
 def _context(regex: str) -> re.Pattern[str]:
@@ -211,7 +210,6 @@ def _encode(text: str) -> str:
     return "|".join(t for t, _ in phonemes)
 
 
-@cache
 def encode(name: str) -> tuple[str, ...]:
     """Sorted alternative Beider-Morse codes of `name` (empty if it has none)."""
     return tuple(sorted({c for c in re.split(r"[()|-]+", _encode(name)) if c}))
