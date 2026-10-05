@@ -1229,10 +1229,13 @@ def post_adjudication_verdict(
     result = dispatcher.normalize(
         body.decided_value, context.semantic_type, context, SCAFFOLD_PROFILE
     )
-    if result.normalization_status not in adjudication.CLEAN_STATUSES:
+    # A blank answer normalizes "cleanly" to nothing, and would silently
+    # NULL the cell on every later run: it is not an answer.
+    if result.normalization_status not in adjudication.CLEAN_STATUSES or result.display is None:
         raise HTTPException(
             status_code=422,
-            detail=f"decided value normalizes to {result.normalization_status.value}, "
+            detail=f"decided value normalizes to {result.normalization_status.value} "
+            f"with display {'empty' if result.display is None else 'set'}, "
             "not to a clean value; nothing stored",
         )
     verdict = {

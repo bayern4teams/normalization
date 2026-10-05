@@ -3,7 +3,7 @@
 Overwrite this file at every commit. A fresh session reads it first, then
 [the plan](../DEFECTS_IMPLEMENTATION_PLAN.md). Git is the memory; a session's context is not.
 
-**Lock:** 2026-10-05T09:35:36Z · **Autonomy:** unattended-through-phase-5 · **Last heartbeat:** 2026-10-05T09:35:36Z
+**Lock:** 2026-10-05T09:41:23Z · **Autonomy:** unattended-through-phase-5 · **Last heartbeat:** 2026-10-05T09:41:23Z
 
 (Lock/heartbeat protocol: plan §7. A session sets `Lock: <ISO time>`, pushes it, and refreshes it at
 every commit; a lock older than 75 min is stale. `Autonomy` is `off`, `dryrun` (a tick only records
@@ -14,8 +14,8 @@ Only the user changes it.)
 
 | item | phase | state | commit | lead verdict |
 |---|---|---|---|---|
-| D1 | 1 | in-progress | a2b5e59 (WIP) | |
-| D12 | 1 | in-progress | (WIP) | |
+| D1 | 1 | unverified-live | this commit | ACCEPT after round 2: verifier REJECTed blank verdict (NULLs cell) and lone-surrogate queue crash; both fixed, 52 acceptance tests green; Postgres DDL/ON CONFLICT live-only |
+| D12 | 1 | accepted-cloud | this commit | ACCEPT: kept, one producer (verdict re-normalizes differently -> NEEDS_REVIEW), tested in test_adjudication_acceptance.py; severity order unchanged |
 | D7 | 1 | todo | | |
 | D8 | 1 | todo | | |
 | D9 | 1 | todo | | |

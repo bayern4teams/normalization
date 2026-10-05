@@ -15,7 +15,7 @@ import re
 from typing import TYPE_CHECKING, Any
 
 import blake3
-from normcore.pii import character_class_mask, content_hash
+from normcore.pii import character_class_mask, content_hash, sanitize_surrogates
 from normcore.trace import TraceStep
 
 from normcore import NormalizationStatus, NormalizedValue
@@ -169,7 +169,10 @@ class Adjudication:
                 "context_hash": context.context_hash,
                 "profile_version": self._profile_version,
                 "context": context.model_dump_json(),
-                "original": value,
+                # Shown, never matched on (the key hashes the raw value): a
+                # lone surrogate cannot be stored as text, and must not fail
+                # the chunk that only wanted to ask about it.
+                "original": sanitize_surrogates(value),
                 "detail": json.dumps(
                     {
                         "structured": result.structured,
