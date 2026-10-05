@@ -3,7 +3,7 @@
 Overwrite this file at every commit. A fresh session reads it first, then
 [the plan](../DEFECTS_IMPLEMENTATION_PLAN.md). Git is the memory; a session's context is not.
 
-**Lock:** 2026-10-05T14:41:22Z · **Autonomy:** unattended-through-phase-5 · **Last heartbeat:** 2026-10-05T14:41:22Z
+**Lock:** 2026-10-05T14:45:30Z · **Autonomy:** unattended-through-phase-5 · **Last heartbeat:** 2026-10-05T14:45:30Z
 
 (Lock/heartbeat protocol: plan §7. A session sets `Lock: <ISO time>`, pushes it, and refreshes it at
 every commit; a lock older than 75 min is stale. `Autonomy` is `off`, `dryrun` (a tick only records
@@ -19,10 +19,10 @@ Only the user changes it.)
 | D7 | 1 | unverified-live | this commit | ACCEPT: verifier ACCEPT (60 acceptance+unit, 21 fail on 47df753; 86 stdnum pkgs hand-classified, no non-tax module chosen; 69 sibling-valid numbers UNKNOWN never INVALID); lead added the missing ponytail: ceilings; real numbers live-only |
 | D8 | 1 | accepted-cloud | this commit | ACCEPT: CODE canonical-only, no check-digit keys, validation_status UNKNOWN; IDENTIFIER unchanged |
 | D9 | 1 | accepted-cloud | this commit | ACCEPT: verifier ACCEPT (33 acceptance fail on 47df753; own PSL algorithm agrees on >15000 hosts; sockets blocked: no network); lead fixed `a b.com` getting a registrable domain (host char check + test) and added the ponytail: ceiling; MPL-2.0 accepted as a warning like certifi/hypothesis/pathspec |
-| D5 | 2 | in-progress | | stale comments fixed, ADR-020 written; code fix (engine-aware range check in coerce) waits for the D5 derive verifier |
+| D5 | 2 | in-progress | 284e6e7 | comments + ADR-020 done; derive verifier running; then lead implements engine-aware coerce |
 | D3 | 2 | todo | | |
-| D10 | 2 | in-progress | | derive done (126 tests, 93 fail on old code; test file lands with the implementation); worker running |
-| D11 | 2 | in-progress | | derive verifier running |
+| D10 | 2 | in-progress | f3988fa | implemented (149 tests green); attack verifier running. Lead accepts the guard keeping regionless `tel:+<cc>` without extension AMBIGUOUS (byte-identity); over-abstain logged |
+| D11 | 2 | in-progress | 30074c6 | derive done (290 tests, 180 fail on old code; test file `tests/unit/test_name_d11_acceptance.py` untracked, lands with implementation); worker next (after D10 attack frees a slot) |
 | D6 | 3 | todo | | |
 | D2 | 3 | todo | | |
 | D4 | 3 | todo | | |
@@ -94,4 +94,7 @@ country VALID -> UNKNOWN; CODE VALID -> UNKNOWN. No golden/clone test asserted t
   fails (Hypothesis finds soft hyphen `\xad` -> `''` -> None, so pass 2 differs). It fails with this branch's Phase 1 changes
   stashed too, no name/company normalizer is touched here, and `ci-fast` does not select `-m property`, so it does not
   block the gate. (e) D9 verifier: a unicode IDN with a trailing dot (`https://例え.jp.`) abstains with "not valid IDNA",
-  because `_normalize_host` IDNA-encodes the empty last label; this predates D9.
+  because `_normalize_host` IDNA-encodes the empty last label; this predates D9. (f) D10: a regionless `tel:+<cc>`
+  URI without an extension stays AMBIGUOUS though it states its country (kept for byte-identity with the pre-D10
+  output; a 2-line `ponytail:` guard in phone.py). (g) D11: Мухаммед / Muhammad / Mohammed / محمد share no key under
+  faithful BMPM or Double Metaphone; not forced (a hand rule would violate the no-hand-table rule).
