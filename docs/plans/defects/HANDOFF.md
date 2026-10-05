@@ -66,4 +66,9 @@ Phase 0, step 4 (plan §8): two verifiers (P0-A scorer + phase-1 fixtures, P0-B 
 (append `[PHASE n DONE]`, `[BLOCKED]`, `[Defects D1-D12 COMPLETE]` entries here; the same prefixes go in commit messages)
 
 ## Open escalations (worker/verifier results that passed only written tests or one case)
-none
+- **Outside D1-D12, for the user (Phase 0 fixtures):** (a) `03/2024` normalizes to `2024-03-03` — a day is
+  invented from a month-year (violates "precision is preserved, never invented"); (b) `NA` in a COUNTRY column
+  is read as NOT_APPLICABLE by the `missing-values.common` dictionary (40/40 Namibia rows), the never-guess
+  defect D4's acceptance names; D4 only reports and will not change it; (c) `05/05/2024` abstains though both
+  readings are the same date (over-abstain); (d) `\x00` passes into TEXT columns for 22 untyped types and
+  Postgres rejects NUL. None is fixed in this plan (scope); each needs the user's go-ahead.

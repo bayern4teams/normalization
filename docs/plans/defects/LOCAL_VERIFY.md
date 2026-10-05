@@ -44,3 +44,12 @@ destination is created. Never run these against the production metadata database
 ```
 
 (no entries yet)
+
+## Phase 0 additions
+- **D5 overflow (modelled in the cloud):** on a real ClickHouse destination, insert NUMERIC values `1e999` and
+  `10000000000000000000000000000000000000000` and a MONEY value of the same size; before D5 they reached the
+  INSERT. After D5 they must land as NULL with an error row and the chunk must commit. Check with
+  `SELECT count(*)` on the destination and the job's `/errors`.
+- **D1 on real Postgres:** `ensure_schema()` creates `normalization_adjudication_queue` and
+  `normalization_adjudication_verdicts`; the upsert's `ON CONFLICT ... DO UPDATE` with the `AS q` alias was
+  exercised on SQLite only.

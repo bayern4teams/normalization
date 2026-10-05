@@ -47,3 +47,35 @@ Read against the source on 2026-10-05 (two read-only sweeps, lead spot-checked `
 
 ## 3. Ownership
 Locked in `HANDOFF.md` ("Locked file-ownership table").
+
+## 4. Synthetic fixtures and BEFORE numbers (plan §8 Phase 0 step 4)
+
+Built by two `defects-verifier` runs (P0-A, P0-B) under `tests/defects/`: the shared scorer
+(`scorer.py`, five outcomes, proven both ways by `test_scorer.py`, 29 tests, `unit`), planted fixtures
+(`fixtures_phase1.py`, `fixtures_phase23.py`) and two measure scripts (not collected by pytest). Truth comes
+from stdnum check-digit functions, libphonenumber example numbers, CLDR via Babel, the PSL, ICU BGN/PCGN and
+pycountry, never from `tests/`. Full numbers: `uv run python tests/defects/measure_phase1_before.py --rev e6fa923`
+and `uv run python tests/defects/measure_phase23_before.py`.
+
+| item | BEFORE (current code) |
+|---|---|
+| D1 | 16/16 planted ambiguous values abstain (correct-abstain), 0/16 reach any queue; wrong-confident 0 |
+| D7 | 4 of 85 stdnum country packages reachable; 0/6 one-digit invalid twins caught (6 wrong-confident); unlisted (AE) and no-country come back VALID |
+| D8 | TAX_ID vs CODE identical `validation_status` in 2 of 3 pairs |
+| D9 | 0/10 PSL cases answered (no key); a naive last-two-labels rule is exposed by `a.co.uk`, `b.a.co.uk`, `x.github.io`, IPv4, `foo.notatld` |
+| D10 | base, `x45` and `x46` share one `comparison` in 10/10 regions; `rfc3966` absent 40/40 |
+| D11 | same-name pairs sharing a key: Soundex 22/31, **any of the four old keys 25/31** (cross-script 13/18); different-name collisions 0/10; non-Latin inputs carrying all four keys 17/17 |
+| D5 | `coerce` never raises; overflow (`1e999`, ±10**40 on CH Decimal(38,9)/(38,4) and PG NUMERIC(38,4); `1e1000000` on PG NUMERIC) passes the gate (modelled, unverified-live) |
+| D4 | no cell-level report; but the dispatcher already maps `N/A`, `-`, `unknown` to missing per cell, and maps `NA` in a COUNTRY column to NOT_APPLICABLE (40/40 Namibia rows) |
+| D12 | `NEEDS_REVIEW`: 0 producers |
+
+### Lead decisions taken from the fixtures
+- **D11 baseline** is the *any old key* count (25/31, cross-script 13/18), not Soundex alone: the plan's
+  Soundex bar is already met on `main` and would accept a no-op. Must-fix pairs: Мухаммед vs
+  Muhammad/Mohammed/Mohammad/محمد, Елена vs Yelena.
+- **D11 Latin with diacritics** (`Müller`): Latin script, so it keeps today's keys byte-identical; "not
+  applicable" is decided by script, not by the fact that `anyascii` folded a diacritic.
+- **D10** acceptance uses base ≠ `x45` ≠ `x46` in `comparison`; "four spellings agree" passes trivially today.
+- **D5** includes a precision/scale check in `coerce`: an overflowing value is a value "a typed column cannot
+  hold" (decision #8), so it must become `(None, error)`, not reach the INSERT.
+- Findings outside D1-D12 are listed under "Open escalations" in `HANDOFF.md`, not fixed here.
