@@ -171,9 +171,9 @@ _NEVER_INFERRED = frozenset({FieldSemanticType.FREE_TEXT, FieldSemanticType.UNKN
 # source already types as timestamp/boolean/numeric/uuid has no
 # normalization problem to solve — the database itself guarantees the
 # format — and configuring one is actively harmful, because a configured
-# column's destination type becomes TEXT (see SEMANTIC_TYPE_TO_PG_TYPE), so
-# auto-detecting `created_at` would silently downgrade a real timestamp
-# column to a string. An operator can still force a semantic type onto any
+# column's destination type becomes TEXT unless it is one of the natively
+# typed NUMERIC/MONEY/BOOLEAN (normio.storage_types), so auto-detecting
+# `created_at` would silently downgrade a real timestamp column to a string. An operator can still force a semantic type onto any
 # column explicitly; this only governs what is inferred.
 #
 # An allow-list of substrings rather than a deny-list of typed names, so an

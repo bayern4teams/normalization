@@ -1,8 +1,8 @@
 """Native destination column types, and the pre-insert cast that makes
 them safe.
 
-Every semantic type maps to TEXT by default, and that is deliberate (see
-the long note on `SEMANTIC_TYPE_TO_PG_TYPE`): decision #8 puts a failed
+A semantic type not listed here maps to TEXT, and that is deliberate:
+decision #8 puts a failed
 value's ORIGINAL raw string in the cell, and a DATE/NUMERIC column
 rejects exactly the malformed strings decision #8 exists to carry — the
 DB rejects the whole chunk, taking the job down with it, before the
