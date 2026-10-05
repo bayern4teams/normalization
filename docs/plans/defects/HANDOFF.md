@@ -3,7 +3,7 @@
 Overwrite this file at every commit. A fresh session reads it first, then
 [the plan](../DEFECTS_IMPLEMENTATION_PLAN.md). Git is the memory; a session's context is not.
 
-**Lock:** 2026-10-05T09:17:17Z · **Autonomy:** unattended-through-phase-5 · **Last heartbeat:** 2026-10-05T09:17:17Z
+**Lock:** 2026-10-05T09:20:45Z · **Autonomy:** unattended-through-phase-5 · **Last heartbeat:** 2026-10-05T09:20:45Z
 
 (Lock/heartbeat protocol: plan §7. A session sets `Lock: <ISO time>`, pushes it, and refreshes it at
 every commit; a lock older than 75 min is stale. `Autonomy` is `off`, `dryrun` (a tick only records
@@ -60,7 +60,7 @@ Derived 2026-10-05 from `graphify affected <file>` and `graft callers <sym> --de
 - Phase 3: worker D6 → lead D2; worker D4.
 
 ## Next action
-Phase 0, step 1 (plan §8). The branch holds only the kit; no feature code yet. (Runs only while `Autonomy` is `unattended-through-phase-N`.)
+Phase 0, step 4 (plan §8): two verifiers (P0-A scorer + phase-1 fixtures, P0-B phase-2/3 fixtures) build `tests/defects/`; then step 5 and the phase-0 gate. Steps 1-3 done (PHASE0_REPORT.md). Tick 09:17Z found the 06:26Z lock stale with steps 1-3 committed and no uncommitted work; resumed from step 4. graft was missing at start; `cloud_setup.sh` restored it (rc 0, 121 s).
 
 ## Notifications
 (append `[PHASE n DONE]`, `[BLOCKED]`, `[Defects D1-D12 COMPLETE]` entries here; the same prefixes go in commit messages)
