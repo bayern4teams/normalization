@@ -1,0 +1,1470 @@
+[
+ {
+  "comparison": "smith",
+  "confidence": 1.0,
+  "display": "Smith",
+  "input": "Smith",
+  "normalization_status": "UNCHANGED",
+  "search": "smith",
+  "semantic_type": "FAMILY_NAME",
+  "structured": {
+   "family_name": "Smith",
+   "nickname": null,
+   "phonetic": {
+    "match_rating_codex": "SMTH",
+    "metaphone": "SM0",
+    "nysiis": "SNAT",
+    "soundex": "S530"
+   }
+  },
+  "validation_status": "VALID"
+ },
+ {
+  "comparison": "smith",
+  "confidence": 1.0,
+  "display": "Smith",
+  "input": "Smith",
+  "normalization_status": "UNCHANGED",
+  "search": "smith",
+  "semantic_type": "GIVEN_NAME",
+  "structured": {
+   "given_name": "Smith",
+   "nickname": null,
+   "phonetic": {
+    "match_rating_codex": "SMTH",
+    "metaphone": "SM0",
+    "nysiis": "SNAT",
+    "soundex": "S530"
+   }
+  },
+  "validation_status": "VALID"
+ },
+ {
+  "comparison": "robert",
+  "confidence": 1.0,
+  "display": "Robert",
+  "input": "Robert",
+  "normalization_status": "UNCHANGED",
+  "search": "robert",
+  "semantic_type": "FAMILY_NAME",
+  "structured": {
+   "family_name": "Robert",
+   "nickname": null,
+   "phonetic": {
+    "match_rating_codex": "RBRT",
+    "metaphone": "RBRT",
+    "nysiis": "RABAD",
+    "soundex": "R163"
+   }
+  },
+  "validation_status": "VALID"
+ },
+ {
+  "comparison": "robert",
+  "confidence": 1.0,
+  "display": "Robert",
+  "input": "Robert",
+  "normalization_status": "UNCHANGED",
+  "search": "robert",
+  "semantic_type": "GIVEN_NAME",
+  "structured": {
+   "given_name": "Robert",
+   "nickname": null,
+   "phonetic": {
+    "match_rating_codex": "RBRT",
+    "metaphone": "RBRT",
+    "nysiis": "RABAD",
+    "soundex": "R163"
+   }
+  },
+  "validation_status": "VALID"
+ },
+ {
+  "comparison": "rupert",
+  "confidence": 1.0,
+  "display": "Rupert",
+  "input": "Rupert",
+  "normalization_status": "UNCHANGED",
+  "search": "rupert",
+  "semantic_type": "FAMILY_NAME",
+  "structured": {
+   "family_name": "Rupert",
+   "nickname": null,
+   "phonetic": {
+    "match_rating_codex": "RPRT",
+    "metaphone": "RPRT",
+    "nysiis": "RAPAD",
+    "soundex": "R163"
+   }
+  },
+  "validation_status": "VALID"
+ },
+ {
+  "comparison": "rupert",
+  "confidence": 1.0,
+  "display": "Rupert",
+  "input": "Rupert",
+  "normalization_status": "UNCHANGED",
+  "search": "rupert",
+  "semantic_type": "GIVEN_NAME",
+  "structured": {
+   "given_name": "Rupert",
+   "nickname": null,
+   "phonetic": {
+    "match_rating_codex": "RPRT",
+    "metaphone": "RPRT",
+    "nysiis": "RAPAD",
+    "soundex": "R163"
+   }
+  },
+  "validation_status": "VALID"
+ },
+ {
+  "comparison": "muhammad",
+  "confidence": 1.0,
+  "display": "Muhammad",
+  "input": "Muhammad",
+  "normalization_status": "UNCHANGED",
+  "search": "muhammad",
+  "semantic_type": "FAMILY_NAME",
+  "structured": {
+   "family_name": "Muhammad",
+   "nickname": null,
+   "phonetic": {
+    "match_rating_codex": "MHMD",
+    "metaphone": "MHMT",
+    "nysiis": "MAHANAD",
+    "soundex": "M530"
+   }
+  },
+  "validation_status": "VALID"
+ },
+ {
+  "comparison": "muhammad",
+  "confidence": 1.0,
+  "display": "Muhammad",
+  "input": "Muhammad",
+  "normalization_status": "UNCHANGED",
+  "search": "muhammad",
+  "semantic_type": "GIVEN_NAME",
+  "structured": {
+   "given_name": "Muhammad",
+   "nickname": null,
+   "phonetic": {
+    "match_rating_codex": "MHMD",
+    "metaphone": "MHMT",
+    "nysiis": "MAHANAD",
+    "soundex": "M530"
+   }
+  },
+  "validation_status": "VALID"
+ },
+ {
+  "comparison": "mohammed",
+  "confidence": 1.0,
+  "display": "Mohammed",
+  "input": "Mohammed",
+  "normalization_status": "UNCHANGED",
+  "search": "mohammed",
+  "semantic_type": "FAMILY_NAME",
+  "structured": {
+   "family_name": "Mohammed",
+   "nickname": null,
+   "phonetic": {
+    "match_rating_codex": "MHMD",
+    "metaphone": "MHMT",
+    "nysiis": "MAHANAD",
+    "soundex": "M530"
+   }
+  },
+  "validation_status": "VALID"
+ },
+ {
+  "comparison": "mohammed",
+  "confidence": 1.0,
+  "display": "Mohammed",
+  "input": "Mohammed",
+  "normalization_status": "UNCHANGED",
+  "search": "mohammed",
+  "semantic_type": "GIVEN_NAME",
+  "structured": {
+   "given_name": "Mohammed",
+   "nickname": null,
+   "phonetic": {
+    "match_rating_codex": "MHMD",
+    "metaphone": "MHMT",
+    "nysiis": "MAHANAD",
+    "soundex": "M530"
+   }
+  },
+  "validation_status": "VALID"
+ },
+ {
+  "comparison": "mohammad",
+  "confidence": 1.0,
+  "display": "Mohammad",
+  "input": "Mohammad",
+  "normalization_status": "UNCHANGED",
+  "search": "mohammad",
+  "semantic_type": "FAMILY_NAME",
+  "structured": {
+   "family_name": "Mohammad",
+   "nickname": null,
+   "phonetic": {
+    "match_rating_codex": "MHMD",
+    "metaphone": "MHMT",
+    "nysiis": "MAHANAD",
+    "soundex": "M530"
+   }
+  },
+  "validation_status": "VALID"
+ },
+ {
+  "comparison": "mohammad",
+  "confidence": 1.0,
+  "display": "Mohammad",
+  "input": "Mohammad",
+  "normalization_status": "UNCHANGED",
+  "search": "mohammad",
+  "semantic_type": "GIVEN_NAME",
+  "structured": {
+   "given_name": "Mohammad",
+   "nickname": null,
+   "phonetic": {
+    "match_rating_codex": "MHMD",
+    "metaphone": "MHMT",
+    "nysiis": "MAHANAD",
+    "soundex": "M530"
+   }
+  },
+  "validation_status": "VALID"
+ },
+ {
+  "comparison": "yuri",
+  "confidence": 1.0,
+  "display": "Yuri",
+  "input": "Yuri",
+  "normalization_status": "UNCHANGED",
+  "search": "yuri",
+  "semantic_type": "FAMILY_NAME",
+  "structured": {
+   "family_name": "Yuri",
+   "nickname": null,
+   "phonetic": {
+    "match_rating_codex": "YR",
+    "metaphone": "YR",
+    "nysiis": "YAR",
+    "soundex": "Y600"
+   }
+  },
+  "validation_status": "VALID"
+ },
+ {
+  "comparison": "yuri",
+  "confidence": 1.0,
+  "display": "Yuri",
+  "input": "Yuri",
+  "normalization_status": "UNCHANGED",
+  "search": "yuri",
+  "semantic_type": "GIVEN_NAME",
+  "structured": {
+   "given_name": "Yuri",
+   "nickname": null,
+   "phonetic": {
+    "match_rating_codex": "YR",
+    "metaphone": "YR",
+    "nysiis": "YAR",
+    "soundex": "Y600"
+   }
+  },
+  "validation_status": "VALID"
+ },
+ {
+  "comparison": "yury",
+  "confidence": 1.0,
+  "display": "Yury",
+  "input": "Yury",
+  "normalization_status": "UNCHANGED",
+  "search": "yury",
+  "semantic_type": "FAMILY_NAME",
+  "structured": {
+   "family_name": "Yury",
+   "nickname": null,
+   "phonetic": {
+    "match_rating_codex": "YRY",
+    "metaphone": "YR",
+    "nysiis": "YARY",
+    "soundex": "Y600"
+   }
+  },
+  "validation_status": "VALID"
+ },
+ {
+  "comparison": "yury",
+  "confidence": 1.0,
+  "display": "Yury",
+  "input": "Yury",
+  "normalization_status": "UNCHANGED",
+  "search": "yury",
+  "semantic_type": "GIVEN_NAME",
+  "structured": {
+   "given_name": "Yury",
+   "nickname": null,
+   "phonetic": {
+    "match_rating_codex": "YRY",
+    "metaphone": "YR",
+    "nysiis": "YARY",
+    "soundex": "Y600"
+   }
+  },
+  "validation_status": "VALID"
+ },
+ {
+  "comparison": "olga",
+  "confidence": 1.0,
+  "display": "Olga",
+  "input": "Olga",
+  "normalization_status": "UNCHANGED",
+  "search": "olga",
+  "semantic_type": "FAMILY_NAME",
+  "structured": {
+   "family_name": "Olga",
+   "nickname": null,
+   "phonetic": {
+    "match_rating_codex": "OLG",
+    "metaphone": "OLK",
+    "nysiis": "OLG",
+    "soundex": "O420"
+   }
+  },
+  "validation_status": "VALID"
+ },
+ {
+  "comparison": "olga",
+  "confidence": 1.0,
+  "display": "Olga",
+  "input": "Olga",
+  "normalization_status": "UNCHANGED",
+  "search": "olga",
+  "semantic_type": "GIVEN_NAME",
+  "structured": {
+   "given_name": "Olga",
+   "nickname": null,
+   "phonetic": {
+    "match_rating_codex": "OLG",
+    "metaphone": "OLK",
+    "nysiis": "OLG",
+    "soundex": "O420"
+   }
+  },
+  "validation_status": "VALID"
+ },
+ {
+  "comparison": "müller",
+  "confidence": 1.0,
+  "display": "Müller",
+  "input": "Müller",
+  "normalization_status": "UNCHANGED",
+  "search": "muller",
+  "semantic_type": "FAMILY_NAME",
+  "structured": {
+   "family_name": "Müller",
+   "nickname": null,
+   "phonetic": {
+    "match_rating_codex": "MLR",
+    "metaphone": "MLR",
+    "nysiis": "MALAR",
+    "soundex": "M460"
+   }
+  },
+  "validation_status": "VALID"
+ },
+ {
+  "comparison": "müller",
+  "confidence": 1.0,
+  "display": "Müller",
+  "input": "Müller",
+  "normalization_status": "UNCHANGED",
+  "search": "muller",
+  "semantic_type": "GIVEN_NAME",
+  "structured": {
+   "given_name": "Müller",
+   "nickname": null,
+   "phonetic": {
+    "match_rating_codex": "MLR",
+    "metaphone": "MLR",
+    "nysiis": "MALAR",
+    "soundex": "M460"
+   }
+  },
+  "validation_status": "VALID"
+ },
+ {
+  "comparison": "josé",
+  "confidence": 1.0,
+  "display": "José",
+  "input": "José",
+  "normalization_status": "UNCHANGED",
+  "search": "jose",
+  "semantic_type": "FAMILY_NAME",
+  "structured": {
+   "family_name": "José",
+   "nickname": null,
+   "phonetic": {
+    "match_rating_codex": "JS",
+    "metaphone": "JS",
+    "nysiis": "JAS",
+    "soundex": "J200"
+   }
+  },
+  "validation_status": "VALID"
+ },
+ {
+  "comparison": "josé",
+  "confidence": 1.0,
+  "display": "José",
+  "input": "José",
+  "normalization_status": "UNCHANGED",
+  "search": "jose",
+  "semantic_type": "GIVEN_NAME",
+  "structured": {
+   "given_name": "José",
+   "nickname": null,
+   "phonetic": {
+    "match_rating_codex": "JS",
+    "metaphone": "JS",
+    "nysiis": "JAS",
+    "soundex": "J200"
+   }
+  },
+  "validation_status": "VALID"
+ },
+ {
+  "comparison": "łukasz",
+  "confidence": 1.0,
+  "display": "Łukasz",
+  "input": "Łukasz",
+  "normalization_status": "UNCHANGED",
+  "search": "łukasz",
+  "semantic_type": "FAMILY_NAME",
+  "structured": {
+   "family_name": "Łukasz",
+   "nickname": null,
+   "phonetic": {
+    "match_rating_codex": "LKSZ",
+    "metaphone": "LKSS",
+    "nysiis": "LAC",
+    "soundex": "L220"
+   }
+  },
+  "validation_status": "VALID"
+ },
+ {
+  "comparison": "łukasz",
+  "confidence": 1.0,
+  "display": "Łukasz",
+  "input": "Łukasz",
+  "normalization_status": "UNCHANGED",
+  "search": "łukasz",
+  "semantic_type": "GIVEN_NAME",
+  "structured": {
+   "given_name": "Łukasz",
+   "nickname": null,
+   "phonetic": {
+    "match_rating_codex": "LKSZ",
+    "metaphone": "LKSS",
+    "nysiis": "LAC",
+    "soundex": "L220"
+   }
+  },
+  "validation_status": "VALID"
+ },
+ {
+  "comparison": "dvořák",
+  "confidence": 1.0,
+  "display": "Dvořák",
+  "input": "Dvořák",
+  "normalization_status": "UNCHANGED",
+  "search": "dvorak",
+  "semantic_type": "FAMILY_NAME",
+  "structured": {
+   "family_name": "Dvořák",
+   "nickname": null,
+   "phonetic": {
+    "match_rating_codex": "DVRK",
+    "metaphone": "TFRK",
+    "nysiis": "DVARAC",
+    "soundex": "D162"
+   }
+  },
+  "validation_status": "VALID"
+ },
+ {
+  "comparison": "dvořák",
+  "confidence": 1.0,
+  "display": "Dvořák",
+  "input": "Dvořák",
+  "normalization_status": "UNCHANGED",
+  "search": "dvorak",
+  "semantic_type": "GIVEN_NAME",
+  "structured": {
+   "given_name": "Dvořák",
+   "nickname": null,
+   "phonetic": {
+    "match_rating_codex": "DVRK",
+    "metaphone": "TFRK",
+    "nysiis": "DVARAC",
+    "soundex": "D162"
+   }
+  },
+  "validation_status": "VALID"
+ },
+ {
+  "comparison": "o'brien",
+  "confidence": 1.0,
+  "display": "O'Brien",
+  "input": "O'Brien",
+  "normalization_status": "UNCHANGED",
+  "search": "o'brien",
+  "semantic_type": "FAMILY_NAME",
+  "structured": {
+   "family_name": "O'Brien",
+   "nickname": null,
+   "phonetic": {
+    "match_rating_codex": "OBRN",
+    "metaphone": "OBRN",
+    "nysiis": "OBRAN",
+    "soundex": "O165"
+   }
+  },
+  "validation_status": "VALID"
+ },
+ {
+  "comparison": "o'brien",
+  "confidence": 1.0,
+  "display": "O'Brien",
+  "input": "O'Brien",
+  "normalization_status": "UNCHANGED",
+  "search": "o'brien",
+  "semantic_type": "GIVEN_NAME",
+  "structured": {
+   "given_name": "O'Brien",
+   "nickname": null,
+   "phonetic": {
+    "match_rating_codex": "OBRN",
+    "metaphone": "OBRN",
+    "nysiis": "OBRAN",
+    "soundex": "O165"
+   }
+  },
+  "validation_status": "VALID"
+ },
+ {
+  "comparison": "mcdonald",
+  "confidence": 1.0,
+  "display": "McDonald",
+  "input": "McDonald",
+  "normalization_status": "UNCHANGED",
+  "search": "mcdonald",
+  "semantic_type": "FAMILY_NAME",
+  "structured": {
+   "family_name": "McDonald",
+   "nickname": null,
+   "phonetic": {
+    "match_rating_codex": "MCDNLD",
+    "metaphone": "MKTNLT",
+    "nysiis": "MCDANALD",
+    "soundex": "M235"
+   }
+  },
+  "validation_status": "VALID"
+ },
+ {
+  "comparison": "mcdonald",
+  "confidence": 1.0,
+  "display": "McDonald",
+  "input": "McDonald",
+  "normalization_status": "UNCHANGED",
+  "search": "mcdonald",
+  "semantic_type": "GIVEN_NAME",
+  "structured": {
+   "given_name": "McDonald",
+   "nickname": null,
+   "phonetic": {
+    "match_rating_codex": "MCDNLD",
+    "metaphone": "MKTNLT",
+    "nysiis": "MCDANALD",
+    "soundex": "M235"
+   }
+  },
+  "validation_status": "VALID"
+ },
+ {
+  "comparison": "fitzgerald",
+  "confidence": 1.0,
+  "display": "Fitzgerald",
+  "input": "Fitzgerald",
+  "normalization_status": "UNCHANGED",
+  "search": "fitzgerald",
+  "semantic_type": "FAMILY_NAME",
+  "structured": {
+   "family_name": "Fitzgerald",
+   "nickname": null,
+   "phonetic": {
+    "match_rating_codex": "FTZRLD",
+    "metaphone": "FTSJRLT",
+    "nysiis": "FATSGARALD",
+    "soundex": "F326"
+   }
+  },
+  "validation_status": "VALID"
+ },
+ {
+  "comparison": "fitzgerald",
+  "confidence": 1.0,
+  "display": "Fitzgerald",
+  "input": "Fitzgerald",
+  "normalization_status": "UNCHANGED",
+  "search": "fitzgerald",
+  "semantic_type": "GIVEN_NAME",
+  "structured": {
+   "given_name": "Fitzgerald",
+   "nickname": null,
+   "phonetic": {
+    "match_rating_codex": "FTZRLD",
+    "metaphone": "FTSJRLT",
+    "nysiis": "FATSGARALD",
+    "soundex": "F326"
+   }
+  },
+  "validation_status": "VALID"
+ },
+ {
+  "comparison": "nguyen",
+  "confidence": 1.0,
+  "display": "Nguyen",
+  "input": "Nguyen",
+  "normalization_status": "UNCHANGED",
+  "search": "nguyen",
+  "semantic_type": "FAMILY_NAME",
+  "structured": {
+   "family_name": "Nguyen",
+   "nickname": null,
+   "phonetic": {
+    "match_rating_codex": "NGYN",
+    "metaphone": "NKYN",
+    "nysiis": "NGAYAN",
+    "soundex": "N250"
+   }
+  },
+  "validation_status": "VALID"
+ },
+ {
+  "comparison": "nguyen",
+  "confidence": 1.0,
+  "display": "Nguyen",
+  "input": "Nguyen",
+  "normalization_status": "UNCHANGED",
+  "search": "nguyen",
+  "semantic_type": "GIVEN_NAME",
+  "structured": {
+   "given_name": "Nguyen",
+   "nickname": null,
+   "phonetic": {
+    "match_rating_codex": "NGYN",
+    "metaphone": "NKYN",
+    "nysiis": "NGAYAN",
+    "soundex": "N250"
+   }
+  },
+  "validation_status": "VALID"
+ },
+ {
+  "comparison": "washington",
+  "confidence": 1.0,
+  "display": "Washington",
+  "input": "Washington",
+  "normalization_status": "UNCHANGED",
+  "search": "washington",
+  "semantic_type": "FAMILY_NAME",
+  "structured": {
+   "family_name": "Washington",
+   "nickname": null,
+   "phonetic": {
+    "match_rating_codex": "WSHGTN",
+    "metaphone": "WXNKTN",
+    "nysiis": "WASANGTAN",
+    "soundex": "W252"
+   }
+  },
+  "validation_status": "VALID"
+ },
+ {
+  "comparison": "washington",
+  "confidence": 1.0,
+  "display": "Washington",
+  "input": "Washington",
+  "normalization_status": "UNCHANGED",
+  "search": "washington",
+  "semantic_type": "GIVEN_NAME",
+  "structured": {
+   "given_name": "Washington",
+   "nickname": null,
+   "phonetic": {
+    "match_rating_codex": "WSHGTN",
+    "metaphone": "WXNKTN",
+    "nysiis": "WASANGTAN",
+    "soundex": "W252"
+   }
+  },
+  "validation_status": "VALID"
+ },
+ {
+  "comparison": "wojciechowski",
+  "confidence": 1.0,
+  "display": "Wojciechowski",
+  "input": "Wojciechowski",
+  "normalization_status": "UNCHANGED",
+  "search": "wojciechowski",
+  "semantic_type": "FAMILY_NAME",
+  "structured": {
+   "family_name": "Wojciechowski",
+   "nickname": null,
+   "phonetic": {
+    "match_rating_codex": "WJCWSK",
+    "metaphone": "WJSXSK",
+    "nysiis": "WAJCACAOSC",
+    "soundex": "W222"
+   }
+  },
+  "validation_status": "VALID"
+ },
+ {
+  "comparison": "wojciechowski",
+  "confidence": 1.0,
+  "display": "Wojciechowski",
+  "input": "Wojciechowski",
+  "normalization_status": "UNCHANGED",
+  "search": "wojciechowski",
+  "semantic_type": "GIVEN_NAME",
+  "structured": {
+   "given_name": "Wojciechowski",
+   "nickname": null,
+   "phonetic": {
+    "match_rating_codex": "WJCWSK",
+    "metaphone": "WJSXSK",
+    "nysiis": "WAJCACAOSC",
+    "soundex": "W222"
+   }
+  },
+  "validation_status": "VALID"
+ },
+ {
+  "comparison": "schwarzenegger",
+  "confidence": 1.0,
+  "display": "Schwarzenegger",
+  "input": "Schwarzenegger",
+  "normalization_status": "UNCHANGED",
+  "search": "schwarzenegger",
+  "semantic_type": "FAMILY_NAME",
+  "structured": {
+   "family_name": "Schwarzenegger",
+   "nickname": null,
+   "phonetic": {
+    "match_rating_codex": "SCHNGR",
+    "metaphone": "SXWRSNJR",
+    "nysiis": "SWARSANAGAR",
+    "soundex": "S625"
+   }
+  },
+  "validation_status": "VALID"
+ },
+ {
+  "comparison": "schwarzenegger",
+  "confidence": 1.0,
+  "display": "Schwarzenegger",
+  "input": "Schwarzenegger",
+  "normalization_status": "UNCHANGED",
+  "search": "schwarzenegger",
+  "semantic_type": "GIVEN_NAME",
+  "structured": {
+   "given_name": "Schwarzenegger",
+   "nickname": null,
+   "phonetic": {
+    "match_rating_codex": "SCHNGR",
+    "metaphone": "SXWRSNJR",
+    "nysiis": "SWARSANAGAR",
+    "soundex": "S625"
+   }
+  },
+  "validation_status": "VALID"
+ },
+ {
+  "comparison": "jean-pierre",
+  "confidence": 1.0,
+  "display": "Jean-Pierre",
+  "input": "Jean-Pierre",
+  "normalization_status": "UNCHANGED",
+  "search": "jean-pierre",
+  "semantic_type": "FAMILY_NAME",
+  "structured": {
+   "family_name": "Jean-Pierre",
+   "nickname": null,
+   "phonetic": {
+    "match_rating_codex": "JNPR",
+    "metaphone": "JNPR",
+    "nysiis": "JANPAR",
+    "soundex": "J516"
+   }
+  },
+  "validation_status": "VALID"
+ },
+ {
+  "comparison": "jean-pierre",
+  "confidence": 1.0,
+  "display": "Jean-Pierre",
+  "input": "Jean-Pierre",
+  "normalization_status": "UNCHANGED",
+  "search": "jean-pierre",
+  "semantic_type": "GIVEN_NAME",
+  "structured": {
+   "given_name": "Jean-Pierre",
+   "nickname": null,
+   "phonetic": {
+    "match_rating_codex": "JNPR",
+    "metaphone": "JNPR",
+    "nysiis": "JANPAR",
+    "soundex": "J516"
+   }
+  },
+  "validation_status": "VALID"
+ },
+ {
+  "comparison": "garcia-lopez",
+  "confidence": 1.0,
+  "display": "Garcia-Lopez",
+  "input": "Garcia-Lopez",
+  "normalization_status": "UNCHANGED",
+  "search": "garcia-lopez",
+  "semantic_type": "FAMILY_NAME",
+  "structured": {
+   "family_name": "Garcia-Lopez",
+   "nickname": null,
+   "phonetic": {
+    "match_rating_codex": "GRCLPZ",
+    "metaphone": "KRXLPS",
+    "nysiis": "GARCALAP",
+    "soundex": "G624"
+   }
+  },
+  "validation_status": "VALID"
+ },
+ {
+  "comparison": "garcia-lopez",
+  "confidence": 1.0,
+  "display": "Garcia-Lopez",
+  "input": "Garcia-Lopez",
+  "normalization_status": "UNCHANGED",
+  "search": "garcia-lopez",
+  "semantic_type": "GIVEN_NAME",
+  "structured": {
+   "given_name": "Garcia-Lopez",
+   "nickname": null,
+   "phonetic": {
+    "match_rating_codex": "GRCLPZ",
+    "metaphone": "KRXLPS",
+    "nysiis": "GARCALAP",
+    "soundex": "G624"
+   }
+  },
+  "validation_status": "VALID"
+ },
+ {
+  "comparison": "smith",
+  "confidence": 1.0,
+  "display": "SMITH",
+  "input": "SMITH",
+  "normalization_status": "UNCHANGED",
+  "search": "smith",
+  "semantic_type": "FAMILY_NAME",
+  "structured": {
+   "family_name": "SMITH",
+   "nickname": null,
+   "phonetic": {
+    "match_rating_codex": "SMTH",
+    "metaphone": "SM0",
+    "nysiis": "SNAT",
+    "soundex": "S530"
+   }
+  },
+  "validation_status": "VALID"
+ },
+ {
+  "comparison": "smith",
+  "confidence": 1.0,
+  "display": "SMITH",
+  "input": "SMITH",
+  "normalization_status": "UNCHANGED",
+  "search": "smith",
+  "semantic_type": "GIVEN_NAME",
+  "structured": {
+   "given_name": "SMITH",
+   "nickname": null,
+   "phonetic": {
+    "match_rating_codex": "SMTH",
+    "metaphone": "SM0",
+    "nysiis": "SNAT",
+    "soundex": "S530"
+   }
+  },
+  "validation_status": "VALID"
+ },
+ {
+  "comparison": "smith",
+  "confidence": 1.0,
+  "display": "smith",
+  "input": "  smith  ",
+  "normalization_status": "NORMALIZED",
+  "search": "smith",
+  "semantic_type": "FAMILY_NAME",
+  "structured": {
+   "family_name": "smith",
+   "nickname": null,
+   "phonetic": {
+    "match_rating_codex": "SMTH",
+    "metaphone": "SM0",
+    "nysiis": "SNAT",
+    "soundex": "S530"
+   }
+  },
+  "validation_status": "VALID"
+ },
+ {
+  "comparison": "smith",
+  "confidence": 1.0,
+  "display": "smith",
+  "input": "  smith  ",
+  "normalization_status": "NORMALIZED",
+  "search": "smith",
+  "semantic_type": "GIVEN_NAME",
+  "structured": {
+   "given_name": "smith",
+   "nickname": null,
+   "phonetic": {
+    "match_rating_codex": "SMTH",
+    "metaphone": "SM0",
+    "nysiis": "SNAT",
+    "soundex": "S530"
+   }
+  },
+  "validation_status": "VALID"
+ },
+ {
+  "comparison": "aleksandr",
+  "confidence": 1.0,
+  "display": "Aleksandr",
+  "input": "Aleksandr",
+  "normalization_status": "UNCHANGED",
+  "search": "aleksandr",
+  "semantic_type": "FAMILY_NAME",
+  "structured": {
+   "family_name": "Aleksandr",
+   "nickname": null,
+   "phonetic": {
+    "match_rating_codex": "ALKNDR",
+    "metaphone": "ALKSNTR",
+    "nysiis": "ALACSANDR",
+    "soundex": "A425"
+   }
+  },
+  "validation_status": "VALID"
+ },
+ {
+  "comparison": "aleksandr",
+  "confidence": 1.0,
+  "display": "Aleksandr",
+  "input": "Aleksandr",
+  "normalization_status": "UNCHANGED",
+  "search": "aleksandr",
+  "semantic_type": "GIVEN_NAME",
+  "structured": {
+   "given_name": "Aleksandr",
+   "nickname": null,
+   "phonetic": {
+    "match_rating_codex": "ALKNDR",
+    "metaphone": "ALKSNTR",
+    "nysiis": "ALACSANDR",
+    "soundex": "A425"
+   }
+  },
+  "validation_status": "VALID"
+ },
+ {
+  "comparison": "yelena",
+  "confidence": 1.0,
+  "display": "Yelena",
+  "input": "Yelena",
+  "normalization_status": "UNCHANGED",
+  "search": "yelena",
+  "semantic_type": "FAMILY_NAME",
+  "structured": {
+   "family_name": "Yelena",
+   "nickname": null,
+   "phonetic": {
+    "match_rating_codex": "YLN",
+    "metaphone": "YLN",
+    "nysiis": "YALAN",
+    "soundex": "Y450"
+   }
+  },
+  "validation_status": "VALID"
+ },
+ {
+  "comparison": "yelena",
+  "confidence": 1.0,
+  "display": "Yelena",
+  "input": "Yelena",
+  "normalization_status": "UNCHANGED",
+  "search": "yelena",
+  "semantic_type": "GIVEN_NAME",
+  "structured": {
+   "given_name": "Yelena",
+   "nickname": null,
+   "phonetic": {
+    "match_rating_codex": "YLN",
+    "metaphone": "YLN",
+    "nysiis": "YALAN",
+    "soundex": "Y450"
+   }
+  },
+  "validation_status": "VALID"
+ },
+ {
+  "comparison": "hossein",
+  "confidence": 1.0,
+  "display": "Hossein",
+  "input": "Hossein",
+  "normalization_status": "UNCHANGED",
+  "search": "hossein",
+  "semantic_type": "FAMILY_NAME",
+  "structured": {
+   "family_name": "Hossein",
+   "nickname": null,
+   "phonetic": {
+    "match_rating_codex": "HSN",
+    "metaphone": "HSN",
+    "nysiis": "HASAN",
+    "soundex": "H250"
+   }
+  },
+  "validation_status": "VALID"
+ },
+ {
+  "comparison": "hossein",
+  "confidence": 1.0,
+  "display": "Hossein",
+  "input": "Hossein",
+  "normalization_status": "UNCHANGED",
+  "search": "hossein",
+  "semantic_type": "GIVEN_NAME",
+  "structured": {
+   "given_name": "Hossein",
+   "nickname": null,
+   "phonetic": {
+    "match_rating_codex": "HSN",
+    "metaphone": "HSN",
+    "nysiis": "HASAN",
+    "soundex": "H250"
+   }
+  },
+  "validation_status": "VALID"
+ },
+ {
+  "comparison": "ahmad",
+  "confidence": 1.0,
+  "display": "Ahmad",
+  "input": "Ahmad",
+  "normalization_status": "UNCHANGED",
+  "search": "ahmad",
+  "semantic_type": "FAMILY_NAME",
+  "structured": {
+   "family_name": "Ahmad",
+   "nickname": null,
+   "phonetic": {
+    "match_rating_codex": "AHMD",
+    "metaphone": "AMT",
+    "nysiis": "ANAD",
+    "soundex": "A530"
+   }
+  },
+  "validation_status": "VALID"
+ },
+ {
+  "comparison": "ahmad",
+  "confidence": 1.0,
+  "display": "Ahmad",
+  "input": "Ahmad",
+  "normalization_status": "UNCHANGED",
+  "search": "ahmad",
+  "semantic_type": "GIVEN_NAME",
+  "structured": {
+   "given_name": "Ahmad",
+   "nickname": null,
+   "phonetic": {
+    "match_rating_codex": "AHMD",
+    "metaphone": "AMT",
+    "nysiis": "ANAD",
+    "soundex": "A530"
+   }
+  },
+  "validation_status": "VALID"
+ },
+ {
+  "comparison": "mariya",
+  "confidence": 1.0,
+  "display": "Mariya",
+  "input": "Mariya",
+  "normalization_status": "UNCHANGED",
+  "search": "mariya",
+  "semantic_type": "FAMILY_NAME",
+  "structured": {
+   "family_name": "Mariya",
+   "nickname": null,
+   "phonetic": {
+    "match_rating_codex": "MRY",
+    "metaphone": "MRY",
+    "nysiis": "MARAY",
+    "soundex": "M600"
+   }
+  },
+  "validation_status": "VALID"
+ },
+ {
+  "comparison": "mariya",
+  "confidence": 1.0,
+  "display": "Mariya",
+  "input": "Mariya",
+  "normalization_status": "UNCHANGED",
+  "search": "mariya",
+  "semantic_type": "GIVEN_NAME",
+  "structured": {
+   "given_name": "Mariya",
+   "nickname": null,
+   "phonetic": {
+    "match_rating_codex": "MRY",
+    "metaphone": "MRY",
+    "nysiis": "MARAY",
+    "soundex": "M600"
+   }
+  },
+  "validation_status": "VALID"
+ },
+ {
+  "comparison": "d'artagnan",
+  "confidence": 1.0,
+  "display": "d'Artagnan",
+  "input": "d'Artagnan",
+  "normalization_status": "UNCHANGED",
+  "search": "d'artagnan",
+  "semantic_type": "FAMILY_NAME",
+  "structured": {
+   "family_name": "d'Artagnan",
+   "nickname": null,
+   "phonetic": {
+    "match_rating_codex": "DRTGNN",
+    "metaphone": "TRTKNN",
+    "nysiis": "DARTAGNAN",
+    "soundex": "D632"
+   }
+  },
+  "validation_status": "VALID"
+ },
+ {
+  "comparison": "d'artagnan",
+  "confidence": 1.0,
+  "display": "d'Artagnan",
+  "input": "d'Artagnan",
+  "normalization_status": "UNCHANGED",
+  "search": "d'artagnan",
+  "semantic_type": "GIVEN_NAME",
+  "structured": {
+   "given_name": "d'Artagnan",
+   "nickname": null,
+   "phonetic": {
+    "match_rating_codex": "DRTGNN",
+    "metaphone": "TRTKNN",
+    "nysiis": "DARTAGNAN",
+    "soundex": "D632"
+   }
+  },
+  "validation_status": "VALID"
+ },
+ {
+  "comparison": "dr. john smith jr.",
+  "confidence": 1.0,
+  "display": "Dr. John Smith Jr.",
+  "input": "Dr. John Smith Jr.",
+  "normalization_status": "PARSED",
+  "search": "dr. john smith jr.",
+  "semantic_type": "PERSON_NAME",
+  "structured": {
+   "family_name": "Smith",
+   "given_name": "John",
+   "middle_name": null,
+   "nickname": null,
+   "phonetic": {
+    "match_rating_codex": "SMTH",
+    "metaphone": "SM0",
+    "nysiis": "SNAT",
+    "soundex": "S530"
+   },
+   "suffix_canonical": "JR",
+   "suffix_raw": "Jr.",
+   "title_canonical": "Dr",
+   "title_raw": "Dr."
+  },
+  "validation_status": "PARSED"
+ },
+ {
+  "comparison": "smith, john",
+  "confidence": 1.0,
+  "display": "Smith, John",
+  "input": "Smith, John",
+  "normalization_status": "PARSED",
+  "search": "smith, john",
+  "semantic_type": "PERSON_NAME",
+  "structured": {
+   "family_name": "Smith",
+   "given_name": "John",
+   "middle_name": null,
+   "nickname": null,
+   "phonetic": {
+    "match_rating_codex": "SMTH",
+    "metaphone": "SM0",
+    "nysiis": "SNAT",
+    "soundex": "S530"
+   },
+   "suffix_canonical": null,
+   "suffix_raw": null,
+   "title_canonical": null,
+   "title_raw": null
+  },
+  "validation_status": "PARSED"
+ },
+ {
+  "comparison": "john smith",
+  "confidence": 0.5,
+  "display": "John Smith",
+  "input": "John Smith",
+  "normalization_status": "AMBIGUOUS",
+  "search": "john smith",
+  "semantic_type": "PERSON_NAME",
+  "structured": {
+   "candidates": [
+    {
+     "family_name": "Smith",
+     "given_name": "John"
+    },
+    {
+     "family_name": "John",
+     "given_name": "Smith"
+    }
+   ],
+   "family_name": null,
+   "given_name": null,
+   "middle_name": null,
+   "nickname": null,
+   "suffix_canonical": null,
+   "suffix_raw": null,
+   "title_canonical": null,
+   "title_raw": null
+  },
+  "validation_status": "AMBIGUOUS"
+ },
+ {
+  "comparison": "maría josé garcía lópez",
+  "confidence": 1.0,
+  "display": "María José García López",
+  "input": "María José García López",
+  "normalization_status": "PARSED",
+  "search": "maria jose garcia lopez",
+  "semantic_type": "PERSON_NAME",
+  "structured": {
+   "family_name": "López",
+   "given_name": "María",
+   "middle_name": "José García",
+   "nickname": null,
+   "phonetic": {
+    "match_rating_codex": "LPZ",
+    "metaphone": "LPS",
+    "nysiis": "LAP",
+    "soundex": "L120"
+   },
+   "suffix_canonical": null,
+   "suffix_raw": null,
+   "title_canonical": null,
+   "title_raw": null
+  },
+  "validation_status": "PARSED"
+ },
+ {
+  "comparison": "anna maria mueller",
+  "confidence": 1.0,
+  "display": "Anna Maria Mueller",
+  "input": "Anna Maria Mueller",
+  "normalization_status": "PARSED",
+  "search": "anna maria mueller",
+  "semantic_type": "PERSON_NAME",
+  "structured": {
+   "family_name": "Mueller",
+   "given_name": "Anna",
+   "middle_name": "Maria",
+   "nickname": null,
+   "phonetic": {
+    "match_rating_codex": "MLR",
+    "metaphone": "MLR",
+    "nysiis": "MALAR",
+    "soundex": "M460"
+   },
+   "suffix_canonical": null,
+   "suffix_raw": null,
+   "title_canonical": null,
+   "title_raw": null
+  },
+  "validation_status": "PARSED"
+ },
+ {
+  "comparison": "ludwig van beethoven",
+  "confidence": 1.0,
+  "display": "Ludwig van Beethoven",
+  "input": "Ludwig van Beethoven",
+  "normalization_status": "PARSED",
+  "search": "ludwig van beethoven",
+  "semantic_type": "PERSON_NAME",
+  "structured": {
+   "family_name": "van Beethoven",
+   "given_name": "Ludwig",
+   "middle_name": null,
+   "nickname": null,
+   "phonetic": {
+    "match_rating_codex": "VNBHVN",
+    "metaphone": "FNB0FN",
+    "nysiis": "VANBATAVAN",
+    "soundex": "V513"
+   },
+   "suffix_canonical": null,
+   "suffix_raw": null,
+   "title_canonical": null,
+   "title_raw": null
+  },
+  "validation_status": "PARSED"
+ },
+ {
+  "comparison": "mr. robert rupert jones iii",
+  "confidence": 1.0,
+  "display": "Mr. Robert Rupert Jones III",
+  "input": "Mr. Robert Rupert Jones III",
+  "normalization_status": "PARSED",
+  "search": "mr. robert rupert jones iii",
+  "semantic_type": "PERSON_NAME",
+  "structured": {
+   "family_name": "Jones",
+   "given_name": "Robert",
+   "middle_name": "Rupert",
+   "nickname": null,
+   "phonetic": {
+    "match_rating_codex": "JNS",
+    "metaphone": "JNS",
+    "nysiis": "JAN",
+    "soundex": "J520"
+   },
+   "suffix_canonical": "III",
+   "suffix_raw": "III",
+   "title_canonical": "Mr",
+   "title_raw": "Mr."
+  },
+  "validation_status": "PARSED"
+ },
+ {
+  "comparison": "jean-pierre dupont",
+  "confidence": 0.5,
+  "display": "Jean-Pierre Dupont",
+  "input": "Jean-Pierre Dupont",
+  "normalization_status": "AMBIGUOUS",
+  "search": "jean-pierre dupont",
+  "semantic_type": "PERSON_NAME",
+  "structured": {
+   "candidates": [
+    {
+     "family_name": "Dupont",
+     "given_name": "Jean-Pierre"
+    },
+    {
+     "family_name": "Jean-Pierre",
+     "given_name": "Dupont"
+    }
+   ],
+   "family_name": null,
+   "given_name": null,
+   "middle_name": null,
+   "nickname": null,
+   "suffix_canonical": null,
+   "suffix_raw": null,
+   "title_canonical": null,
+   "title_raw": null
+  },
+  "validation_status": "AMBIGUOUS"
+ },
+ {
+  "comparison": "muhammad ali khan",
+  "confidence": 1.0,
+  "display": "Muhammad Ali Khan",
+  "input": "Muhammad Ali Khan",
+  "normalization_status": "PARSED",
+  "search": "muhammad ali khan",
+  "semantic_type": "PERSON_NAME",
+  "structured": {
+   "family_name": "Khan",
+   "given_name": "Muhammad",
+   "middle_name": "Ali",
+   "nickname": null,
+   "phonetic": {
+    "match_rating_codex": "KHN",
+    "metaphone": "KHN",
+    "nysiis": "CAN",
+    "soundex": "K500"
+   },
+   "suffix_canonical": null,
+   "suffix_raw": null,
+   "title_canonical": null,
+   "title_raw": null
+  },
+  "validation_status": "PARSED"
+ },
+ {
+  "comparison": "yuri alexandrovich gagarin",
+  "confidence": 1.0,
+  "display": "Yuri Alexandrovich Gagarin",
+  "input": "Yuri Alexandrovich Gagarin",
+  "normalization_status": "PARSED",
+  "search": "yuri alexandrovich gagarin",
+  "semantic_type": "PERSON_NAME",
+  "structured": {
+   "family_name": "Gagarin",
+   "given_name": "Yuri",
+   "middle_name": "Alexandrovich",
+   "nickname": null,
+   "phonetic": {
+    "match_rating_codex": "GGRN",
+    "metaphone": "KKRN",
+    "nysiis": "GAGARAN",
+    "soundex": "G265"
+   },
+   "suffix_canonical": null,
+   "suffix_raw": null,
+   "title_canonical": null,
+   "title_raw": null
+  },
+  "validation_status": "PARSED"
+ }
+]
