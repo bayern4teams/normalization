@@ -33,6 +33,7 @@ import socket
 import subprocess
 import threading
 import time
+import urllib.request
 import uuid
 from collections import Counter
 from http import HTTPStatus
@@ -53,7 +54,7 @@ from normapi.scaffold_profile import SCAFFOLD_PROFILE
 from normcore.enums import FieldSemanticType
 from normio.connector import ColumnInfo
 
-from normapi import clone_executor
+from normapi import clone_executor, lineage
 
 REPO = Path(__file__).resolve().parents[2]
 LINEAGE_PY = REPO / "packages/normapi/src/normapi/lineage.py"
@@ -1268,3 +1269,275 @@ class TestSection24:
             "report D3: the default is no new dependency; openlineage-python only if it passes "
             "check_licenses.py and removes more code than it adds (lead decision)"
         )
+
+
+# --------------------------------------------------------------------------- attack round (D3)
+class _SwapDest(_Dest):
+    def swap_table(self, database: str, table: str, staging: str) -> None:
+        self.inserted.setdefault("__swapped__", []).append({"table": table, "staging": staging})
+
+
+def _mark(env: _Env, job_id: str, **changes: Any) -> None:
+    job = env.job(job_id)
+    job.update(changes)
+    env.persistence.save_clone_job(job_id, job)
+
+
+@pytest.mark.unit
+class TestAttackShapes:
+    def test_in_place_output_is_the_final_table_not_the_staging_name(self, env: _Env) -> None:
+        job_id = env.new_job()
+        _mark(env, job_id, in_place=True)
+        env.mp.setattr(clone_executor, "build_source_connector", lambda c, d, s=None: env.source)
+        dest = _SwapDest()
+        env.mp.setattr(clone_executor, "build_destination_writer", lambda conn: dest)
+        clone_executor._run_phase2(env.persistence, env.dispatcher, None, job_id)
+        assert env.job(job_id)["status"] == "COMPLETED", env.job(job_id)["error"]
+        for event in env.lineage(job_id):
+            assert clone_executor.staging_name("x")[1:] not in event["outputs"][0]["name"]
+            assert event["outputs"][0]["name"].endswith(f"{DST_DB}.{table_of(event)}")
+
+    def test_typed_destination_runs_and_validates(self, env: _Env, spec: _Spec) -> None:
+        job_id = env.new_job()
+        _mark(env, job_id, typed_destination_columns=True)
+        env.run(job_id)
+        assert env.job(job_id)["status"] == "COMPLETED", env.job(job_id)["error"]
+        assert_valid(spec, env.lineage(job_id))
+
+    def test_source_schema_is_in_the_input_name_only(self, env: _Env) -> None:
+        job_id = env.new_job()
+        _mark(env, job_id, source_schema="sales")
+        env.run(job_id)
+        for e in env.lineage(job_id):
+            assert e["inputs"][0]["name"] == f"{SRC_DB}.sales.{table_of(e)}"
+            assert e["outputs"][0]["name"] == f"{DST_DB}.{table_of(e)}"
+
+    def test_dots_quotes_unicode_in_table_and_column_names(
+        self, env: _Env, spec: _Spec, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        table, column = "ta.b\"le'é;--", "co.l\"é'name"
+        monkeypatch.setitem(COLUMNS, table, ["id", column])
+        monkeypatch.setitem(PRIMARY_KEY, table, ["id"])
+        monkeypatch.setitem(FIELD_CONFIGS, table, {column: "PHONE"})
+        data = {table: [{"id": 1, column: "+1 650-253-0000"}]}
+        job_id = env.new_job(tables=[table], data=data)
+        env.run(job_id)
+        assert env.job(job_id)["status"] == "COMPLETED", env.job(job_id)["error"]
+        events = env.lineage(job_id)
+        assert len(events) == 2
+        assert_valid(spec, events)
+        assert column in column_lineage(events[-1])
+        assert events[-1]["outputs"][0]["name"].endswith(table)
+
+    def test_a_configured_column_the_source_no_longer_has_is_not_invented(self, env: _Env) -> None:
+        job_id = env.new_job()
+        job = env.job(job_id)
+        job["field_configs"][TABLE_A]["vanished"] = "EMAIL"
+        env.persistence.save_clone_job(job_id, job)
+        env.run(job_id)
+        events = of_table(env.lineage(job_id), TABLE_A)
+        done = [e for e in events if e["eventType"] == "COMPLETE"]
+        if (
+            env.job(job_id)["status"] == "FAILED"
+        ):  # the executor itself rejects it: a FAIL, no COMPLETE
+            assert kinds(events) == {"START": 1, "FAIL": 1}
+        else:
+            assert "vanished" not in column_lineage(done[0])
+
+    def test_a_companion_of_a_vanished_base_column_is_not_claimed(self, env: _Env) -> None:
+        # destination_plan names a MONEY base the source lacks: the companion
+        # would point at a source field that does not exist.
+        job_id = env.new_job()
+        job = env.job(job_id)
+        job["destination_plan"][TABLE_A]["currency_columns"] = {"gone": "gone_currency"}
+        env.persistence.save_clone_job(job_id, job)
+        env.run(job_id)
+        done = of_table([e for e in env.lineage(job_id) if e["eventType"] == "COMPLETE"], TABLE_A)
+        fields = column_lineage(done[0])
+        if "gone_currency" in fields:
+            src = {f["field"] for f in fields["gone_currency"]["inputFields"]}
+            assert src <= set(COLUMNS[TABLE_A]), f"lineage claims nonexistent source column {src}"
+
+
+@pytest.mark.unit
+class TestAttackFailurePaths:
+    def test_failure_before_the_first_table_leaves_a_trace_in_the_job_not_phantom_events(
+        self, env: _Env
+    ) -> None:
+        job_id = env.new_job()
+        _mark(env, job_id, cross_table_entity_key="id")
+
+        def boom(*a: Any, **k: Any) -> Any:
+            raise RuntimeError("entity map exploded")
+
+        env.mp.setattr(clone_executor, "_build_entity_country_map", boom)
+        env.run(job_id)
+        assert env.job(job_id)["status"] == "FAILED"
+        assert env.lineage(job_id) == []  # documented gap: no run existed yet
+
+    def test_get_columns_raising_on_the_second_table_leaves_a_dangling_nothing(
+        self, env: _Env
+    ) -> None:
+        job_id = env.new_job()
+        real = env.source.get_columns
+
+        def flaky(table: str) -> Any:
+            if table == TABLE_B:
+                raise RuntimeError("catalog gone")
+            return real(table)
+
+        env.source.get_columns = flaky  # type: ignore[method-assign]
+        env.run(job_id)
+        assert env.job(job_id)["status"] == "FAILED"
+        events = env.lineage(job_id)
+        assert kinds(of_table(events, TABLE_A)) == {"START": 1, "COMPLETE": 1}
+        # The failing table has no FAIL: it never had a START either.
+        assert of_table(events, TABLE_B) == []
+
+    def test_if_the_store_cannot_write_the_job_fails_closed(
+        self, env: _Env, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        job_id = env.new_job()
+
+        def deny(*a: Any, **k: Any) -> None:
+            raise RuntimeError("metadata db down")
+
+        monkeypatch.setattr(env.persistence, "save_lineage_event", deny)
+        env.run(job_id)
+        job = env.job(job_id)
+        assert job["status"] == "FAILED"
+        assert "metadata db down" in job["error"]
+
+    def test_a_failed_store_of_FAIL_does_not_hide_the_original_error(
+        self, env: _Env, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        job_id = env.new_job()
+        real = env.persistence.save_lineage_event
+
+        def fail_only(job: str, table: str, event: dict[str, Any]) -> None:
+            if event["eventType"] == "FAIL":
+                raise RuntimeError("metadata db down")
+            real(job, table, event)
+
+        monkeypatch.setattr(env.persistence, "save_lineage_event", fail_only)
+        env.run(job_id, fail_on={TABLE_A: RuntimeError("the real cause: disk full")})
+        err = env.job(job_id)["error"]
+        assert "disk full" in err, f"the job's error lost the real cause: {err!r}"
+
+    def test_a_store_failure_at_COMPLETE_must_not_strand_a_finished_table_without_COMPLETE(
+        self, env: _Env, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        job_id = env.new_job()
+        real = env.persistence.save_lineage_event
+        state = {"deny": True}
+
+        def flaky(job: str, table: str, event: dict[str, Any]) -> None:
+            if event["eventType"] == "COMPLETE" and state["deny"]:
+                state["deny"] = False
+                raise RuntimeError("blip")
+            real(job, table, event)
+
+        monkeypatch.setattr(env.persistence, "save_lineage_event", flaky)
+        env.run(job_id)
+        assert env.job(job_id)["status"] == "FAILED"
+        _mark(env, job_id, status="RUNNING", error=None)  # operator retries
+        env.run(job_id)
+        events = env.lineage(job_id)
+        assert kinds(of_table(events, TABLE_A))["COMPLETE"] == 1, (
+            "table A is checkpointed done, so it is skipped on resume, and its "
+            "START will never get a COMPLETE: the audit trail has a permanent hole"
+        )
+
+    def test_a_crash_between_checkpoint_and_COMPLETE_is_repaired_on_resume(
+        self, env: _Env, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        job_id = env.new_job()
+        real = env.persistence.save_lineage_event
+        state = {"deny": True}
+
+        def die(job: str, table: str, event: dict[str, Any]) -> None:
+            if event["eventType"] == "COMPLETE" and state["deny"]:
+                state["deny"] = False
+                raise KeyboardInterrupt
+            real(job, table, event)
+
+        monkeypatch.setattr(env.persistence, "save_lineage_event", die)
+        with pytest.raises(KeyboardInterrupt):
+            env.run(job_id)
+        env.run(job_id)
+        assert kinds(of_table(env.lineage(job_id), TABLE_A))["COMPLETE"] == 1
+
+
+@pytest.mark.unit
+class TestAttackOrderingAndForwarding:
+    def test_identical_event_times_still_list_start_before_its_terminal(
+        self, env: _Env, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        class _Frozen(dt.datetime):
+            @classmethod
+            def now(cls, tz: Any = None) -> Any:
+                return dt.datetime(2026, 1, 1, tzinfo=dt.UTC)
+
+        class _Shim:
+            UTC = dt.UTC
+            datetime = _Frozen
+
+        monkeypatch.setattr(lineage, "dt", _Shim)
+        job_id = env.new_job(tables=[TABLE_A])
+        env.run(job_id)
+        # Simulate a heap whose physical order is COMPLETE first (as after a vacuum / update).
+        with env.persistence._engine.begin() as conn:
+            conn.execute(sa.text(f"DELETE FROM {EVENTS_TABLE} WHERE event_type='START'"))
+        events = env.lineage(job_id)
+        assert [e["eventType"] for e in events] == ["COMPLETE"]
+        env.persistence.save_lineage_event(job_id, TABLE_A, {**events[0], "eventType": "START"})
+        order = [e["eventType"] for e in env.lineage(job_id)]
+        assert order == ["START", "COMPLETE"], f"ties order by insertion luck: {order}"
+
+    def test_a_hanging_endpoint_costs_bounded_time(
+        self, env: _Env, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        srv = socket.socket()
+        srv.bind(("127.0.0.1", 0))
+        srv.listen(50)
+        monkeypatch.setenv("NORM_OPENLINEAGE_URL", f"http://127.0.0.1:{srv.getsockname()[1]}/x")
+        monkeypatch.setenv("NO_PROXY", "127.0.0.1")
+        job_id = env.new_job(tables=[TABLE_A])
+        t0 = time.monotonic()
+        env.run(job_id)
+        took = time.monotonic() - t0
+        srv.close()
+        assert env.job(job_id)["status"] == "COMPLETED"
+        assert took < 15, f"a hanging collector stalled the job {took:.1f}s for one table"
+
+    def test_userinfo_in_the_url_leaks_into_no_log_and_no_payload(
+        self, env: _Env, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        server, handler = _serve(200)
+        try:
+            monkeypatch.setenv("NO_PROXY", "127.0.0.1")
+            monkeypatch.setenv(
+                "NORM_OPENLINEAGE_URL",
+                f"http://urluser:urlpw-9z@127.0.0.1:{server.server_port}/api/v1/lineage",
+            )
+            job_id = env.new_job(tables=[TABLE_A])
+            with caplog.at_level("DEBUG"):
+                env.run(job_id)
+        finally:
+            server.shutdown()
+        assert env.job(job_id)["status"] == "COMPLETED"
+        assert "urlpw-9z" not in caplog.text and "urluser" not in caplog.text
+        assert "urlpw-9z" not in b"".join(handler.bodies).decode()
+        assert "urlpw-9z" not in json.dumps(env.lineage(job_id))
+
+    @pytest.mark.parametrize("url", ["file:///etc/passwd", "FILE:///etc/hosts", "ftp://x/y"])
+    def test_non_http_urls_are_not_opened(
+        self, env: _Env, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, url: str
+    ) -> None:
+        opened: list[Any] = []
+        monkeypatch.setattr(urllib.request, "urlopen", lambda *a, **k: opened.append(a))
+        monkeypatch.setenv("NORM_OPENLINEAGE_URL", url)
+        job_id = env.new_job(tables=[TABLE_A])
+        env.run(job_id)
+        assert opened == []
+        assert env.job(job_id)["status"] == "COMPLETED"

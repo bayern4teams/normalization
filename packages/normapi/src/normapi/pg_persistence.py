@@ -822,7 +822,9 @@ class PgPersistence:
             rows = conn.execute(
                 sa.text(
                     "SELECT payload FROM normalization_lineage_events "
-                    "WHERE job_id = :jid ORDER BY event_time, table_name"
+                    "WHERE job_id = :jid ORDER BY event_time, table_name, "
+                    # a START and its terminal event can share a timestamp
+                    "CASE event_type WHEN 'START' THEN 0 ELSE 1 END"
                 ),
                 {"jid": job_id},
             ).scalars()

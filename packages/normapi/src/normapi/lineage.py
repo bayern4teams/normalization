@@ -80,6 +80,15 @@ class TableRun:
         self.persistence.save_lineage_event(self.job_id, self.table, event)
         _forward(event)
 
+    def fail(self) -> None:
+        """FAIL, called while the table's own exception propagates: that
+        error is what the job must report, so a metadata store that fails
+        here too is logged, never raised over it."""
+        try:
+            self.emit("FAIL")
+        except Exception:
+            logger.exception("lineage FAIL event for %s not stored", self.table)
+
 
 def table_run(
     persistence: PgPersistence,
@@ -122,7 +131,8 @@ def table_run(
     plan = job.get("destination_plan", {}).get(table, {})
     for key in ("currency_columns", "code_columns"):
         for base, companion in plan.get(key, {}).items():
-            fields[companion] = entry(base)
+            if base in fields:  # never claim a source column the source lacks
+                fields[companion] = entry(base)
     destination["facets"] = {
         "columnLineage": {
             "_producer": _PRODUCER,
@@ -131,6 +141,34 @@ def table_run(
         }
     }
     return TableRun(persistence, job_id, table, source, destination)
+
+
+def complete_open_runs(persistence: PgPersistence, job_id: str, completed: set[str]) -> None:
+    """Close the run of a table checkpointed as done that has no COMPLETE.
+
+    COMPLETE is written after the checkpoint, so a crash or a store error
+    between the two would otherwise leave that run open for good: the
+    resumed job skips the table. Same runId, same datasets as its START.
+    """
+    events = persistence.list_lineage_events(job_id)
+    closed = {e["run"]["runId"] for e in events if e["eventType"] != "START"}
+    prefix = f"clone-job/{job_id}/"
+    for event in events:
+        table = event["job"]["name"].removeprefix(prefix)
+        if (
+            event["eventType"] == "START"
+            and event["run"]["runId"] not in closed
+            and table in completed
+        ):
+            run = TableRun(
+                persistence,
+                job_id,
+                table,
+                event["inputs"][0],
+                event["outputs"][0],
+                event["run"]["runId"],
+            )
+            run.emit("COMPLETE")
 
 
 def _forward(event: dict[str, Any]) -> None:

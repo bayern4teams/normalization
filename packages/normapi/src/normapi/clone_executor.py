@@ -2088,6 +2088,7 @@ def _run_phase2(
             # agree with byte for byte.
             entity_countries, counts = _build_entity_country_map(source, job, planner, key_column)
             _report_entity_map(persistence, job_id, key_column, counts)
+        lineage.complete_open_runs(persistence, job_id, tables_completed)
         for table in job["tables"]:
             if table in tables_completed:
                 continue
@@ -2125,7 +2126,7 @@ def _run_phase2(
                     adjudication=adjudication,
                 )
             except Exception:
-                run.emit("FAIL")
+                run.fail()
                 raise
             tables_completed.add(table)
             progress["tables_completed"] = sorted(tables_completed)
