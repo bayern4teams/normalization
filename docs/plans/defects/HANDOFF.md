@@ -3,7 +3,7 @@
 Overwrite this file at every commit. A fresh session reads it first, then
 [the plan](../DEFECTS_IMPLEMENTATION_PLAN.md). Git is the memory; a session's context is not.
 
-**Lock:** 2026-10-05T19:23:04Z · **Autonomy:** unattended-through-phase-5 · **Last heartbeat:** 2026-10-05T19:23:04Z
+**Lock:** 2026-10-05T19:27:37Z · **Autonomy:** unattended-through-phase-5 · **Last heartbeat:** 2026-10-05T19:27:37Z
 
 (Lock/heartbeat protocol: plan §7. A session sets `Lock: <ISO time>`, pushes it, and refreshes it at
 every commit; a lock older than 75 min is stale. `Autonomy` is `off`, `dryrun` (a tick only records
@@ -22,7 +22,7 @@ Only the user changes it.)
 | D5 | 2 | in-progress | this commit | lead implemented engine-aware coerce (571 acceptance+typed pass; 72 fail on old); attack verifier running |
 | D3 | 2 | todo | | |
 | D10 | 2 | accepted-cloud | this commit | ACCEPT after round 2: verifier ACCEPT (95 tests fail on main; 4548 inputs x 4 contexts: 0 extension-free diffs; 12,740 fixed-point cases); lead rejected residuals (tel: ext dropped beside isub/phone-context; non-ASCII ext digits), worker fixed both, the verifier's strict xfails for them now pass; `x45 x46` is a ponytail: ceiling. Accepted over-abstain: regionless `tel:+<cc>` without ext stays AMBIGUOUS |
-| D11 | 2 | in-progress | 30074c6 | derive done (290 tests, 180 fail on old code; test file `tests/unit/test_name_d11_acceptance.py` untracked, lands with implementation); worker next (after D10 attack frees a slot) |
+| D11 | 2 | in-progress | this commit | worker round 1 done (acceptance green, 143/170 pairs vs 124); lead review: BMPM context quirk sent back (stay faithful to Commons Codec) |
 | D6 | 3 | todo | | |
 | D2 | 3 | todo | | |
 | D4 | 3 | todo | | |

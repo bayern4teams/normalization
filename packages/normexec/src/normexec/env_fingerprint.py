@@ -61,6 +61,7 @@ FINGERPRINTED_PACKAGES = [
     "anyascii",
     "nameparser",
     "jellyfish",
+    "phonetics",
     "cleanco",
     "phonenumbers",
     "email-validator",
@@ -95,6 +96,9 @@ FINGERPRINTED_SOURCE_PACKAGES = [
     "normalizers",  # every normalizer + the generated CLDR tables
     "normio",  # storage_types.coerce decides the value actually written
 ]
+
+
+_HASHED_SUFFIXES = frozenset({".py", ".txt"})
 
 
 @dataclass
@@ -134,7 +138,11 @@ def collect_package_versions() -> dict[str, str]:
 
 
 def collect_source_hashes() -> dict[str, str]:
-    """blake3 over every `*.py` file of each normalizing package.
+    """blake3 over every `*.py` and `*.txt` file of each normalizing package.
+
+    The `*.txt` files are rule data (the vendored Beider-Morse rules under
+    `normalizers/_bmpm_data/`): they change a name's phonetic keys exactly as
+    code does, so they move env_id too.
 
     Computed ONCE per process (ADR-014: env_id is never recomputed per
     value); ~4MB of source, so a few milliseconds. Each file's path is
@@ -162,7 +170,7 @@ def collect_source_hashes() -> dict[str, str]:
             continue
         digest = blake3.blake3()
         for root in sorted(locations):
-            for path in sorted(root.rglob("*.py")):
+            for path in sorted(p for p in root.rglob("*") if p.suffix in _HASHED_SUFFIXES):
                 if "__pycache__" in path.parts:
                     continue
                 digest.update(path.relative_to(root).as_posix().encode("utf-8"))

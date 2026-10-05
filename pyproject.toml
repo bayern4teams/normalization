@@ -26,6 +26,7 @@ dependencies = [
     # --- names / phonetics ---
     "nameparser>=2.1.0,<3",  # LGPL — unmodified/dynamic-import only, see scripts/license_policy.toml
     "jellyfish>=1.1,<2",
+    "phonetics>=1.0.5,<2",  # MIT; Double Metaphone (D11)
 
     # --- company ---
     "cleanco>=2.3,<3",
@@ -202,6 +203,7 @@ module = [
     "dateparser.*",
     "cleanco.*",
     "jellyfish.*",
+    "phonetics.*",
     "nameparser.*",
     "stdnum.*",
     "ftfy.*",

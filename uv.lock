@@ -1167,6 +1167,7 @@ dependencies = [
     { name = "opentelemetry-api" },
     { name = "opentelemetry-sdk" },
     { name = "phonenumbers" },
+    { name = "phonetics" },
     { name = "pint" },
     { name = "polars" },
     { name = "psycopg", extra = ["binary"] },
@@ -1239,6 +1240,7 @@ requires-dist = [
     { name = "opentelemetry-api", specifier = ">=1.27,<2" },
     { name = "opentelemetry-sdk", specifier = ">=1.27,<2" },
     { name = "phonenumbers", specifier = ">=8.13,<9" },
+    { name = "phonetics", specifier = ">=1.0.5,<2" },
     { name = "pint", specifier = ">=0.24,<1" },
     { name = "pip-audit", marker = "extra == 'dev'", specifier = ">=2.7,<3" },
     { name = "playwright", marker = "extra == 'dev'", specifier = ">=1.47,<2" },
@@ -1293,6 +1295,7 @@ dependencies = [
     { name = "normcore" },
     { name = "normdict" },
     { name = "phonenumbers" },
+    { name = "phonetics" },
     { name = "pint" },
     { name = "publicsuffixlist" },
     { name = "pyarrow" },
@@ -1325,6 +1328,7 @@ requires-dist = [
     { name = "normcore", editable = "packages/normcore" },
     { name = "normdict", editable = "packages/normdict" },
     { name = "phonenumbers", specifier = ">=8.13,<9" },
+    { name = "phonetics", specifier = ">=1.0.5,<2" },
     { name = "pint", specifier = ">=0.24,<1" },
     { name = "publicsuffixlist", specifier = ">=1.0.2,<2" },
     { name = "pyarrow", specifier = ">=17.0,<18" },
@@ -1578,6 +1582,12 @@ sdist = { url = "https://files.pythonhosted.org/packages/6e/23/b4c886487ca212ca8
 wheels = [
     { url = "https://files.pythonhosted.org/packages/50/dc/a7f0a9d5ad8b98bc5406deb00207b268d6d2edd215c21642e8f2ecc6f0ce/phonenumbers-8.13.55-py2.py3-none-any.whl", hash = "sha256:25feaf46135f0fb1e61b69513dc97c477285ba98a69204bf5a8cf241a844a718", size = 2582306, upload-time = "2025-02-15T08:05:56.746Z" },
 ]
+
+[[package]]
+name = "phonetics"
+version = "1.0.5"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/67/a5/d1b6dbcbb05477aa5f0c5e73a7d68c6d23ab098af4461072f00999ed573a/phonetics-1.0.5.tar.gz", hash = "sha256:16263948c82fce1e257964b2ab4adc953f995e0fa7e2e60e6ba336d77a7235ba", size = 8848, upload-time = "2018-03-23T15:38:37.388Z" }
 
 [[package]]
 name = "pint"

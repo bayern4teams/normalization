@@ -175,6 +175,32 @@ class TestPhonetics:
         result = normalizer.normalize("Smith John", ctx)
         assert "phonetic" not in result.structured
 
+    def test_latin_name_also_carries_language_aware_keys(
+        self, normalizer: NameNormalizer, ctx: NormalizationContext
+    ) -> None:
+        phonetic = normalizer.normalize("Smith, John", ctx).structured["phonetic"]
+        assert phonetic["double_metaphone"]
+        assert phonetic["beider_morse"]
+        assert "phonetic_status" not in normalizer.normalize("Smith, John", ctx).structured
+
+    def test_cyrillic_gets_no_anglo_key_but_is_marked_and_keyed(
+        self, normalizer: NameNormalizer, ctx: NormalizationContext
+    ) -> None:
+        structured = normalizer.normalize("Иванов, Иван", ctx).structured
+        assert structured["phonetic_status"] == "not_applicable"
+        assert structured["script"] == "Cyrillic"
+        assert set(structured["phonetic"]) == {"double_metaphone", "beider_morse"}
+
+    def test_cjk_and_mixed_scripts_emit_no_key(self, normalizer: NameNormalizer) -> None:
+        ctx = NormalizationContext(
+            field_name="last_name", semantic_type=FieldSemanticType.FAMILY_NAME
+        )
+        for text, script in (("王", "Han"), ("Wang小明", "Han+Latin")):
+            structured = normalizer.normalize(text, ctx).structured
+            assert structured["phonetic_status"] == "not_applicable"
+            assert structured["script"] == script
+            assert "phonetic" not in structured
+
     def test_phonetic_codes_are_derived_not_canonical(
         self, normalizer: NameNormalizer, ctx: NormalizationContext
     ) -> None:
