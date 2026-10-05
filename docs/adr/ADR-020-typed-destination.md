@@ -37,7 +37,13 @@ error rows. The gate checks against the *target column's* precision and scale,
 taken from the engine's type string. A finite number with more integer digits
 than the column holds (for example `1e30` into `Decimal(38,9)`, or `10^40` into
 `NUMERIC(38,4)`) is therefore a cast failure, not an INSERT failure. Before D5
-it passed the gate, because the gate only knew the semantic type.
+it passed the gate, because the gate only knew the semantic type. The check is
+made after rounding to the column's scale (`99.995` needs three integer digits
+in a scale-2 column), and the returned value is not rounded: the database
+rounds, the gate invents no precision. "Unbounded" Postgres `NUMERIC` still has
+the documented ceiling of 131072 digits before the point; a finite Decimal past
+it (`1e999999999`) is a cast failure too. The executor passes the job's engine
+(source and destination are always the same engine).
 
 **Cast failures are INVALID, not AMBIGUOUS.** A value that is not a number is
 not a question anyone can answer, so it is not queued for adjudication

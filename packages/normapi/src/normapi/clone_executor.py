@@ -1077,6 +1077,7 @@ def _apply_column(
     stats: _ColumnStats,
     errors_buffer: list[dict[str, Any]],
     adjudication: Adjudication | None = None,
+    engine: str = "postgres",
 ) -> None:
     """Normalize one column across one chunk, in place.
 
@@ -1178,6 +1179,7 @@ def _apply_column(
             typed_as=typed_as,
             companion=companion,
             code_column=code_column,
+            engine=engine,
         )
         # After the cast, not before it: a value that normalized fine and
         # then would not fit its native column is the loss this counts.
@@ -1206,6 +1208,7 @@ def _apply_value(
     typed_as: str | None,
     companion: str | None,
     code_column: str | None,
+    engine: str = "postgres",
 ) -> list[str]:
     """One row, one column: write every projection the destination has a
     home for, and hand back whatever needs reporting."""
@@ -1237,7 +1240,7 @@ def _apply_value(
     # whole chunk (and with it the error rows that would have
     # explained why).
     if typed_as is not None:
-        cast_value, cast_error = storage_types.coerce(typed_as, row[column])
+        cast_value, cast_error = storage_types.coerce(typed_as, row[column], engine)
         row[column] = cast_value
         if cast_error is not None:
             errors.append(cast_error)
@@ -1653,6 +1656,7 @@ def _normalize_chunk(
     stats: dict[str, _ColumnStats],
     errors_buffer: list[dict[str, Any]],
     adjudication: Adjudication | None = None,
+    engine: str = "postgres",
 ) -> None:
     """Every configured column of one chunk, COUNTRY columns first.
 
@@ -1720,6 +1724,7 @@ def _normalize_chunk(
                 stats=stats[column],
                 errors_buffer=errors_buffer,
                 adjudication=adjudication,
+                engine=engine,
             )
 
 
@@ -1976,6 +1981,8 @@ def _normalize_table(
             stats=stats,
             errors_buffer=errors_buffer,
             adjudication=adjudication,
+            # Phase 1 refuses a clone across engines, so this is the destination too.
+            engine=source_engine,
         )
 
         dest_rows = []
