@@ -3,19 +3,19 @@
 Overwrite this file at every commit. A fresh session reads it first, then
 [the plan](../DEFECTS_IMPLEMENTATION_PLAN.md). Git is the memory; a session's context is not.
 
-**Lock:** 2026-10-05T09:20:45Z · **Autonomy:** unattended-through-phase-5 · **Last heartbeat:** 2026-10-05T09:20:45Z
+**Lock:** 2026-10-05T09:35:36Z · **Autonomy:** unattended-through-phase-5 · **Last heartbeat:** 2026-10-05T09:35:36Z
 
 (Lock/heartbeat protocol: plan §7. A session sets `Lock: <ISO time>`, pushes it, and refreshes it at
 every commit; a lock older than 75 min is stale. `Autonomy` is `off`, `dryrun` (a tick only records
 what works and exits) or `unattended-through-phase-N` (authorises the supervisor to chain phases).
 Only the user changes it.)
 
-**Branch:** `feat/defects-fixes` · **Current phase:** 0 (not started; `Next action` below)
+**Branch:** `feat/defects-fixes` · **Current phase:** 1
 
 | item | phase | state | commit | lead verdict |
 |---|---|---|---|---|
-| D1 | 1 | todo | | |
-| D12 | 1 | todo | | |
+| D1 | 1 | in-progress | a2b5e59 (WIP) | |
+| D12 | 1 | in-progress | (WIP) | |
 | D7 | 1 | todo | | |
 | D8 | 1 | todo | | |
 | D9 | 1 | todo | | |
@@ -60,10 +60,17 @@ Derived 2026-10-05 from `graphify affected <file>` and `graft callers <sym> --de
 - Phase 3: worker D6 → lead D2; worker D4.
 
 ## Next action
-Phase 0, step 4 (plan §8): two verifiers (P0-A scorer + phase-1 fixtures, P0-B phase-2/3 fixtures) build `tests/defects/`; then step 5 and the phase-0 gate. Steps 1-3 done (PHASE0_REPORT.md). Tick 09:17Z found the 06:26Z lock stale with steps 1-3 committed and no uncommitted work; resumed from step 4. graft was missing at start; `cloud_setup.sh` restored it (rc 0, 121 s).
+Phase 1. Lane A (lead): D1 implemented as WIP (a2b5e59, ADR-018); verifier `D1` (derive+attack) writes
+`tests/unit/test_adjudication_acceptance.py`, `.handoff/D1.verdict.md`; lead then decides. D12: kept with one
+producer (ADR-018: adjudicated value that re-normalizes differently -> NEEDS_REVIEW); date.py note and data
+contract updated. Lane B: D7 derive -> worker -> attack, then D8. Lane C: D9 derive -> worker -> attack.
+Deviation (one line, plan §3.2/§4): D1 code was written before its derive verifier ran because both subagent
+slots were on Phase 0 fixtures; the D1 verifier was told to write tests from the spec before reading the code.
 
 ## Notifications
 (append `[PHASE n DONE]`, `[BLOCKED]`, `[Defects D1-D12 COMPLETE]` entries here; the same prefixes go in commit messages)
+- [PHASE 0 DONE] 2026-10-05: baseline, re-verification, ownership, fixtures + BEFORE numbers (PHASE0_REPORT.md §4).
+  Gate: ruff/format/mypy clean, CI pytest 1319 passed / 12 skipped, `ci-fast` green on 5a93696, ponytail-review: lean.
 
 ## Open escalations (worker/verifier results that passed only written tests or one case)
 - **Outside D1-D12, for the user (Phase 0 fixtures):** (a) `03/2024` normalizes to `2024-03-03` — a day is
