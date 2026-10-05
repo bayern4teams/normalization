@@ -85,15 +85,11 @@ def test_bad_extension_is_never_valid(ext: str) -> None:
 
 
 @pytest.mark.unit
-@pytest.mark.xfail(
-    strict=True, reason="residual: libphonenumber drops ext= when isub/phone-context follows it"
-)
 def test_residual_extension_not_silently_dropped_with_isub() -> None:
     assert norm("tel:+14155552671;isub=123;ext=5", country="US").structured["extension"] == "5"
 
 
 @pytest.mark.unit
-@pytest.mark.xfail(strict=True, reason="residual: non-ASCII digit extension is not folded to ASCII")
 def test_residual_extension_digits_fold_to_ascii() -> None:
     a = norm("+1 415 555 2671 x12").comparison
     assert norm("+1 415 555 2671 x" + chr(0x661) + chr(0x662)).comparison == a

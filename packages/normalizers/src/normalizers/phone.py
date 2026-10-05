@@ -87,21 +87,35 @@ class PhoneNormalizer:
             # whether the text states its own country (a `tel:+<cc>...` URI
             # does, so it parses above with no region). When it cannot parse
             # without one, the country is missing: AMBIGUOUS, never a guess.
-            if region is None and not has_explicit_plus:
-                return _ambiguous_no_region(value, ctx)
-            return _invalid(value, ctx, reason=str(exc))
+            return (
+                _ambiguous_no_region(value, ctx)
+                if region is None and not has_explicit_plus
+                else _invalid(value, ctx, reason=str(exc))
+            )
 
         # ponytail: a regionless `tel:+<cc>...` URI is accepted only when it
         # carries an extension (the form this module emits as `comparison`, so
         # the output re-parses to itself). Without one it stays AMBIGUOUS, as
         # before D10, to keep extension-free output byte-identical to `main`.
         # Upgrade: drop this guard to accept every explicit-country `tel:` URI.
+        # It judges libphonenumber's own parse, before the ext re-read below.
         if region is None and not has_explicit_plus and not parsed.extension:
             return _ambiguous_no_region(value, ctx)
+
+        # libphonenumber drops a `tel:` ext parameter that follows isub or
+        # phone-context. Dropping it is the D10 failure shape, so re-read it.
+        try:
+            parsed = _with_uri_extension(stripped, region, parsed)
+        except (phonenumbers.NumberParseException, ValueError) as exc:
+            return _invalid(value, ctx, reason=str(exc))
 
         is_possible = phonenumbers.is_possible_number(parsed)
         is_valid = phonenumbers.is_valid_number(parsed)
         e164 = phonenumbers.format_number(parsed, phonenumbers.PhoneNumberFormat.E164)
+        # ponytail: libphonenumber parses ONE extension; `+43 1 234567890x45 x46`
+        # merges the first marker into the number (variable-length bases).
+        # Upgrade: reject inputs with more than one extension marker if this
+        # shows up in data.
         # RFC 3966 is the only standard form that carries an extension, so it
         # is the comparison key exactly when one is present. E.164 stays the
         # key otherwise (unchanged bytes). `search` stays extension-free.
@@ -208,6 +222,58 @@ class PhoneNormalizer:
 
     def inverse(self, step_id: str, value: str) -> str | None:
         return None
+
+
+# The URI parameter name is read from libphonenumber's own RFC 3966 output for a
+# probe number (no hand-typed prefix): ";<name>=<digits>".
+_URI_EXT_NAME = (
+    phonenumbers.format_number(
+        phonenumbers.PhoneNumber(country_code=1, national_number=2, extension="3"),
+        phonenumbers.PhoneNumberFormat.RFC3966,
+    )
+    .split(";")[1]
+    .partition("=")[0]
+)
+
+
+def _uri_ext_params(text: str) -> list[str]:
+    """Values of the `ext` parameters of an RFC 3966 `tel:` URI (name is case-insensitive)."""
+    if text[:4].lower() != "tel:":
+        return []
+    named = (part.partition("=") for part in text.split(";")[1:])
+    return [v for name, _, v in named if name.strip().lower() == _URI_EXT_NAME]
+
+
+def _with_uri_extension(
+    text: str, region: str | None, parsed: phonenumbers.PhoneNumber
+) -> phonenumbers.PhoneNumber:
+    """Return `parsed` with an ASCII-digit extension, never dropping a URI `ext`.
+
+    RFC 3966 `ext` is a URI parameter in any position, so when the text has
+    exactly one and libphonenumber did not keep it, the same text is re-parsed
+    with that parameter first (libphonenumber still applies its own length and
+    digit rules). Anything still unreconciled raises ValueError: a confident
+    answer that silently loses the extension is the defect, an INVALID is not.
+    """
+    if parsed.extension:
+        parsed.extension = phonenumbers.normalize_digits_only(parsed.extension)
+    wanted = _uri_ext_params(text)
+    if not wanted:
+        return parsed
+    expected = phonenumbers.normalize_digits_only(wanted[0])
+    if len(wanted) == 1 and parsed.extension == expected:
+        return parsed
+    if len(wanted) == 1:
+        head, *rest = text.split(";")
+        others = [p for p in rest if p.partition("=")[0].strip().lower() != _URI_EXT_NAME]
+        parsed = phonenumbers.parse(
+            ";".join([head, f"{_URI_EXT_NAME}={wanted[0]}", *others]), region
+        )
+        if parsed.extension:
+            parsed.extension = phonenumbers.normalize_digits_only(parsed.extension)
+        if parsed.extension == expected:
+            return parsed
+    raise ValueError("tel: URI ext parameter could not be read without loss")
 
 
 def _resolve_region(

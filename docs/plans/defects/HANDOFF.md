@@ -3,7 +3,7 @@
 Overwrite this file at every commit. A fresh session reads it first, then
 [the plan](../DEFECTS_IMPLEMENTATION_PLAN.md). Git is the memory; a session's context is not.
 
-**Lock:** 2026-10-05T14:45:30Z · **Autonomy:** unattended-through-phase-5 · **Last heartbeat:** 2026-10-05T14:45:30Z
+**Lock:** 2026-10-05T14:52:34Z · **Autonomy:** unattended-through-phase-5 · **Last heartbeat:** 2026-10-05T14:52:34Z
 
 (Lock/heartbeat protocol: plan §7. A session sets `Lock: <ISO time>`, pushes it, and refreshes it at
 every commit; a lock older than 75 min is stale. `Autonomy` is `off`, `dryrun` (a tick only records
@@ -21,7 +21,7 @@ Only the user changes it.)
 | D9 | 1 | accepted-cloud | this commit | ACCEPT: verifier ACCEPT (33 acceptance fail on 47df753; own PSL algorithm agrees on >15000 hosts; sockets blocked: no network); lead fixed `a b.com` getting a registrable domain (host char check + test) and added the ponytail: ceiling; MPL-2.0 accepted as a warning like certifi/hypothesis/pathspec |
 | D5 | 2 | in-progress | 284e6e7 | comments + ADR-020 done; derive verifier running; then lead implements engine-aware coerce |
 | D3 | 2 | todo | | |
-| D10 | 2 | in-progress | f3988fa | implemented (149 tests green); attack verifier running. Lead accepts the guard keeping regionless `tel:+<cc>` without extension AMBIGUOUS (byte-identity); over-abstain logged |
+| D10 | 2 | accepted-cloud | this commit | ACCEPT after round 2: verifier ACCEPT (95 tests fail on main; 4548 inputs x 4 contexts: 0 extension-free diffs; 12,740 fixed-point cases); lead rejected residuals (tel: ext dropped beside isub/phone-context; non-ASCII ext digits), worker fixed both, the verifier's strict xfails for them now pass; `x45 x46` is a ponytail: ceiling. Accepted over-abstain: regionless `tel:+<cc>` without ext stays AMBIGUOUS |
 | D11 | 2 | in-progress | 30074c6 | derive done (290 tests, 180 fail on old code; test file `tests/unit/test_name_d11_acceptance.py` untracked, lands with implementation); worker next (after D10 attack frees a slot) |
 | D6 | 3 | todo | | |
 | D2 | 3 | todo | | |
