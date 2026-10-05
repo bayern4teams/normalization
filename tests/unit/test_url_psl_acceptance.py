@@ -37,6 +37,7 @@ from normalizers.url import URLNormalizer
 from normcore.context import NormalizationContext
 from normcore.enums import FieldSemanticType, NormalizationStatus
 from normexec.env_fingerprint import FINGERPRINTED_PACKAGES
+from publicsuffixlist import PublicSuffixList  # type: ignore[import-untyped]
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # tests/ holds the `defects` package
 from defects.fixtures_phase1 import (
@@ -566,19 +567,15 @@ def _str_collections(src: str) -> set[tuple[str, ...]]:
 
 
 def test_no_suffix_literals_in_url_py() -> None:
-    """Section 2.4 grep: url.py adds no list of >=3 string literals (a TLD/suffix table) and no
-    fixture value; the PSL library is the only source of suffix data."""
+    """Section 2.4 grep: url.py holds no list of >=3 string literals naming a public suffix (a
+    TLD/suffix table) and no fixture value; the PSL library is the only source of suffix data.
+    History-free on purpose: CI's shallow checkout has no `main` to diff against."""
+    psl = PublicSuffixList(accept_unknown=False)
     src = _URL_SRC.read_text(encoding="utf-8")
-    base = subprocess.run(
-        ["git", "show", f"main:{_URL_SRC.relative_to(_URL_SRC.parents[4]).as_posix()}"],
-        capture_output=True,
-        text=True,
-        check=False,
-        cwd=_URL_SRC.parents[4],
-    )
-    old = _str_collections(base.stdout) if base.returncode == 0 else set()
-    added = _str_collections(src) - old
-    assert not added, f"new string-list literal(s) in url.py: {sorted(added)[:3]}"
+    tables = [
+        c for c in _str_collections(src) if any(psl.is_public(v.strip(".").lower()) for v in c)
+    ]
+    assert not tables, f"public-suffix list literal(s) in url.py: {tables[:3]}"
     for needle in ("co.uk", "github.io", "notatld", '"jp"', '"uk"', "'jp'", "'uk'"):
         assert needle not in src, f"literal {needle!r} in url.py (fixture value copied into code)"
 
