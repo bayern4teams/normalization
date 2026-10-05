@@ -5,8 +5,12 @@ forbids them unless explicitly configured for a named domain, which is
 out of scope here). No country inferable from either the number itself
 (a leading "+") or context means `AMBIGUOUS`, never a guess (§36).
 Extensions are parsed and stored separately in `structured`, never
-merged into `e164` (the canonical/comparison form) — confirmed empirically
-in M3 that `phonenumbers` itself keeps them apart in E.164 output.
+merged into `e164`. E.164 cannot carry one, so `comparison` is the RFC 3966
+`tel:` URI when an extension is present (two numbers differing only by
+extension must not compare equal) and E.164 otherwise; `structured["rfc3966"]`
+always holds the URI. A `tel:+<cc>...` URI states its country and parses
+without a region (libphonenumber decides), so the emitted comparison is a
+fixed point.
 """
 
 from __future__ import annotations
@@ -76,17 +80,32 @@ class PhoneNormalizer:
         # verification pack, not silently skipped.
         region, region_source = _resolve_region(ctx, has_number_prefix=has_explicit_plus)
 
-        if region is None and not has_explicit_plus:
-            return _ambiguous_no_region(value, ctx)
-
         try:
             parsed = phonenumbers.parse(stripped, region)
         except phonenumbers.NumberParseException as exc:
+            # No region and no leading "+": libphonenumber is the authority on
+            # whether the text states its own country (a `tel:+<cc>...` URI
+            # does, so it parses above with no region). When it cannot parse
+            # without one, the country is missing: AMBIGUOUS, never a guess.
+            if region is None and not has_explicit_plus:
+                return _ambiguous_no_region(value, ctx)
             return _invalid(value, ctx, reason=str(exc))
+
+        # ponytail: a regionless `tel:+<cc>...` URI is accepted only when it
+        # carries an extension (the form this module emits as `comparison`, so
+        # the output re-parses to itself). Without one it stays AMBIGUOUS, as
+        # before D10, to keep extension-free output byte-identical to `main`.
+        # Upgrade: drop this guard to accept every explicit-country `tel:` URI.
+        if region is None and not has_explicit_plus and not parsed.extension:
+            return _ambiguous_no_region(value, ctx)
 
         is_possible = phonenumbers.is_possible_number(parsed)
         is_valid = phonenumbers.is_valid_number(parsed)
         e164 = phonenumbers.format_number(parsed, phonenumbers.PhoneNumberFormat.E164)
+        # RFC 3966 is the only standard form that carries an extension, so it
+        # is the comparison key exactly when one is present. E.164 stays the
+        # key otherwise (unchanged bytes). `search` stays extension-free.
+        rfc3966 = phonenumbers.format_number(parsed, phonenumbers.PhoneNumberFormat.RFC3966)
         international_format = phonenumbers.format_number(
             parsed, phonenumbers.PhoneNumberFormat.INTERNATIONAL
         )
@@ -106,6 +125,7 @@ class PhoneNormalizer:
             "national_number": str(parsed.national_number),
             "extension": parsed.extension,
             "e164": e164,
+            "rfc3966": rfc3966,
             "international_format": international_format,
             "national_format": national_format,
             "is_possible": is_possible,
@@ -122,7 +142,7 @@ class PhoneNormalizer:
         return NormalizedValue(
             original=value,
             display=international_format,
-            comparison=e164,
+            comparison=rfc3966 if parsed.extension else e164,
             search=e164,
             structured=structured,
             validation_status="VALID" if is_valid else "INVALID",

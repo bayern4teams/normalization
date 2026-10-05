@@ -118,6 +118,28 @@ class TestExtensions:
         result = normalizer.normalize("+1 415-555-2671", _ctx())
         assert result.structured["extension"] is None
 
+    def test_extension_makes_comparison_rfc3966(self, normalizer: PhoneNormalizer) -> None:
+        a = normalizer.normalize("+1 415-555-2671 ext. 123", _ctx())
+        b = normalizer.normalize("+1 415-555-2671 ext. 124", _ctx())
+        assert a.comparison == a.structured["rfc3966"]
+        assert a.comparison.endswith(";ext=123")
+        assert a.comparison != b.comparison
+        assert a.search == "+14155552671"
+
+    def test_no_extension_comparison_stays_e164(self, normalizer: PhoneNormalizer) -> None:
+        result = normalizer.normalize("+1 415-555-2671", _ctx())
+        assert result.comparison == "+14155552671"
+        assert ";ext=" not in str(result.structured["rfc3966"])
+
+    def test_comparison_with_extension_is_a_fixed_point(self, normalizer: PhoneNormalizer) -> None:
+        first = normalizer.normalize("+1 415-555-2671 x45", _ctx())
+        again = normalizer.normalize(first.comparison, _ctx())
+        assert again.comparison == first.comparison
+
+    def test_regionless_national_tel_uri_stays_ambiguous(self, normalizer: PhoneNormalizer) -> None:
+        result = normalizer.normalize("tel:415-555-2671;ext=45", _ctx())
+        assert result.normalization_status is NormalizationStatus.AMBIGUOUS
+
 
 @pytest.mark.unit
 class TestInvalidNumbers:
