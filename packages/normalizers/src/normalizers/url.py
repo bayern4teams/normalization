@@ -24,6 +24,25 @@ Implements exactly the operations §42 lists, and nothing beyond them:
   `structured.tracking_params_detected` for a caller/profile to act on,
   purely diagnostic, no silent removal
 
+- registrable domain (D9): `registrable_domain`, `public_suffix`,
+  `is_private_suffix` (PSL PRIVATE section, so a hosting-provider suffix is
+  told apart from an ICANN one) and `registrable_domain_reason`, computed
+  from the A-label host by `publicsuffixlist` against the Public Suffix List
+  snapshot bundled in the package. The library has no fetch code on its
+  import/query path, so network access is off by construction. Snapshot: PSL
+  VERSION 2026-09-30_20-56-07_UTC (publicsuffixlist 1.0.2.20261003, whose
+  version carries the snapshot date); it moves with the pinned package,
+  which is in `FINGERPRINTED_PACKAGES`, so a PSL update changes `env_id`.
+  IP literals, single labels, unlisted suffixes and a host that is itself a
+  public suffix give `registrable_domain = None` with a reason, never "the
+  last two labels".
+
+URL standard: this module follows RFC 3986 (generic syntax via
+`urllib.parse`) with IDNA 2008 (RFC 5891, the `idna` package) for hosts. It
+is NOT the WHATWG URL Standard: there is no UTS #46 mapping, no backslash or
+special-scheme host parsing and no IPv4 number-form canonicalisation. This is
+a statement of what the code already does; behaviour is unchanged.
+
 Per-field configuration (which of these to apply, custom tracking-param
 lists) is not wired through `NormalizationContext` — the same disclosed
 gap carried across every M2-M5 normalizer (profile-driven per-field
@@ -32,6 +51,7 @@ config isn't threaded into `Normalizer.normalize()` yet).
 
 from __future__ import annotations
 
+import ipaddress
 from typing import TYPE_CHECKING
 from urllib.parse import SplitResult, urlsplit, urlunsplit
 
@@ -50,6 +70,7 @@ from normcore.models import NormalizedValue
 from normcore.pii import character_class_mask, content_hash
 from normcore.rules import ComponentVersionInfo, ExplanationText, ValidationOutcome
 from normcore.trace import TraceStep
+from publicsuffixlist import PublicSuffixList  # type: ignore[import-untyped]
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -91,6 +112,49 @@ def _looks_like_bare_host(value: str) -> bool:
         return False
     tld = labels[-1].split(":", 1)[0]  # drop any :port
     return len(tld) >= 2 and tld.isalpha()
+
+
+# Offline by construction: the snapshot is read from the package, and the
+# library's updater is a separate module that is never imported here.
+# `accept_unknown=False`: a suffix the list does not carry is not guessed.
+# The ICANN-only view exists to tell the PRIVATE section apart: a host is
+# under a private suffix exactly when the two views disagree on its suffix.
+_PSL = PublicSuffixList(accept_unknown=False)
+_PSL_ICANN = PublicSuffixList(accept_unknown=False, only_icann=True)
+
+
+def _registrable(host: str, *, idn_ok: bool) -> dict[str, object]:
+    """Registrable domain of an A-label `host`, or None with a reason."""
+    none: dict[str, object] = {
+        "registrable_domain": None,
+        "public_suffix": None,
+        "is_private_suffix": None,
+    }
+    if not host:
+        return {**none, "registrable_domain_reason": "no host"}
+    if not idn_ok:
+        return {**none, "registrable_domain_reason": "host is not valid IDNA"}
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        pass
+    else:
+        return {**none, "registrable_domain_reason": "host is an IP address"}
+    suffix = _PSL.publicsuffix(host)
+    if suffix is None:
+        why = (
+            "single-label host has no public suffix"
+            if "." not in host
+            else "host's suffix is not in the Public Suffix List"
+        )
+        return {**none, "registrable_domain_reason": why}
+    registrable = _PSL.privatesuffix(host)
+    return {
+        "registrable_domain": registrable,
+        "public_suffix": suffix,
+        "is_private_suffix": suffix != _PSL_ICANN.publicsuffix(host),
+        "registrable_domain_reason": (None if registrable else "host is itself a public suffix"),
+    }
 
 
 _PARSE_PARAMS_HASH = blake3.blake3(b"{}").hexdigest()
@@ -230,6 +294,7 @@ class URLNormalizer:
             "is_idn": host != (parts.hostname or "").lower(),
             "tracking_params_detected": tracking_params,
             "scheme_assumed": scheme_assumed,
+            **_registrable(host, idn_ok=idn_ok),
         }
 
         return NormalizedValue(

@@ -74,6 +74,7 @@ FINGERPRINTED_PACKAGES = [
     "python-stdnum",
     "pint",
     "rapidfuzz",
+    "publicsuffixlist",
     "google-i18n-address",
     "polars",
     "duckdb",

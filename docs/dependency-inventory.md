@@ -55,6 +55,7 @@ bug to fix immediately.
 | sqlalchemy | >=2.0,<3 | MIT | PyPI | Metadata store ORM, connector reflection | Low | — |
 | httpx | >=0.27,<1 | BSD-3-Clause | PyPI | libpostal sidecar client | Low | — |
 | cryptography | >=42,<44 | Apache-2.0 OR BSD-3-Clause (dual) | [github.com/pyca/cryptography](https://github.com/pyca/cryptography) | `Fernet` symmetric encryption for saved DB-clone-and-normalize connection passwords at rest | Low — widely-used, actively maintained; ships prebuilt wheels for all target platforms | New dependency, added for the DB-clone-and-normalize feature (ADR-017); nothing in this repo did encryption before it |
+| publicsuffixlist | >=1.0.2,<2 | MPL-2.0 (file-level copyleft; used unmodified, dynamic import; **not on the `scripts/license_policy.toml` allow-list, so `check_licenses.py` prints a non-blocking warning for it, needing human sign-off**) | [github.com/ko-zu/psl](https://github.com/ko-zu/psl) | Public Suffix List lookup for `URLNormalizer` registrable domain (D9). Zero dependencies, snapshot bundled in the wheel, no network code on the query path | Low — pure Python, data-only | The PSL snapshot ships inside the package and its version carries the snapshot date (1.0.2.20261003 = PSL VERSION 2026-09-30_20-56-07_UTC); a bump moves `env_id` (in `FINGERPRINTED_PACKAGES`) and can change registrable domains. Rejected alternative: `tldextract` (BSD-3-Clause) imports `requests`/`ssl` at import, which breaks the fresh-process no-network test |
 
 ## Rejected dependencies (do not (re-)add without a superseding ADR)
 

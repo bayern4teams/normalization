@@ -1294,6 +1294,7 @@ dependencies = [
     { name = "normdict" },
     { name = "phonenumbers" },
     { name = "pint" },
+    { name = "publicsuffixlist" },
     { name = "pyarrow" },
     { name = "pycountry" },
     { name = "pyicu", version = "2.16.2", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform != 'win32'" },
@@ -1325,6 +1326,7 @@ requires-dist = [
     { name = "normdict", editable = "packages/normdict" },
     { name = "phonenumbers", specifier = ">=8.13,<9" },
     { name = "pint", specifier = ">=0.24,<1" },
+    { name = "publicsuffixlist", specifier = ">=1.0.2,<2" },
     { name = "pyarrow", specifier = ">=17.0,<18" },
     { name = "pycountry", specifier = ">=24.6,<25" },
     { name = "pyicu", marker = "python_full_version < '3.12' or python_full_version >= '3.14' or sys_platform != 'win32'", specifier = ">=2.14,<3" },
@@ -1757,6 +1759,15 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/d0/83/fc6c174b672e29b7de996ea77b6cbddf46c891751c3355f6974292baa6b4/psycopg_binary-3.3.4-cp313-cp313-musllinux_1_2_riscv64.whl", hash = "sha256:ee17a2cf4943cde261adfad1bbc5bf38d6b3776d7afff74c7cabcbeaeb08c260", size = 3927347, upload-time = "2026-05-01T23:30:21.186Z" },
     { url = "https://files.pythonhosted.org/packages/e9/65/768364d4a97a15b1a7f47ba52688c1686f22941d8332a8398cefc468e25f/psycopg_binary-3.3.4-cp313-cp313-musllinux_1_2_x86_64.whl", hash = "sha256:5c4ab71be17bdca30cb34c34c4e1496e2f5d6f20c199c12bad226070b22ef9bf", size = 4236393, upload-time = "2026-05-01T23:30:26.211Z" },
     { url = "https://files.pythonhosted.org/packages/bd/3b/218efbc9e645becd80cdf651acda05f85cfe546b7a9c0458c7cbc8fe1f74/psycopg_binary-3.3.4-cp313-cp313-win_amd64.whl", hash = "sha256:dbfdb9b6cc79f31104a7b162a2b921b765fcc62af6c00540a167a8de47e4ed38", size = 3564592, upload-time = "2026-05-01T23:30:31.764Z" },
+]
+
+[[package]]
+name = "publicsuffixlist"
+version = "1.0.2.20261003"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/8a/5d/5d96888f65ea1936ed264e232be1794d33f758751baade8a2aeb038dfc8d/publicsuffixlist-1.0.2.20261003.tar.gz", hash = "sha256:d88339d4752d866a5be66ca4234257ca1e8277541c8518f6e6615d581a8d8b03", size = 109285, upload-time = "2026-10-03T09:03:47.867Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/40/52/1e16fcde6a770966a7fafea81169a54f8dc49dd16f232707b261d1772ed3/publicsuffixlist-1.0.2.20261003-py2.py3-none-any.whl", hash = "sha256:836bcbfb66f44eea6ee7917864635a0d5f49ef5220e3074bc8611f683a34c11c", size = 109061, upload-time = "2026-10-03T09:03:46.55Z" },
 ]
 
 [[package]]

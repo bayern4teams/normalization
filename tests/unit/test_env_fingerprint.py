@@ -115,3 +115,18 @@ class TestSourceHashesCloseTheCacheHole:
         assert digest_tree(tmp_path) != before
         (tmp_path / "a.py").rename(tmp_path / "b.py")
         assert digest_tree(tmp_path) != before
+
+
+@pytest.mark.unit
+def test_psl_package_is_fingerprinted_and_its_version_moves_env_id() -> None:
+    """D9: the Public Suffix List snapshot ships inside `publicsuffixlist`, whose
+    version carries the snapshot date, so a PSL update must move env_id."""
+    from env_fingerprint import FINGERPRINTED_PACKAGES, collect_package_versions
+
+    assert "publicsuffixlist" in FINGERPRINTED_PACKAGES
+    versions = collect_package_versions()
+    assert versions["publicsuffixlist"] not in ("", "MISSING")  # actually resolved
+    a, b = _baseline(), _baseline()
+    a.packages["publicsuffixlist"] = versions["publicsuffixlist"]
+    b.packages["publicsuffixlist"] = versions["publicsuffixlist"] + ".1"
+    assert compute_env_id(a) != compute_env_id(b)
