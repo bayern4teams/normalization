@@ -65,6 +65,18 @@ def _unquote(token: str) -> str:
     return token.removesuffix('"')
 
 
+def _context(regex: str) -> re.Pattern[str]:
+    """A rule context, compiled exactly as Commons Codec's `Rule.pattern` does."""
+    # ponytail: upstream treats bracket-less contexts as literals, so e.g.
+    # `(а|е|о|и|у)` never fires; 4/131 Cyrillic names lose alternatives.  # noqa: RUF003
+    # Upgrade path: follow upstream if Commons Codec fixes it; re-vendor the rule files.
+    start, end = regex.startswith("^"), regex.endswith("$")
+    core = regex[start : len(regex) - end]
+    if "[" in core or not (start or end) or not core:
+        return re.compile(regex)
+    return re.compile(("^" if start else "") + re.escape(core) + ("$" if end else ""))
+
+
 def _phoneme(text: str) -> tuple[str, _Langs]:
     if "[" in text:
         before, _, rest = text.partition("[")
@@ -92,7 +104,7 @@ def _parse_rules(name: str) -> dict[str, list[_Rule]]:
             rules.update(_parse_rules(line.removeprefix("#include").strip()))
             continue
         pat, lcon, rcon, ph = (_unquote(p) for p in line.split())
-        rule = _Rule(pat, re.compile(lcon + "$"), re.compile("^" + rcon), _phoneme_expr(ph))
+        rule = _Rule(pat, _context(lcon + "$"), _context("^" + rcon), _phoneme_expr(ph))
         rules.setdefault(pat[0], []).append(rule)
     return rules
 
