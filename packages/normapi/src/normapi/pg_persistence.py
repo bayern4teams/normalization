@@ -159,6 +159,18 @@ CREATE TABLE IF NOT EXISTS normalization_adjudication_verdicts (
     env_id TEXT NOT NULL,
     PRIMARY KEY (key, decided_at)
 );
+
+CREATE TABLE IF NOT EXISTS normalization_lineage_events (
+    run_id TEXT NOT NULL,
+    event_type TEXT NOT NULL,
+    job_id TEXT NOT NULL,
+    table_name TEXT NOT NULL,
+    event_time TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    PRIMARY KEY (run_id, event_type)
+);
+CREATE INDEX IF NOT EXISTS normalization_lineage_events_job
+    ON normalization_lineage_events (job_id);
 """
 # The adjudication tables are ADR-018: the queue holds one row per
 # (value, context, profile) key and the verdicts are append-only — the
@@ -781,6 +793,40 @@ class PgPersistence:
             }
             for row_index, table_name, field, original, error in rows
         ]
+
+    # --- lineage (D3) ---
+
+    def save_lineage_event(self, job_id: str, table: str, event: dict[str, Any]) -> None:
+        """One OpenLineage run event. A run has at most one event of each
+        type, so a replayed write is a no-op rather than a duplicate."""
+        with self._engine.begin() as conn:
+            conn.execute(
+                sa.text(
+                    "INSERT INTO normalization_lineage_events "
+                    "(run_id, event_type, job_id, table_name, event_time, payload) "
+                    "VALUES (:run, :type, :jid, :table, :time, :payload) "
+                    "ON CONFLICT (run_id, event_type) DO NOTHING"
+                ),
+                {
+                    "run": event["run"]["runId"],
+                    "type": event["eventType"],
+                    "jid": job_id,
+                    "table": table,
+                    "time": event["eventTime"],
+                    "payload": json.dumps(event),
+                },
+            )
+
+    def list_lineage_events(self, job_id: str) -> list[dict[str, Any]]:
+        with self._engine.begin() as conn:
+            rows = conn.execute(
+                sa.text(
+                    "SELECT payload FROM normalization_lineage_events "
+                    "WHERE job_id = :jid ORDER BY event_time, table_name"
+                ),
+                {"jid": job_id},
+            ).scalars()
+            return [json.loads(row) for row in rows]
 
     # --- adjudication (ADR-018) ---
 

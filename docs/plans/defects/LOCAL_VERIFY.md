@@ -64,6 +64,11 @@ destination is created. Never run these against the production metadata database
   rejects); confirm ClickHouse rounds rather than truncates or errors on the accepted one. (b) Postgres unconstrained
   `NUMERIC`: a 131072-integer-digit value inserts, `1e131072` does not reach the INSERT. (c) Fractional digits beyond
   the column scale (`0.00001` into MONEY) are not gated: confirm both engines round silently instead of aborting.
+- **D3 lineage, live:** (a) real Postgres: `ensure_schema()` creates `normalization_lineage_events` and its index
+  (tests ran on SQLite); `ON CONFLICT (run_id, event_type) DO NOTHING` behaves the same. (b) Marquez: `docker run`
+  Marquez, set `NORM_OPENLINEAGE_URL` to its `/api/v1/lineage`, run a real clone with a MONEY and a PHONE column,
+  confirm the column lineage (companions included) in its UI/API. (c) Real `get_columns` on Postgres and ClickHouse
+  sources returns every column the destination gets (the facet is built from it plus the recorded plan).
 - **D1 on real Postgres:** `ensure_schema()` creates `normalization_adjudication_queue` and
   `normalization_adjudication_verdicts`; the upsert's `ON CONFLICT ... DO UPDATE` with the `AS q` alias was
   exercised on SQLite only.

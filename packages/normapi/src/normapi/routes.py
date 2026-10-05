@@ -1084,6 +1084,20 @@ def start_clone_job(
 _MAX_CLONE_ERRORS_PAGE_SIZE = 1000
 
 
+@router.get("/clone-jobs/{job_id}/lineage")
+def get_clone_job_lineage(
+    job_id: str,
+    connections: Annotated[PgPersistence, Depends(get_connections)],
+) -> list[dict[str, Any]]:
+    """D3: the job's OpenLineage run events (START / COMPLETE / FAIL per
+    table, `columnLineage` on each output), read from the metadata
+    database. "Which source columns produced destination column X" is
+    answered here without touching the source or destination."""
+    if connections.get_clone_job(job_id) is None:
+        raise HTTPException(status_code=404, detail=f"No such clone job: {job_id}")
+    return connections.list_lineage_events(job_id)
+
+
 @router.get("/clone-jobs/{job_id}/errors", response_model=list[NormalizationError])
 def get_clone_job_errors(
     job_id: str,

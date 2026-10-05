@@ -45,7 +45,7 @@ from normio.connectors import (
 )
 from normio.connectors._sql_base import SOURCE_READ_BATCH_ROWS
 
-from normapi import secrets
+from normapi import lineage, secrets
 from normapi.adjudication import Adjudication
 from normapi.scaffold_profile import SCAFFOLD_PROFILE
 from normcore import (
@@ -2091,25 +2091,51 @@ def _run_phase2(
         for table in job["tables"]:
             if table in tables_completed:
                 continue
-            _normalize_table(
-                table,
+            run = lineage.table_run(
+                persistence,
                 job=job,
                 job_id=job_id,
-                source=source,
-                dest=dest,
-                source_engine=source_conn["engine"],
-                persistence=persistence,
-                planner=planner,
-                pool=pool,
-                progress=progress,
-                in_place=in_place,
-                entity_countries=entity_countries,
-                adjudication=adjudication,
+                table=table,
+                source_connection=source_conn,
+                destination_connection=dest_conn,
+                source_columns=[c.name for c in source.get_columns(table)],
+                semantic_types={
+                    c: FieldSemanticType(t)
+                    for c, t in job["field_configs"].get(table, {}).items()
+                    if t
+                },
+                registry=dispatcher.registry,
+                profile=SCAFFOLD_PROFILE,
             )
+            run.emit("START")
+            try:
+                _normalize_table(
+                    table,
+                    job=job,
+                    job_id=job_id,
+                    source=source,
+                    dest=dest,
+                    source_engine=source_conn["engine"],
+                    persistence=persistence,
+                    planner=planner,
+                    pool=pool,
+                    progress=progress,
+                    in_place=in_place,
+                    entity_countries=entity_countries,
+                    adjudication=adjudication,
+                )
+            except Exception:
+                run.emit("FAIL")
+                raise
             tables_completed.add(table)
             progress["tables_completed"] = sorted(tables_completed)
             job["progress"] = progress
             _save_progress(persistence, job_id, job)
+            # After the checkpoint, not before: a resumed job skips a
+            # completed table, so it can never announce it twice.
+            # ponytail: a crash between the two leaves that run without a
+            # COMPLETE; write both in one transaction if that ever matters.
+            run.emit("COMPLETE")
 
         progress["current_table"] = None
         job["progress"] = progress
