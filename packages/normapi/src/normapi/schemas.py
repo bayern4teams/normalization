@@ -313,6 +313,47 @@ class CloneJobCreateResponse(BaseModel):
     create_database_sql: str
 
 
+class AdjudicationQueueEntry(BaseModel):
+    """One open (or answered) question — ADR-018. `safe_preview` and the
+    masked `detail` follow the error report's PII rule: the raw value is
+    at rest in the metadata database, never in a response."""
+
+    key: str
+    semantic_type: FieldSemanticType
+    safe_preview: str
+    context: dict[str, Any]
+    detail: dict[str, Any]
+    first_job_id: str
+    last_job_id: str
+    occurrences: int
+    decided: bool
+    verdicts: list[AdjudicationVerdict] = Field(default_factory=list)
+
+
+class AdjudicationVerdictRequest(BaseModel):
+    decided_value: str = Field(min_length=1)
+    # `human:<id>` or `agent:<id>` (Q15), checked in the route against
+    # `normapi.adjudication.DECIDED_BY`.
+    decided_by: str
+    rationale: str = Field(min_length=1)
+    confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+
+
+class AdjudicationVerdict(BaseModel):
+    """`decided_value` itself is not echoed (it is the answer to a value
+    the API never returns raw); `decided_display` is what it normalizes
+    to, masked the same way."""
+
+    key: str
+    decided_display_preview: str | None
+    decided_by: str
+    decided_at: str
+    rationale: str
+    confidence: float | None
+    env_id: str
+    profile_version: str
+
+
 class NotImplementedResponse(BaseModel):
     """Honest, schema-valid placeholder for §98 endpoints whose real
     implementation is still out of scope at the current milestone —
@@ -324,6 +365,9 @@ class NotImplementedResponse(BaseModel):
 
 
 __all__ = [
+    "AdjudicationQueueEntry",
+    "AdjudicationVerdict",
+    "AdjudicationVerdictRequest",
     "CloneJobCreateRequest",
     "CloneJobCreateResponse",
     "ColumnInfoResponse",

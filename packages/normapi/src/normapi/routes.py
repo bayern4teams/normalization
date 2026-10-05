@@ -37,8 +37,10 @@ are all wired to real logic — no remaining 501 stubs on the §98 surface.
 
 from __future__ import annotations
 
+import datetime as dt
+import json
 import uuid
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Response
 from normcore.pii import safe_preview
@@ -56,7 +58,7 @@ from normanalysis import (
     suggest_profile,
     suggest_semantic_type,
 )
-from normapi import clone_executor, secrets
+from normapi import adjudication, clone_executor, secrets
 from normapi.clone_executor import CloneJobNotFoundError, CloneJobStateError
 from normapi.dependencies import (
     get_cache,
@@ -69,6 +71,9 @@ from normapi.dependencies import (
 from normapi.pg_persistence import PgPersistence
 from normapi.scaffold_profile import SCAFFOLD_PROFILE
 from normapi.schemas import (
+    AdjudicationQueueEntry,
+    AdjudicationVerdict,
+    AdjudicationVerdictRequest,
     CloneJobAmendRequest,
     CloneJobCreateRequest,
     CloneJobCreateResponse,
@@ -1114,3 +1119,134 @@ def get_clone_job_errors(
         )
         for row in rows
     ]
+
+
+# --- Adjudication (ADR-018): the exit for AMBIGUOUS ---
+
+_MAX_QUEUE_PAGE_SIZE = 1000
+
+
+def _mask_leaves(value: Any) -> Any:
+    """Every string inside a queue entry's detail is derived from the raw
+    value (a date's candidate readings, a phone's digits), so each one is
+    masked exactly like the value itself."""
+    if isinstance(value, str):
+        return safe_preview(value)
+    if isinstance(value, dict):
+        return {k: _mask_leaves(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_mask_leaves(v) for v in value]
+    return value
+
+
+def _verdict_view(row: dict[str, Any]) -> AdjudicationVerdict:
+    display = row["decided_display"]
+    return AdjudicationVerdict(
+        key=row["key"],
+        decided_display_preview=safe_preview(display) if display is not None else None,
+        decided_by=row["decided_by"],
+        decided_at=row["decided_at"],
+        rationale=row["rationale"],
+        confidence=row["confidence"],
+        env_id=row["env_id"],
+        profile_version=row["profile_version"],
+    )
+
+
+def _queue_view(
+    row: dict[str, Any], verdicts: list[dict[str, Any]] | None = None
+) -> AdjudicationQueueEntry:
+    return AdjudicationQueueEntry(
+        key=row["key"],
+        semantic_type=FieldSemanticType(row["semantic_type"]),
+        safe_preview=safe_preview(row["original"]),
+        context=json.loads(row["context"]),
+        detail=_mask_leaves(json.loads(row["detail"])),
+        first_job_id=row["first_job_id"],
+        last_job_id=row["last_job_id"],
+        occurrences=row["occurrences"],
+        decided=bool(row["decided"]),
+        verdicts=[_verdict_view(v) for v in verdicts or []],
+    )
+
+
+@router.get("/adjudication/queue", response_model=list[AdjudicationQueueEntry])
+def list_adjudication_queue(
+    response: Response,
+    connections: Annotated[PgPersistence, Depends(get_connections)],
+    semantic_type: FieldSemanticType | None = None,
+    status: Literal["pending", "decided"] | None = None,
+    limit: int = 100,
+    offset: int = 0,
+) -> list[AdjudicationQueueEntry]:
+    """Most frequent first: one answer to the top entry settles the most
+    rows. `X-Total-Count` as on the clone-job error report."""
+    total, rows = connections.list_queue(
+        semantic_type=semantic_type.value if semantic_type is not None else None,
+        decided=None if status is None else status == "decided",
+        limit=max(1, min(limit, _MAX_QUEUE_PAGE_SIZE)),
+        offset=max(0, offset),
+    )
+    response.headers["X-Total-Count"] = str(total)
+    return [_queue_view(row) for row in rows]
+
+
+@router.get("/adjudication/queue/{key}", response_model=AdjudicationQueueEntry)
+def get_adjudication_entry(
+    key: str, connections: Annotated[PgPersistence, Depends(get_connections)]
+) -> AdjudicationQueueEntry:
+    row = connections.get_queue_entry(key)
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"No such queue entry: {key}")
+    return _queue_view(row, connections.list_verdicts(key))
+
+
+@router.post(
+    "/adjudication/queue/{key}/verdicts", response_model=AdjudicationVerdict, status_code=201
+)
+def post_adjudication_verdict(
+    key: str,
+    body: AdjudicationVerdictRequest,
+    connections: Annotated[PgPersistence, Depends(get_connections)],
+    dispatcher: Annotated[Dispatcher, Depends(get_dispatcher)],
+) -> AdjudicationVerdict:
+    """A verdict is stored only if the decided value normalizes cleanly in
+    the entry's own context — an answer that is itself ambiguous or
+    invalid would put a wrong value in every later run (Q16)."""
+    row = connections.get_queue_entry(key)
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"No such queue entry: {key}")
+    if adjudication.DECIDED_BY.fullmatch(body.decided_by) is None:
+        raise HTTPException(
+            status_code=422, detail="decided_by must be 'human:<id>' or 'agent:<id>'"
+        )
+    context = NormalizationContext.model_validate_json(row["context"])
+    if row["profile_version"] != SCAFFOLD_PROFILE.version:
+        raise HTTPException(
+            status_code=409,
+            detail="queue entry belongs to another profile version; it no longer applies",
+        )
+    result = dispatcher.normalize(
+        body.decided_value, context.semantic_type, context, SCAFFOLD_PROFILE
+    )
+    if result.normalization_status not in adjudication.CLEAN_STATUSES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"decided value normalizes to {result.normalization_status.value}, "
+            "not to a clean value; nothing stored",
+        )
+    verdict = {
+        "key": key,
+        "semantic_type": row["semantic_type"],
+        "context_hash": row["context_hash"],
+        "profile_version": row["profile_version"],
+        "decided_value": body.decided_value,
+        "decided_display": result.display,
+        "decided_by": body.decided_by,
+        "decided_at": dt.datetime.now(tz=dt.UTC).isoformat(),
+        "rationale": body.rationale,
+        "confidence": body.confidence,
+        "env_id": dispatcher.env_id,
+    }
+    connections.add_verdict(verdict)
+    return _verdict_view(verdict)

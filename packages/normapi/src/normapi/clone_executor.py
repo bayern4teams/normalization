@@ -46,6 +46,7 @@ from normio.connectors import (
 from normio.connectors._sql_base import SOURCE_READ_BATCH_ROWS
 
 from normapi import secrets
+from normapi.adjudication import Adjudication
 from normapi.scaffold_profile import SCAFFOLD_PROFILE
 from normcore import (
     CloneJobStatus,
@@ -460,12 +461,22 @@ def staging_name(table: str) -> str:
 HEARTBEAT_TIMEOUT_SECONDS = _env_seconds("NORM_CLONE_HEARTBEAT_TIMEOUT_SECONDS", 900)
 
 
-def _save_progress(persistence: PgPersistence, job_id: str, job: dict[str, Any]) -> None:
+def _save_progress(
+    persistence: PgPersistence,
+    job_id: str,
+    job: dict[str, Any],
+    queued: list[dict[str, Any]] | None = None,
+) -> None:
     """Persist progress and stamp the heartbeat in one step, so the two
     can never drift apart — a saved checkpoint with a stale timestamp
-    would read as a dead job that is in fact working."""
+    would read as a dead job that is in fact working. Adjudication queue
+    rows ride the same transaction (ADR-018): what a checkpoint covers is
+    exactly what has been counted."""
     job["heartbeat_at"] = dt.datetime.now(tz=dt.UTC).isoformat()
-    persistence.save_clone_job(job_id, job)
+    if queued:
+        persistence.save_clone_job_and_enqueue(job_id, job, queued)
+    else:
+        persistence.save_clone_job(job_id, job)
 
 
 def is_stale(job: Mapping[str, Any], *, now: dt.datetime | None = None) -> bool:
@@ -1064,6 +1075,7 @@ def _apply_column(
     country_is_derived: bool,
     stats: _ColumnStats,
     errors_buffer: list[dict[str, Any]],
+    adjudication: Adjudication | None = None,
 ) -> None:
     """Normalize one column across one chunk, in place.
 
@@ -1091,10 +1103,29 @@ def _apply_column(
         include_trace=False,
     )
     distinct_values = list({row[column] for _, row in pending if row[column] is not None})
+    # ADR-018 resolve stage: a value someone already decided is answered
+    # from its verdict and never dispatched.
+    adjudicated = (
+        adjudication.resolve(
+            distinct_values,
+            semantic_type=semantic_type,
+            context=ctx,
+            renormalize=lambda values: _normalize_distinct(
+                pool,
+                planner,
+                values,
+                semantic_type=semantic_type,
+                context=ctx,
+                profile=SCAFFOLD_PROFILE,
+            ),
+        )
+        if adjudication is not None
+        else {}
+    )
     by_value = _normalize_distinct(
         pool,
         planner,
-        distinct_values,
+        [v for v in distinct_values if v not in adjudicated],
         semantic_type=semantic_type,
         context=ctx,
         profile=SCAFFOLD_PROFILE,
@@ -1108,6 +1139,18 @@ def _apply_column(
             country=country,
         )
     _check_idempotent(by_value, pool=pool, planner=planner, ctx=ctx, stats=stats)
+    if adjudication is not None:
+        ambiguous = Counter(
+            row[column]
+            for _, row in pending
+            if row[column] is not None
+            and row[column] in by_value
+            and by_value[row[column]].normalization_status is NormalizationStatus.AMBIGUOUS
+        )
+        adjudication.collect(
+            {v: by_value[v] for v in ambiguous}, ambiguous, semantic_type=semantic_type, context=ctx
+        )
+    by_value.update(adjudicated)
     for offset, row in pending:
         original = row[column]
         if original is None:
@@ -1608,6 +1651,7 @@ def _normalize_chunk(
     seeded: Mapping[int, str],
     stats: dict[str, _ColumnStats],
     errors_buffer: list[dict[str, Any]],
+    adjudication: Adjudication | None = None,
 ) -> None:
     """Every configured column of one chunk, COUNTRY columns first.
 
@@ -1674,6 +1718,7 @@ def _normalize_chunk(
                 country_is_derived=derived,
                 stats=stats[column],
                 errors_buffer=errors_buffer,
+                adjudication=adjudication,
             )
 
 
@@ -1861,6 +1906,7 @@ def _normalize_table(
     progress: dict[str, Any],
     in_place: bool,
     entity_countries: Mapping[str, str],
+    adjudication: Adjudication | None = None,
 ) -> None:
     """One table, end to end: stream it, normalize every configured
     column, insert, checkpoint, and — in-place only — swap it in.
@@ -1928,6 +1974,7 @@ def _normalize_table(
             seeded=seeded,
             stats=stats,
             errors_buffer=errors_buffer,
+            adjudication=adjudication,
         )
 
         dest_rows = []
@@ -1945,7 +1992,9 @@ def _normalize_table(
         progress["checkpoints"][table] = checkpoint
         progress["rows_done"] += len(pending)
         job["progress"] = progress
-        _save_progress(persistence, job_id, job)
+        _save_progress(
+            persistence, job_id, job, adjudication.drain() if adjudication is not None else None
+        )
 
     # Before the swap, deliberately: a job that trips its own
     # max_new_null_rate ceiling in in-place mode must leave the ORIGINAL
@@ -2019,6 +2068,7 @@ def _run_phase2(
     tables_completed = set(progress["tables_completed"])
     in_place = job.get("in_place", False)
     entity_countries: dict[str, str] = {}
+    adjudication = Adjudication(persistence, SCAFFOLD_PROFILE)
 
     try:
         key_column = job.get("cross_table_entity_key") or None
@@ -2046,6 +2096,7 @@ def _run_phase2(
                 progress=progress,
                 in_place=in_place,
                 entity_countries=entity_countries,
+                adjudication=adjudication,
             )
             tables_completed.add(table)
             progress["tables_completed"] = sorted(tables_completed)
