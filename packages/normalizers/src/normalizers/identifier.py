@@ -2,10 +2,13 @@
 
 Architecture per §51: generic operations (Unicode-digit normalization,
 whitespace/case normalization) always apply; country-specific check-digit
-validation via `python-stdnum` applies only when `ctx.country` maps to a
-known module in `_STDNUM_REGISTRY` (a curated subset, not the full
-stdnum catalog — extend as new country/domain needs arise). There is no
-global regex (§51's explicit prohibition).
+validation via `python-stdnum` applies only to `TAX_ID` and only when the
+installed library has exactly one tax-identifier module for `ctx.country`
+(`tax_id_module_for`, discovered at run time from stdnum's own package
+listing and module titles — no hand-kept country table). Every other case
+is `unverifiable` (validation_status "UNKNOWN"), never a guessed verdict.
+`CODE` is canonicalized only and never reports a check-digit verdict.
+There is no global regex (§51's explicit prohibition).
 
 Two hard invariants, both mandatory golden tests:
 - Leading zeros are NEVER removed (§49): `"000123"` stays `"000123"`.
@@ -20,6 +23,9 @@ whether the two forms should actually be merged.
 
 from __future__ import annotations
 
+import functools
+import importlib
+import pkgutil
 import re
 import unicodedata
 import uuid as uuid_module
@@ -27,6 +33,7 @@ from typing import TYPE_CHECKING, Protocol
 
 import blake3
 import pyarrow as pa
+import stdnum
 from normcore.context import NormalizationContext
 from normcore.enums import (
     FieldSemanticType,
@@ -39,10 +46,6 @@ from normcore.models import NormalizedValue
 from normcore.pii import character_class_mask, content_hash
 from normcore.rules import ComponentVersionInfo, ExplanationText, ValidationOutcome
 from normcore.trace import TraceStep
-from stdnum.de import vat as de_vat
-from stdnum.fr import siren as fr_siren
-from stdnum.gb import vat as gb_vat
-from stdnum.us import ein as us_ein
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -60,17 +63,140 @@ class _StdnumModule(Protocol):
     def compact(self, value: str) -> str: ...
 
 
-# Curated country -> python-stdnum module registry (§51's
-# "country-specific" tier). A small, real, working subset — not the full
-# stdnum catalog (100+ country/domain modules) — extend as new countries
-# are actually needed, per the same evidence-driven policy as
-# normalizers/country_codes.py's alias table.
-_STDNUM_REGISTRY: dict[str, _StdnumModule] = {
-    "US": us_ein,
-    "GB": gb_vat,
-    "DE": de_vat,
-    "FR": fr_siren,
+# Which stdnum module is a country's *tax identifier* comes from stdnum's own
+# module titles (first docstring line, e.g. "NIF (Número de identificação
+# fiscal, Portuguese VAT number)."): a module is a tax-id candidate when its
+# title contains one of these words. Source: python-stdnum module titles,
+# which say "VAT number" or "tax number"/"Taxpayer ..." in English for every
+# fiscal identifier. This is the only hand-written table of the discovery.
+# ponytail: English title words only; a module whose title says neither is not
+# found (-> unverifiable). Ceiling: personal tax ids and VAT ids of one country
+# are both matched, so such a country has several candidates and is unverifiable.
+_TAX_ID_TITLE_TERMS = ("tax", "vat")
+_TAX_ID_TITLE_RE = re.compile(r"\b(?:" + "|".join(_TAX_ID_TITLE_TERMS) + r")", re.IGNORECASE)
+
+# Backward compatibility: the four countries this normalizer validated before
+# discovery existed keep exactly their old module (their titles match several
+# candidates, e.g. US ein/itin/ssn-style TINs), so their outputs stay unchanged.
+# Deferred alternative: drop this map once an authoritative per-country
+# "the" tax-id choice exists in stdnum itself.
+_LEGACY_TAX_ID_MODULE = {
+    "US": "stdnum.us.ein",
+    "GB": "stdnum.gb.vat",
+    "DE": "stdnum.de.vat",
+    "FR": "stdnum.fr.siren",
 }
+
+
+@functools.cache
+def _stdnum_country_packages() -> dict[str, str]:
+    """ISO-style country code -> stdnum package name, from stdnum's own package
+    listing (a trailing underscore marks a Python keyword, e.g. `in_`)."""
+    return {
+        m.name.rstrip("_").upper(): m.name
+        for m in pkgutil.iter_modules(stdnum.__path__)
+        if m.ispkg and len(m.name.rstrip("_")) == 2 and m.name.rstrip("_").isalpha()
+    }
+
+
+def _title(mod: object) -> str:
+    return (getattr(mod, "__doc__", None) or "").strip().partition("\n")[0]
+
+
+@functools.cache
+def _country_validators(package: str) -> tuple[str, ...]:
+    """Every module of one stdnum country package that has an `is_valid`."""
+    pkg = importlib.import_module(f"stdnum.{package}")
+    return tuple(
+        dotted
+        for sub in pkgutil.iter_modules(pkg.__path__)
+        if callable(
+            getattr(
+                importlib.import_module(dotted := f"{pkg.__name__}.{sub.name}"), "is_valid", None
+            )
+        )
+    )
+
+
+@functools.cache
+def tax_id_module_for(country: str | None) -> tuple[str | None, tuple[str, ...]]:
+    """(chosen stdnum module, candidate modules) for a country's tax id.
+
+    Chosen is None when zero or several stdnum modules claim to be the tax
+    identifier (`candidates` then lists the several, empty for zero) — never
+    the first match. Discovery runs once per country (cached), not per value.
+    """
+    package = _stdnum_country_packages().get((country or "").upper())
+    if package is None:
+        return None, ()
+    legacy = _LEGACY_TAX_ID_MODULE.get((country or "").upper())
+    if legacy is not None:
+        return legacy, (legacy,)
+    candidates = [
+        name
+        for name in _country_validators(package)
+        if _TAX_ID_TITLE_RE.search(_title(importlib.import_module(name)))
+    ]
+    return (candidates[0] if len(candidates) == 1 else None), tuple(candidates)
+
+
+def _sibling_acceptors(module_name: str, cleaned: str) -> list[str]:
+    """Other modules of the same stdnum country package that accept `cleaned`."""
+    package = module_name.split(".")[1]
+    accepting = []
+    for name in _country_validators(package):
+        if name == module_name:
+            continue
+        try:
+            if importlib.import_module(name).is_valid(cleaned):
+                accepting.append(name)
+        except Exception:  # a sibling that cannot run does not vote
+            continue
+    return accepting
+
+
+def _tax_id_verdict(
+    cleaned: str, country: str | None
+) -> tuple[bool | None, str | None, dict[str, object]]:
+    """(check_digit_valid, identifier_type, verification info) for a TAX_ID.
+
+    A verdict exists only when exactly one stdnum module applies and it ran;
+    otherwise the info dict says why it is unverifiable (never a guess)."""
+    cc = (country or "").upper()
+    module_name, candidates = tax_id_module_for(cc)
+    if module_name is None:
+        if not cc:
+            reason = "no country given"
+        elif candidates:
+            reason = "several tax-id validators for this country"
+        else:
+            reason = "no offline validator for this country"
+        info: dict[str, object] = {"verification": "unverifiable", "verification_reason": reason}
+        if candidates:
+            info["candidate_modules"] = list(candidates)
+        return None, None, info
+    module: _StdnumModule = importlib.import_module(module_name)
+    try:
+        if module.is_valid(cleaned):
+            return True, cc, {}
+        # A tax-id title match is not proof that this is the only fiscal id of
+        # the country: a number that another module of the same country accepts
+        # is not "invalid", it is merely not decidable here.
+        accepting = _sibling_acceptors(module_name, cleaned)
+        if accepting:
+            return (
+                None,
+                None,
+                {
+                    "verification": "unverifiable",
+                    "verification_reason": f"valid under another {cc} identifier",
+                    "candidate_modules": accepting,
+                },
+            )
+        return False, cc, {}
+    except Exception as exc:  # could not run the check: that is not "invalid"
+        reason = f"validator raised {type(exc).__name__}"
+        return None, None, {"verification": "unverifiable", "verification_reason": reason}
 
 
 class _StaticStepSpec:
@@ -110,29 +236,35 @@ class IdentifierNormalizer:
         if has_internal_separator:
             flags.append(QualityFlag.POTENTIAL_COLLISION)
 
-        check_digit_valid: bool | None = None
-        identifier_type: str | None = None
-        if ctx.semantic_type is FieldSemanticType.TAX_ID and ctx.country:
-            module = _STDNUM_REGISTRY.get(ctx.country.upper())
-            if module is not None:
-                identifier_type = ctx.country.upper()
-                try:
-                    check_digit_valid = module.is_valid(cleaned)
-                except Exception:
-                    check_digit_valid = False
-
         structured: dict[str, object] = {
             "cleaned": cleaned,
             "has_internal_separator": has_internal_separator,
-            "check_digit_valid": check_digit_valid,
-            "identifier_type": identifier_type,
         }
-
         status = NormalizationStatus.NORMALIZED
         confidence = 1.0
-        if check_digit_valid is False:
-            status = NormalizationStatus.INVALID
-            confidence = 0.3
+        if ctx.semantic_type is FieldSemanticType.CODE:
+            # Canonicalization only: a code carries no jurisdiction, so no
+            # check-digit verdict is made and the status says "not checked".
+            structured["verification"] = "not_applicable"
+            validation_status = "UNKNOWN"
+        else:
+            check_digit_valid, identifier_type, verification = (
+                _tax_id_verdict(cleaned, ctx.country)
+                if ctx.semantic_type is FieldSemanticType.TAX_ID
+                else (None, None, {})
+            )
+            structured |= {
+                "check_digit_valid": check_digit_valid,
+                "identifier_type": identifier_type,
+                **verification,
+            }
+            validation_status = "VALID"
+            if check_digit_valid is False:
+                status = NormalizationStatus.INVALID
+                confidence = 0.3
+                validation_status = "INVALID"
+            elif verification:
+                validation_status = "UNKNOWN"
 
         return NormalizedValue(
             original=value,
@@ -140,7 +272,7 @@ class IdentifierNormalizer:
             comparison=cleaned,
             search=cleaned,
             structured=structured,
-            validation_status="VALID" if check_digit_valid is not False else "INVALID",
+            validation_status=validation_status,
             normalization_status=status,
             confidence=confidence,
             flags=flags,
