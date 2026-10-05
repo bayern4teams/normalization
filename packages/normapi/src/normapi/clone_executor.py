@@ -173,8 +173,9 @@ _NEVER_INFERRED = frozenset({FieldSemanticType.FREE_TEXT, FieldSemanticType.UNKN
 # format — and configuring one is actively harmful, because a configured
 # column's destination type becomes TEXT unless it is one of the natively
 # typed NUMERIC/MONEY/BOOLEAN (normio.storage_types), so auto-detecting
-# `created_at` would silently downgrade a real timestamp column to a string. An operator can still force a semantic type onto any
-# column explicitly; this only governs what is inferred.
+# `created_at` would silently downgrade a real timestamp column to a string.
+# An operator can still force a semantic type onto any column explicitly;
+# this only governs what is inferred.
 #
 # An allow-list of substrings rather than a deny-list of typed names, so an
 # unrecognised type fails toward "leave it alone" instead of toward

@@ -3,7 +3,7 @@
 Overwrite this file at every commit. A fresh session reads it first, then
 [the plan](../DEFECTS_IMPLEMENTATION_PLAN.md). Git is the memory; a session's context is not.
 
-**Lock:** 2026-10-05T14:36:41Z · **Autonomy:** unattended-through-phase-5 · **Last heartbeat:** 2026-10-05T14:36:41Z
+**Lock:** 2026-10-05T14:39:47Z · **Autonomy:** unattended-through-phase-5 · **Last heartbeat:** 2026-10-05T14:39:47Z
 
 (Lock/heartbeat protocol: plan §7. A session sets `Lock: <ISO time>`, pushes it, and refreshes it at
 every commit; a lock older than 75 min is stale. `Autonomy` is `off`, `dryrun` (a tick only records
@@ -19,10 +19,10 @@ Only the user changes it.)
 | D7 | 1 | unverified-live | this commit | ACCEPT: verifier ACCEPT (60 acceptance+unit, 21 fail on 47df753; 86 stdnum pkgs hand-classified, no non-tax module chosen; 69 sibling-valid numbers UNKNOWN never INVALID); lead added the missing ponytail: ceilings; real numbers live-only |
 | D8 | 1 | accepted-cloud | this commit | ACCEPT: CODE canonical-only, no check-digit keys, validation_status UNKNOWN; IDENTIFIER unchanged |
 | D9 | 1 | accepted-cloud | this commit | ACCEPT: verifier ACCEPT (33 acceptance fail on 47df753; own PSL algorithm agrees on >15000 hosts; sockets blocked: no network); lead fixed `a b.com` getting a registrable domain (host char check + test) and added the ponytail: ceiling; MPL-2.0 accepted as a warning like certifi/hypothesis/pathspec |
-| D5 | 2 | todo | | |
+| D5 | 2 | in-progress | | stale comments fixed, ADR-020 written; code fix (engine-aware range check in coerce) waits for the D5 derive verifier |
 | D3 | 2 | todo | | |
-| D10 | 2 | todo | | |
-| D11 | 2 | todo | | |
+| D10 | 2 | in-progress | | derive verifier running |
+| D11 | 2 | in-progress | | derive verifier running |
 | D6 | 3 | todo | | |
 | D2 | 3 | todo | | |
 | D4 | 3 | todo | | |
@@ -64,6 +64,10 @@ Phase 2. Lane A (lead): D5 (prove the storage_types cast gate adversarially on b
 postgres_destination.py:25-44 comment, ADR-020, DATE decision per §9), then D3 (lineage). Lane B: D10 derive ->
 worker -> attack. Lane C: D11 derive -> worker -> attack (pyproject/uv.lock/env_fingerprint owned by D11 this phase).
 Start with the D10 and D11 derive verifiers (2 slots) while the lead does D5.
+D5 finding (lead): `storage_types.coerce` has no engine/precision, so a finite decimal wider than the column
+(`1e30` into CH `Decimal(38,9)`, `10^40` into MONEY `NUMERIC(38,4)`) passes the gate and reaches the INSERT
+(the Phase 0 LOCAL_VERIFY "D5 overflow" case). Fix: coerce checks integer digits against (p,s) parsed from the
+engine type string; the executor passes the engine. Waits for a free slot: D5 derive verifier first (§4).
 Expectations moved by D7 (lead's round-2 sibling rule): for the legacy four countries, 217 of 1260 verifier probes
 went INVALID -> UNKNOWN ("valid under another <CC> identifier"), DE 184 of them; TAX_ID without a classified
 country VALID -> UNKNOWN; CODE VALID -> UNKNOWN. No golden/clone test asserted these.
