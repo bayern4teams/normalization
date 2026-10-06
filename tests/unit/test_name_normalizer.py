@@ -286,3 +286,19 @@ def test_overlong_value_skips_beider_morse_but_keeps_other_keys() -> None:
     assert "beider_morse" in at_bound
     assert "beider_morse" not in beyond
     assert {"soundex", "double_metaphone"} <= set(beyond)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "semantic_type",
+    [FieldSemanticType.PERSON_NAME, FieldSemanticType.GIVEN_NAME, FieldSemanticType.FAMILY_NAME],
+)
+@pytest.mark.parametrize("value", ["\xad", "\x7f", " \u200b ", "\x00"])
+def test_a_name_that_cleans_to_nothing_is_missing(
+    normalizer: NameNormalizer, semantic_type: FieldSemanticType, value: str
+) -> None:
+    # '' as a value re-normalizes to missing: not idempotent (property test).
+    result = normalizer.normalize(
+        value, NormalizationContext(field_name="n", semantic_type=semantic_type)
+    )
+    assert (result.display, result.original_kind) == (None, MissingKind.EMPTY_STRING)

@@ -202,6 +202,10 @@ class NameNormalizer:
             raise NormalizerFailure(msg, operation="unicode_process") from exc
 
         cleaned = unicode_result.final_value
+        if cleaned.strip() == "":
+            # only invisible/control characters (a soft hyphen): same as "", or
+            # re-normalizing the '' display would disagree with this pass
+            return _missing(value, MissingKind.EMPTY_STRING, ctx)
         trace = build_unicode_trace(unicode_result, enabled=ctx.include_trace)
 
         if ctx.semantic_type in (FieldSemanticType.GIVEN_NAME, FieldSemanticType.FAMILY_NAME):
