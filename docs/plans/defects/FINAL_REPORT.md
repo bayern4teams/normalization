@@ -60,6 +60,23 @@ Colombia and D8's `CODE -> UNKNOWN`. Both come from accepted design, not a guess
 4. **DATE stays TEXT** (ADR-020; partial dates). Flagged in Phase 2, unchanged.
 5. **The findings below.** Each needs a go-ahead, because it is outside D1-D12.
 
+## Decisions taken (user, 2026-10-06, local close-out)
+
+- **Test memory cap (not a D item):** the capped CI command failed (1129 leaked DuckDB worker threads, 21.5 GB of
+  address space). Root cause and fix chosen by the user: `NormalizationCache` connects with DuckDB `threads=1`
+  (9bc9370), not `MALLOC_ARENA_MAX=2`; the command in CLAUDE.md is unchanged. Under the cap: 79 threads, 8.7 GB peak.
+- **D2 cost ratio:** R = 20 (emit only at >= 95.2% observed accuracy; Q16). Benchmarks also report R = 100 as a
+  sensitivity column. Still a report/benchmark parameter only; nothing in dispatch uses it.
+- **D4 wiring:** later, in the Part 3 architecture plan. Stays a library function on this branch.
+- **DATE storage (ADR-020):** keep the TEXT column and add typed companion bounds `<col>__from` / `<col>__to`
+  (first and last day of the stated period; equal for a full date), built in a follow-up plan that updates ADR-020
+  and D5. Not on this branch.
+- **Findings, fix now on this branch (TDD, separate commits):** (l) lone-surrogate segfault in ciso8601 via
+  `date.py`; (a) `03/2024` -> `2024-03-03`; COMPANY_NAME/PERSON_NAME property idempotency.
+- **Findings, deferred to a follow-up plan:** (b) `NA` in COUNTRY read as NOT_APPLICABLE (central dispatcher change,
+  every type); (d) `\x00` in TEXT columns (destination-writer policy: strip vs NULL + error row); (h) `url.py` https
+  guess at 0.8; (i) date M/d/y hand table (derive from CLDR).
+
 ## Findings outside D1-D12 (open escalations, verbatim from HANDOFF.md)
 
 - **D4 normalizer findings, outside D1-D12, for the user:** (j) the PHONE and CURRENCY validators answer
