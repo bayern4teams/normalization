@@ -722,8 +722,12 @@ def _added_lines() -> tuple[list[str], list[str]]:
     diff = _git("diff", "HEAD", "--unified=0", "--", *paths)
     added = [ln for ln in diff.splitlines() if ln.startswith("+") and not ln.startswith("+++")]
     files = [ln[6:] for ln in diff.splitlines() if ln.startswith("+++ b/")]
-    for f in _git("ls-files", "--others", "--exclude-standard", "--", *paths).split():
-        if f.endswith(".py"):
+    # The D6 files themselves are scanned whole (lead): once committed they leave `git diff HEAD`,
+    # and CI's shallow checkout has no base to diff against.
+    d6 = ["packages/normanalysis/src/normanalysis/gold.py", "packages/normcli/src/normcli/cli.py"]
+    untracked = _git("ls-files", "--others", "--exclude-standard", "--", *paths).split()
+    for f in dict.fromkeys([*d6, *untracked]):
+        if f.endswith(".py") and f not in files and (ROOT / f).exists():
             files.append(f)
             added += ["+" + ln for ln in (ROOT / f).read_text(encoding="utf-8").splitlines()]
     return added, files
