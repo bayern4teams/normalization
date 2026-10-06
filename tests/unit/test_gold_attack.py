@@ -147,7 +147,12 @@ class TestLabelsAreTrue:
             codes = set(meaning.get(c.input.casefold(), ()))
             if len(c.input) == 2 and c.input.isascii():
                 codes.add(c.input.upper())
-            assert c.expected_status == "NORMALIZED"  # no ambiguous country exists in 7 locales
+            if (
+                c.expected_status == "AMBIGUOUS"
+            ):  # lead: a missing-value token (NA) is both readings
+                assert codes == set(c.candidates), (c, codes)
+                continue
+            assert c.expected_status == "NORMALIZED"  # no ambiguous country name in 7 locales
             assert codes == {c.expected_value}, (c, codes)
 
     def test_email_truth_is_rfc5321_domain_lowercase_local_part_kept(self) -> None:
@@ -165,11 +170,6 @@ class TestLabelsAreTrue:
             u = urlsplit(c.input)
             assert c.expected_value == f"{u.scheme.lower()}://{u.netloc.lower()}{u.path}", c
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="CONFIRMED label defect: 'NA' (Namibia) is the classic missing-value token. The "
-        "text does not state a country, so truth NORMALIZED/NA punishes an engine that abstains",
-    )
     def test_no_country_case_collides_with_a_missing_value_token(self) -> None:
         tokens = {"na", "n/a", "nan", "none", "null", "nil"}
         bad = [
@@ -206,14 +206,17 @@ class TestClassifyMatrix:
                 "correct-abstain",
                 "wrong-confident",
                 "over-abstain",
+                "wrong-status",  # lead round 2: mirrors tests/defects/scorer.py
             }
 
     @pytest.mark.parametrize("status", NONCLEAN)
     @pytest.mark.parametrize("value", ["v", None])
-    def test_any_non_clean_answer_to_a_decidable_input_is_over_abstain(
+    def test_any_non_clean_answer_to_a_decidable_input_is_never_credited(
         self, status: str, value: str | None
     ) -> None:
-        assert classify(self._case("PARSED", "v"), status, value) == "over-abstain"
+        # lead round 2: AMBIGUOUS is the over-abstention; INVALID/FAILED/... are wrong-status
+        want = "over-abstain" if status == "AMBIGUOUS" else "wrong-status"
+        assert classify(self._case("PARSED", "v"), status, value) == want
 
     @pytest.mark.parametrize("status", CLEAN)
     def test_clean_answer_to_ambiguous_truth_is_wrong_confident_whatever_the_value(
@@ -226,23 +229,12 @@ class TestClassifyMatrix:
     def test_clean_status_without_a_value_is_wrong_confident(self, status: str) -> None:
         assert classify(self._case("PARSED", "v"), status, None) == "wrong-confident"
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="CONFIRMED: INVALID/FAILED on an AMBIGUOUS truth is credited correct-abstain. "
-        "tests/defects/scorer.py calls it wrong-status; a crash (FAILED) or a confident "
-        "'invalid' verdict on '1,234' is not a deliberate abstention",
-    )
     @pytest.mark.parametrize("status", ["INVALID", "FAILED"])
     def test_invalid_or_failed_is_not_credited_as_a_deliberate_abstention(
         self, status: str
     ) -> None:
         assert classify(self._case("AMBIGUOUS", None), status, None) != "correct-abstain"
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="CONFIRMED: GoldCase accepts a clean truth with expected_value None, and a "
-        "value-less clean answer then scores 'correct' (reachable via a short CSV row)",
-    )
     def test_a_clean_truth_without_a_value_is_rejected(self) -> None:
         with pytest.raises(ValueError):
             self._case("PARSED", None)
@@ -315,31 +307,16 @@ class TestLoader:
         p.write_bytes((_ROW + "\r\n" + _ROW + "\r\n").encode())
         assert len(load_cases(p)) == 2
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="CONFIRMED: an Excel-style UTF-8 BOM CSV fails with KeyError('dirty'); the header "
-        "is read as '\\ufeffdirty'. encoding='utf-8-sig' fixes it",
-    )
     def test_csv_with_a_utf8_bom(self, tmp_path: Path) -> None:
         p = tmp_path / "bom.csv"
         p.write_bytes(b"\xef\xbb\xbfdirty,clean\n1,2\n")
         assert load_cases(p, semantic_type="DATE")[0].input == "1"
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="CONFIRMED: a JSONL file with a BOM is rejected (JSONDecodeError)",
-    )
     def test_jsonl_with_a_utf8_bom(self, tmp_path: Path) -> None:
         p = tmp_path / "bom.jsonl"
         p.write_bytes(b"\xef\xbb\xbf" + _ROW.encode() + b"\n")
         assert len(load_cases(p)) == 1
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="CONFIRMED: dump_cases emits raw U+2028/U+2029/U+0085 (ensure_ascii=False) and "
-        "load_cases splits lines with str.splitlines(), so a case with such an input cannot "
-        "round-trip (JSONDecodeError)",
-    )
     @pytest.mark.parametrize("ch", ["\u2028", "\u2029", "\x85"])
     def test_round_trip_survives_unicode_line_separators(self, tmp_path: Path, ch: str) -> None:
         c = GoldCase("DATE", {}, f"a{ch}b", "PARSED", f"a{ch}b", (), "s")
@@ -354,11 +331,6 @@ class TestLoader:
         p.write_text(dump_cases([c]), encoding="utf-8")
         assert load_cases(p) == [c]
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="CONFIRMED: a short CSV row ('1' with no clean cell) loads as PARSED with "
-        "expected_value None, and a clean answer with value None then scores 'correct'",
-    )
     def test_short_csv_row_is_rejected_not_turned_into_a_none_truth(self, tmp_path: Path) -> None:
         p = tmp_path / "short.csv"
         p.write_text("dirty,clean\n1\n")
@@ -540,11 +512,6 @@ class TestCli:
             p.write_text("{nope\n")
         assert normcli_main(["gold", "score", str(p)]) == 2
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="CONFIRMED: `gold generate --out` into a missing directory is an uncaught "
-        "FileNotFoundError traceback (rc 1), unlike `gold score` which exits 2 with a message",
-    )
     def test_generate_to_a_missing_directory_exits_2_not_a_traceback(self, tmp_path: Path) -> None:
         assert normcli_main(["gold", "generate", "--out", str(tmp_path / "no" / "x.jsonl")]) == 2
 

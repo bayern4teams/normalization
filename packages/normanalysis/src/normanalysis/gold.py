@@ -1,7 +1,7 @@
 """Gold corpus: measure whether the engine is RIGHT, not only that it did not change (D6).
 
 Golden tests pin behaviour; they cannot say whether the pinned behaviour is correct. This module
-scores an engine against cases whose truth is known, in four outcome classes that a metric cannot
+scores an engine against cases whose truth is known, in outcome classes that a metric cannot
 game: guessing shows up as `wrong-confident`, refusing everything as `over-abstain`.
 
 * `GoldCase` / `load_cases` / `dump_cases`: the case schema, as JSONL, plus any dirty/clean CSV
@@ -43,7 +43,7 @@ from babel.numbers import format_decimal
 from normcore.context import NormalizationContext
 from normcore.enums import FieldSemanticType, NormalizationStatus
 
-OUTCOMES = ("correct", "correct-abstain", "wrong-confident", "over-abstain")
+OUTCOMES = ("correct", "correct-abstain", "wrong-confident", "over-abstain", "wrong-status")
 
 # Statuses where the engine emitted a value and stands behind it. Mirrors
 # tests/defects/scorer.py: AMBIGUOUS is the abstention, everything else is neither clean nor a
@@ -81,6 +81,8 @@ class GoldCase:
             raise ValueError(f"unknown expected_status {self.expected_status!r}")
         if unknown := set(self.context) - set(NormalizationContext.model_fields):
             raise ValueError(f"unknown context field(s) {sorted(unknown)}")
+        if NormalizationStatus[self.expected_status] in _CLEAN and self.expected_value is None:
+            raise ValueError(f"{self.expected_status} truth needs an expected_value")
 
 
 @dataclass
@@ -92,20 +94,24 @@ class GoldReport:
 
 
 def classify(case: GoldCase, status: str, value: str | None) -> str:
-    """Four classes. A non-clean, non-AMBIGUOUS answer to a decidable input (INVALID, FAILED...)
-    is counted as `over-abstain`: no value was delivered where one existed."""
+    """Five classes, the same as tests/defects/scorer.py. `wrong-status` is an answer that is
+    neither a value nor the AMBIGUOUS abstention (INVALID, FAILED, PARTIAL, NEEDS_REVIEW) where the
+    truth is a value or AMBIGUOUS, or neither INVALID nor a value where the truth is INVALID: a
+    crash or an "invalid" verdict is never credited as a deliberate abstention."""
     truth = NormalizationStatus[case.expected_status]
-    clean = NormalizationStatus(status) in _CLEAN
+    answer = NormalizationStatus(status)
     if truth in _CLEAN:
-        if not clean:
-            return "over-abstain"
-        return "correct" if value == case.expected_value else "wrong-confident"
+        if answer in _CLEAN:
+            return "correct" if value == case.expected_value else "wrong-confident"
+        return "over-abstain" if answer is _AMBIGUOUS else "wrong-status"
     if truth is _AMBIGUOUS:
-        return "wrong-confident" if clean else "correct-abstain"
-    # expected INVALID (or any other non-clean truth): the engine must not emit a value
-    if clean:
+        if answer in _CLEAN:
+            return "wrong-confident"
+        return "correct-abstain" if answer is _AMBIGUOUS else "wrong-status"
+    # expected INVALID (or any other non-clean truth): the engine must say so, not emit a value
+    if answer in _CLEAN:
         return "wrong-confident"
-    return "correct" if NormalizationStatus(status) is _INVALID else "over-abstain"
+    return "correct" if answer is _INVALID else "wrong-status"
 
 
 def score(cases: Iterable[GoldCase], engine: Engine) -> GoldReport:
@@ -176,18 +182,21 @@ def load_cases(path: str | Path, semantic_type: str | None = None) -> list[GoldC
     path = Path(path)
     if path.suffix.lower() != ".csv":
         cases = []
-        for line in path.read_text(encoding="utf-8").splitlines():
+        # split on "\n" only: str.splitlines() also cuts at U+2028/U+2029/U+0085, which JSON allows
+        for line in path.read_text(encoding="utf-8-sig").split("\n"):
             if line.strip():
                 row = json.loads(line)
                 cases.append(GoldCase(**{**row, "candidates": tuple(row.get("candidates", ()))}))
         return cases
-    with path.open(newline="", encoding="utf-8") as f:
+    with path.open(newline="", encoding="utf-8-sig") as f:
         rows = list(csv.DictReader(f))
     cases = []
     for n, row in enumerate(rows, start=2):  # line 1 is the header
         sem = row.get("semantic_type") or semantic_type
         if not sem:
             raise ValueError(f"{path}: no semantic_type column and none given")
+        if row.get("dirty") is None or row.get("clean") is None:
+            raise ValueError(f"{path}:{n}: row has no dirty or no clean cell")
         cases.append(
             GoldCase(sem, {}, row["dirty"], "PARSED", row["clean"], (), f"csv:{path.name}:{n}")
         )
@@ -500,4 +509,31 @@ def generate_corpus(seed: int, n_per_injector: int) -> list[GoldCase]:
     for name, inject in _INJECTORS.items():
         rng = random.Random(f"{seed}/{name}")
         cases += [inject(rng, i) for i in range(n_per_injector)]
-    return [replace(c, source=f"{c.source} seed={seed}") for c in cases]
+    missing = _missing_value_tokens()
+    return [_label(c, seed, missing) for c in cases]
+
+
+@cache
+def _missing_value_tokens() -> frozenset[str]:
+    """The engine's own missing-value table (the dictionary the Dispatcher loads), casefolded."""
+    # Lazy: normapi imports normanalysis (a top-level import would be a cycle).
+    from normalizers.generic_text import load_missing_value_sentinels  # noqa: PLC0415
+    from normapi.app import _DEFAULT_DICTIONARIES_DIR  # noqa: PLC0415
+
+    from normdict import DictionaryLoader  # noqa: PLC0415
+
+    return frozenset(load_missing_value_sentinels(DictionaryLoader(_DEFAULT_DICTIONARIES_DIR)))
+
+
+def _label(case: GoldCase, seed: int, missing: frozenset[str]) -> GoldCase:
+    """Stamp provenance. A text that is also a missing-value token (the code NA, say) states no
+    value, so the truth is AMBIGUOUS between the injector's value and 'missing'."""
+    case = replace(case, source=f"{case.source} seed={seed}")
+    if case.input.strip().casefold() in missing and case.expected_value is not None:
+        return replace(
+            case,
+            expected_status="AMBIGUOUS",
+            expected_value=None,
+            candidates=(case.expected_value,),
+        )
+    return case

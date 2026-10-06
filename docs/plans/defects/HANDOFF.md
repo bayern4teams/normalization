@@ -3,7 +3,7 @@
 Overwrite this file at every commit. A fresh session reads it first, then
 [the plan](../DEFECTS_IMPLEMENTATION_PLAN.md). Git is the memory; a session's context is not.
 
-**Lock:** 2026-10-06T00:52:37Z · **Autonomy:** unattended-through-phase-5 · **Last heartbeat:** 2026-10-06T00:52:37Z
+**Lock:** 2026-10-06T00:57:40Z · **Autonomy:** unattended-through-phase-5 · **Last heartbeat:** 2026-10-06T00:57:40Z
 
 (Lock/heartbeat protocol: plan §7. A session sets `Lock: <ISO time>`, pushes it, and refreshes it at
 every commit; a lock older than 75 min is stale. `Autonomy` is `off`, `dryrun` (a tick only records
@@ -23,7 +23,7 @@ Only the user changes it.)
 | D3 | 2 | unverified-live | this commit | ACCEPT after round 2: verifier REJECTed (a store error or crash between checkpoint and COMPLETE stranded a run; a failing FAIL write masked the real error); lead fixed both (resume closes the open run with its runId; `TableRun.fail` logs instead of raising), plus START-first tie-break and no companion for a vanished base. 54/54 incl. 18 attack cases (46 fail on the parent). START/COMPLETE writes fail closed (Q13), forwarding best effort. Known: a hanging collector costs 2x5 s per table (ponytail:), no event for a failure before the first table. Postgres DDL + Marquez live-only |
 | D10 | 2 | accepted-cloud | this commit | ACCEPT after round 2: verifier ACCEPT (95 tests fail on main; 4548 inputs x 4 contexts: 0 extension-free diffs; 12,740 fixed-point cases); lead rejected residuals (tel: ext dropped beside isub/phone-context; non-ASCII ext digits), worker fixed both, the verifier's strict xfails for them now pass; `x45 x46` is a ponytail: ceiling. Accepted over-abstain: regionless `tel:+<cc>` without ext stays AMBIGUOUS |
 | D11 | 2 | accepted-cloud | this commit | ACCEPT after round 2: lead sent back the BMPM regex reading (faithful to Commons Codec, 131/131 vs jar); verifier ACCEPT (181 fail on 805190b; 0 diffs vs the Java encoder on 7250 inputs; gen_* files byte-identical to commons-codec 1.17.1; env_id moves on a rule edit; 143/170 pairs vs 124 any-key / 119 Soundex; 22 different-name pairs never collide). Verifier F1 (super-linear cost on long values) fixed by lead: no beider_morse beyond 255 chars (ponytail: measured bound) + test. Disclosed: distinct surnames share more codes (any-key 1785 vs 1320 of 798k pairs: Jean/Zhang, Khan/Chan); keys are match candidates, not identity |
-| D6 | 3 | todo | | |
+| D6 | 3 | unverified-live | this commit | ACCEPT after round 2: verifier REJECTed (COUNTRY `NA` labelled Namibia though it is a missing token; INVALID/FAILED credited as abstention; BOM, U+2028 and short-row loader bugs; `--out` traceback); worker fixed all; lead: missing-value-table inputs get an AMBIGUOUS truth (general rule, no `NA` check), 5th class `wrong-status` mirrors tests/defects/scorer.py, no 2-digit year from `yyyy` patterns, §2.4 scan reads the D6 files whole (history-free). 14,400 labels re-derived independently: 0 wrong; κ/α vs independent code on 3000 cases; byte-identical across PYTHONHASHSEED. Real engine (seed 0, n 30): 142/21/11/6/0. BART/Raha live-only |
 | D2 | 3 | todo | | |
 | D4 | 3 | todo | | |
 
@@ -84,6 +84,12 @@ Start with the D6 and D4 derive verifiers (2 slots). `cli.py` is shared by D6 an
   Graphs refreshed by `scripts/cloud_setup.sh` (graft was missing from PATH at tick start; the script installed it).
 
 ## Open escalations (worker/verifier results that passed only written tests or one case)
+- **D6 engine findings, outside D1-D12, for the user:** (h) `url.py` assumes `https` for a bare host at
+  confidence 0.8: under "never guess" a stated-no-scheme input is AMBIGUOUS; it is 10 of the 11 wrong-confident
+  cases on the seed-0 corpus (66 of 72 at n 200), so the gold numbers are quoted with and without that kind.
+  (i) the date normalizer's day/month order comes from a hand table (`_MDY_COUNTRIES = {"US"}`) while CLDR has
+  34 M/d/y locales: `ee-GH` short dates are read day-first (a confident wrong answer). (c) above (day == month
+  abstains) shows up as all 6 over-abstains.
 - **Outside D1-D12, for the user (Phase 0 fixtures):** (a) `03/2024` normalizes to `2024-03-03` — a day is
   invented from a month-year (violates "precision is preserved, never invented"); (b) `NA` in a COUNTRY column
   is read as NOT_APPLICABLE by the `missing-values.common` dictionary (40/40 Namibia rows), the never-guess

@@ -72,3 +72,16 @@ destination is created. Never run these against the production metadata database
 - **D1 on real Postgres:** `ensure_schema()` creates `normalization_adjudication_queue` and
   `normalization_adjudication_verdicts`; the upsert's `ON CONFLICT ... DO UPDATE` with the `AS q` alias was
   exercised on SQLite only.
+
+### D6 — gold corpus (`normanalysis/gold.py`, `normcli gold`)
+- Why cloud could not verify: BART is a Java tool that needs Postgres; the six Raha datasets are external
+  downloads. The cloud proved the scorer, loader, injectors and κ/α on synthetic and published data only.
+- Command: merge each Raha dataset's `dirty.csv`/`clean.csv` into one `dirty,clean` CSV per column (one
+  semantic type each), then `uv run normcli gold score <file.csv> --semantic-type <TYPE>`; for BART, export
+  its dirty/clean pair the same way. Seeded corpus: `normcli gold generate --seed 0 --n 30 --out g.jsonl &&
+  normcli gold score g.jsonl`.
+- Independent check: the per-case `wrong-confident` lines the command prints, spot-checked by hand.
+- Expected evidence: cloud baseline on `generate --seed 0 --n 30` (180 cases): correct 142, correct-abstain
+  21, wrong-confident 11 (10 are bare-host URLs: url.py assumes https), over-abstain 6 (day == month dates),
+  wrong-status 0. Report Raha counts with and without the URL bare-host kind.
+- Result (filled in locally):

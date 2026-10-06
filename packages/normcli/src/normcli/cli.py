@@ -67,7 +67,12 @@ def _run_gold(args: argparse.Namespace) -> int:
     )
 
     if args.gold_command == "generate":
-        args.out.write_bytes(dump_cases(generate_corpus(args.seed, args.n)).encode("utf-8"))
+        corpus = dump_cases(generate_corpus(args.seed, args.n))
+        try:  # a missing directory is reported, not created
+            args.out.write_bytes(corpus.encode("utf-8"))
+        except OSError as exc:
+            print(f"gold generate: cannot write {args.out}: {exc!r}", file=sys.stderr)
+            return 2
         return 0
     try:
         cases = load_cases(args.path, semantic_type=args.semantic_type)
@@ -81,7 +86,7 @@ def _run_gold(args: argparse.Namespace) -> int:
     for case, outcome, (status, value, _) in zip(
         cases, report.outcomes, report.answers, strict=True
     ):
-        if outcome in {"wrong-confident", "over-abstain"}:
+        if outcome in {"wrong-confident", "over-abstain", "wrong-status"}:
             print(
                 f"  {outcome}: {case.semantic_type} {case.input!r} {case.context or ''} "
                 f"expected {case.expected_status} {case.expected_value!r}, got {status} {value!r}"
