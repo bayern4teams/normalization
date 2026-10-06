@@ -9,6 +9,7 @@ ran.
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -52,7 +53,48 @@ def _build_parser() -> argparse.ArgumentParser:
     score_parser.add_argument("path", type=Path)
     score_parser.add_argument("--semantic-type", help="for a dirty/clean CSV without a type column")
 
+    calibrate_parser = subparsers.add_parser(
+        "calibrate",
+        help="Reliability, ECE, Chow threshold and risk-coverage of the engine on a gold corpus",
+    )
+    calibrate_parser.add_argument("path", type=Path)
+    calibrate_parser.add_argument(
+        "--cost-ratio",
+        type=float,
+        required=True,
+        help="cost of a wrong emitted value over the cost of an abstention (no default: state it)",
+    )
+    calibrate_parser.add_argument("--semantic-type", help="for a dirty/clean CSV without a type")
+    calibrate_parser.add_argument("--out-json", type=Path)
+    calibrate_parser.add_argument("--out-md", type=Path)
+
     return parser
+
+
+def _run_calibrate(args: argparse.Namespace) -> int:
+    from normanalysis.calibration import report  # noqa: PLC0415
+    from normanalysis.gold import default_engine, load_cases, score  # noqa: PLC0415
+
+    if not args.cost_ratio > 0:
+        print(f"calibrate: --cost-ratio must be positive, got {args.cost_ratio}", file=sys.stderr)
+        return 2
+    try:
+        cases = load_cases(args.path, semantic_type=args.semantic_type)
+    except (OSError, ValueError, TypeError, KeyError) as exc:
+        print(f"calibrate: cannot read {args.path}: {exc!r}", file=sys.stderr)
+        return 2
+    scored = score(cases, default_engine)
+    data, md = report(scored.pairs, cost_ratio=args.cost_ratio, groups=scored.pair_types)
+    try:
+        if args.out_json:
+            args.out_json.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+        if args.out_md:
+            args.out_md.write_text(md, encoding="utf-8")
+    except OSError as exc:
+        print(f"calibrate: cannot write the report: {exc!r}", file=sys.stderr)
+        return 2
+    print(md, end="")
+    return 0
 
 
 def _run_gold(args: argparse.Namespace) -> int:
@@ -123,6 +165,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "gold":
         return _run_gold(args)
+
+    if args.command == "calibrate":
+        return _run_calibrate(args)
 
     parser.error(f"unknown command: {args.command}")
     return 2

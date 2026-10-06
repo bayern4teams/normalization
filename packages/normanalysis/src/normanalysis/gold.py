@@ -91,6 +91,7 @@ class GoldReport:
     outcomes: list[str]  # per case, in input order
     pairs: list[tuple[float, bool]]  # (stated confidence, correct), non-abstaining answers only
     answers: list[Answer] = field(default_factory=list)  # what the engine said, in input order
+    pair_types: list[str] = field(default_factory=list)  # semantic type of each pair (D2 groups)
 
 
 def classify(case: GoldCase, status: str, value: str | None) -> str:
@@ -124,6 +125,7 @@ def score(cases: Iterable[GoldCase], engine: Engine) -> GoldReport:
         report.answers.append((status, value, confidence))
         if NormalizationStatus(status) in _CLEAN and confidence is not None:
             report.pairs.append((float(confidence), outcome == "correct"))
+            report.pair_types.append(case.semantic_type)
     return report
 
 
