@@ -43,6 +43,16 @@ DATABASE` rights are required by the app itself.
   it against the repo's demo containers or your own real database
 - [`docs/adr/ADR-017-clone-normalize-engine-scope.md`](docs/adr/ADR-017-clone-normalize-engine-scope.md) — why MySQL/Mongo/File are documentation-only for now
 - [`docs/verification/clone-normalize-verification-pack.md`](docs/verification/clone-normalize-verification-pack.md) — evidence it works
+- [`docs/adr/ADR-018-abstention-and-adjudication.md`](docs/adr/ADR-018-abstention-and-adjudication.md),
+  [`ADR-019`](docs/adr/ADR-019-confidence-calibration.md),
+  [`ADR-020`](docs/adr/ADR-020-typed-destination.md) — the review queue for
+  ambiguous values, confidence calibration, and typed destination columns
+  (improvement-report D1-D12; plan and status in `docs/plans/`)
+
+Measuring accuracy (D6/D2): `uv run python -m normcli gold generate --seed 0
+--n 30 --out corpus.jsonl`, then `normcli gold score corpus.jsonl` and
+`normcli calibrate corpus.jsonl --cost-ratio <R>` (the cost of a wrong value
+over an abstention has no default: state it).
 
 Requires `NORM_SECRET_KEY` (see `.env.example`) to encrypt saved
 connection passwords at rest.

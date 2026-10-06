@@ -122,3 +122,22 @@ convention:
   are run-level/dataset-level outputs (§77-§80), not per-`NormalizedValue`
   fields; they land with `normanalysis`'s M6 profiling/impact/collision
   subsystem.
+
+## 9. Additions from the improvement-report defects (D1-D12, 2026-10)
+
+Plan: `docs/plans/DEFECTS_IMPLEMENTATION_PLAN.md`; state per item: `docs/plans/defects/HANDOFF.md`.
+
+| item | where | contract change |
+|---|---|---|
+| D1, D12 | `normalization_status`, ADR-018 | `AMBIGUOUS` values are queued for human adjudication; a verdict resolves later runs. `NEEDS_REVIEW` is produced only when an adjudicated value now normalizes differently than when its verdict was given |
+| D7 | TAX_ID `validation_status` (`VALID` / `INVALID` / `UNKNOWN`), `structured.verification` (`unverifiable` or, for CODE, `not_applicable`), `structured.verification_reason` | the stdnum module is discovered from python-stdnum per country. A number no offline validator can decide (unlisted country, no country, several candidate modules, or valid under a sibling module) has `verification` `unverifiable` and `validation_status` `UNKNOWN`, never `VALID` or `INVALID` |
+| D8 | CODE | CODE is its own normalizer: canonical form only, no check-digit verdict (`check_digit_valid` absent, `verification` `not_applicable`), `validation_status` `UNKNOWN` |
+| D9 | URL `structured.registrable_domain`, `public_suffix`, `is_private_suffix`, `registrable_domain_reason` | computed from the bundled Public Suffix List; `None` with a reason for IPs, `localhost` and bare suffixes |
+| D10 | PHONE `comparison`, `structured.rfc3966` | with an extension, `comparison` is the RFC 3966 URI (`tel:+1-415-555-2671;ext=45`), so numbers that differ only by extension no longer compare equal; without one it stays the E.164 string. `search` is always the extension-free E.164 |
+| D11 | PERSON_NAME `structured.phonetic`, `phonetic_status`, `script` | Latin names add `double_metaphone` and `beider_morse` (lists of alternative codes) to the legacy four keys. Cyrillic and Arabic/Persian names get `phonetic_status = "not_applicable"` and only the two language-aware keys. Other scripts get no key |
+| D5 | destination columns, ADR-020 | NUMERIC/MONEY/BOOLEAN are typed; a value the column cannot hold (incl. more integer digits than its precision) is NULL with an error row, never an INSERT failure; DATE/DATETIME stay TEXT (partial dates) |
+| D3 | `GET /clone-jobs/{job_id}/lineage` | OpenLineage START/COMPLETE/FAIL events per clone job and table, with the columnLineage facet |
+
+Analysis-only, not part of the per-value contract: `normanalysis.gold` (D6: gold corpus and scorer,
+`normcli gold`), `normanalysis.calibration` (D2: reliability, Chow threshold, risk-coverage; `normcli calibrate`,
+ADR-019), `normanalysis.disguised_missing` (D4: per-value disguised-missing candidates; never rewrites data).

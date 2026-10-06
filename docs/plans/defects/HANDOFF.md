@@ -3,7 +3,7 @@
 Overwrite this file at every commit. A fresh session reads it first, then
 [the plan](../DEFECTS_IMPLEMENTATION_PLAN.md). Git is the memory; a session's context is not.
 
-**Lock:** 2026-10-06T02:15:53Z · **Autonomy:** unattended-through-phase-5 · **Last heartbeat:** 2026-10-06T02:15:53Z
+**Lock:** 2026-10-06T02:18:54Z · **Autonomy:** unattended-through-phase-5 · **Last heartbeat:** 2026-10-06T02:18:54Z
 
 (Lock/heartbeat protocol: plan §7. A session sets `Lock: <ISO time>`, pushes it, and refreshes it at
 every commit; a lock older than 75 min is stale. `Autonomy` is `off`, `dryrun` (a tick only records
@@ -113,7 +113,9 @@ F1-F7 (add, do not rewrite). Then the phase gate.
   readings are the same date (over-abstain); (d) `\x00` passes into TEXT columns for 22 untyped types and
   Postgres rejects NUL. None is fixed in this plan (scope); each needs the user's go-ahead.
 - **Outside D1-D12, for the user:** `tests/property/test_idempotency_determinism.py::test_every_semantic_type_converges_in_one_pass[COMPANY_NAME]`
-  fails (Hypothesis finds soft hyphen `\xad` -> `''` -> None, so pass 2 differs). It fails with this branch's Phase 1 changes
+  fails (Hypothesis finds soft hyphen `\xad` -> `''` -> None, so pass 2 differs). Phase 4: `[PERSON_NAME]` fails the same way
+  (`'\x7f'` -> `''` -> None); reproduced with the pre-D11 `name.py` (805190b), so not caused by D11. Every other
+  semantic type converges, and determinism/display-fixed-point/never-raises pass. It fails with this branch's Phase 1 changes
   stashed too, no name/company normalizer is touched here, and `ci-fast` does not select `-m property`, so it does not
   block the gate. (e) D9 verifier: a unicode IDN with a trailing dot (`https://例え.jp.`) abstains with "not valid IDNA",
   because `_normalize_host` IDNA-encodes the empty last label; this predates D9. (f) D10: a regionless `tel:+<cc>`
