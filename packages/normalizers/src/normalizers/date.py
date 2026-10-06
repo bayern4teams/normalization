@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import re
 from functools import lru_cache
+from itertools import permutations
 from typing import TYPE_CHECKING
 
 import blake3
@@ -48,6 +49,7 @@ from normcore.trace import TraceStep
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+    from datetime import datetime
 
     from normcore.interfaces import ComponentVersion, Explanation, StepSpec, ValidationResult
 
@@ -113,6 +115,47 @@ _SKELETON_RE = re.compile(r"^(\d{4})(?:[-/.](\d{1,2})(?:[-/.](\d{1,2}))?)?")
 # and separators only. `1982-XX-XX` qualifies, `1982-01-15 09:00` does not.
 _UNKNOWN_TAIL_RE = re.compile(r"^[-/.\s*?#xXnN_]*$")
 
+_TIME_OF_DAY_RE = re.compile(r"\d{1,2}:\d{2}(?::\d{2}(?:[.,]\d+)?)?")
+_DIGITS_RE = re.compile(r"\d+")
+_LETTER_RE = re.compile(r"[^\W\d_]")
+_PRECISIONS = ("day", "month", "year")
+
+
+def _stated_precision(text: str, parsed: datetime, claimed: str) -> str | None:
+    """The finest precision, at most `claimed`, whose components `text`
+    states: the year and the day each as a number of their own, the month
+    as a number or a word. Parsers reuse one number twice (`03/2024` ->
+    2024-03-03) or fill gaps from today's date; neither is stated. None
+    when a number in the text is no component at all (`13/2024`)."""
+    date_part = _TIME_OF_DAY_RE.sub(" ", text)
+    numbers = [n for n in _DIGITS_RE.findall(date_part) if n.strip("0")]
+    if any(len(n) > 4 for n in numbers):
+        # ponytail: compact digits (`03032024`) are not split into components,
+        # the parser is trusted; split by length if one is found inventing.
+        return claimed
+    has_word = _LETTER_RE.search(date_part) is not None
+
+    def year(n: str) -> bool:
+        return int(n) == parsed.year or (len(n) == 2 and int(n) == parsed.year % 100)
+
+    def month(n: str) -> bool:
+        return int(n) == parsed.month
+
+    def day(n: str) -> bool:
+        return int(n) == parsed.day
+
+    for precision in _PRECISIONS[_PRECISIONS.index(claimed) :]:
+        needed = {"day": [year, month, day], "month": [year, month], "year": [year]}[precision]
+        options = [needed, [p for p in needed if p is not month]] if has_word else [needed]
+        for parts in options:
+            if len(parts) == len(numbers) and any(
+                all(p(n) for p, n in zip(parts, order, strict=True))
+                for order in permutations(numbers)
+            ):
+                return precision
+    return None
+
+
 _PARTIAL_PARSER_SETTINGS: dict[str, object] = {
     "STRICT_PARSING": False,
     # Without this a bare month name ("March") silently resolves against
@@ -170,9 +213,15 @@ def _parse_partial(candidate: str, date_order: str | None) -> tuple[str, str] | 
     except (ValueError, TypeError, OverflowError, RecursionError):
         return None
     parsed, period = data.date_obj, data.period
-    if parsed is None or period not in ("year", "month", "day"):
+    if (
+        parsed is None
+        or period not in ("year", "month", "day")
+        or not _year_is_supported(parsed.year, candidate)
+    ):
         return None
-    if not _year_is_supported(parsed.year, candidate):
+    # Non-strict parsing fills what the text lacks from today's date.
+    period = _stated_precision(candidate, parsed, period)
+    if period is None:
         return None
     if period == "year":
         return f"{parsed.year:04d}", "year"
@@ -391,7 +440,11 @@ class DateNormalizer:
             settings["DATE_ORDER"] = date_order
         parsed = dateparser.parse(cleaned, settings=settings)
 
-        if parsed is None or not _year_is_supported(parsed.year, cleaned):
+        if (
+            parsed is None
+            or not _year_is_supported(parsed.year, cleaned)
+            or _stated_precision(cleaned, parsed, "day") != "day"
+        ):
             return _normalize_partial(value, cleaned, ctx, date_order) or _invalid(value, ctx)
 
         iso = parsed.isoformat() if keep_time else parsed.date().isoformat()
@@ -505,13 +558,13 @@ def _try_iso_fast_path(value: str, *, keep_time: bool = False) -> tuple[str, str
         parsed = ciso8601.parse_datetime(value)
     except (ValueError, IndexError):
         return None
-    if keep_time:
-        return parsed.isoformat(), "time"
     match = _ISO_PRECISION_RE.match(value)
     if match is not None and match.group(2) is None:
         return f"{parsed.year:04d}", "year"
     if match is not None and match.group(3) is None:
         return f"{parsed.year:04d}-{parsed.month:02d}", "month"
+    if keep_time:
+        return parsed.isoformat(), "time"
     return parsed.date().isoformat(), "day"
 
 
