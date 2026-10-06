@@ -3,14 +3,14 @@
 Overwrite this file at every commit. A fresh session reads it first, then
 [the plan](../DEFECTS_IMPLEMENTATION_PLAN.md). Git is the memory; a session's context is not.
 
-**Lock:** 2026-10-06T02:18:54Z · **Autonomy:** unattended-through-phase-5 · **Last heartbeat:** 2026-10-06T02:18:54Z
+**Lock:** 2026-10-06T02:23:06Z · **Autonomy:** unattended-through-phase-5 · **Last heartbeat:** 2026-10-06T02:23:06Z
 
 (Lock/heartbeat protocol: plan §7. A session sets `Lock: <ISO time>`, pushes it, and refreshes it at
 every commit; a lock older than 75 min is stale. `Autonomy` is `off`, `dryrun` (a tick only records
 what works and exits) or `unattended-through-phase-N` (authorises the supervisor to chain phases).
 Only the user changes it.)
 
-**Branch:** `feat/defects-fixes` · **Current phase:** 4
+**Branch:** `feat/defects-fixes` · **Current phase:** 5
 
 | item | phase | state | commit | lead verdict |
 |---|---|---|---|---|
@@ -60,14 +60,10 @@ Derived 2026-10-05 from `graphify affected <file>` and `graft callers <sym> --de
 - Phase 3: worker D6 → lead D2; worker D4.
 
 ## Next action
-Phase 4 (lead): re-measure and harden. (1) Run the D6 harness (`normcli gold generate/score`) and the D2 report
-(`normcli calibrate`, state the cost ratio used) on the engine as it is now; write AFTER numbers next to the Phase 0
-BEFORE numbers (PHASE0_REPORT.md §4, `.handoff/before_phase1.txt`, `.handoff/before_phase23.txt`,
-`tests/defects/measure_*`) in `defects/PHASE4_REPORT.md`. (2) Property idempotency tests for every normalizer a lane
-changed (identifier, url, phone, name), in batches (`pytest -m property tests/property/...`). (3) Docs for changed
-behaviour: data contract, ADR index (ADR-018/019/020), README, dependency inventory, traceability-matrix row.
-(4) A short "implementation status" note on `docs/improvement-report.md`'s status line pointing at the plan and
-F1-F7 (add, do not rewrite). Then the phase gate.
+Phase 5 (lead): the four CI commands green; `/ponytail-review` over the whole branch diff (`git diff main...HEAD --
+packages`), `/ponytail-audit` (paired with graph tiers: graphify/graft find the unreferenced, the audit decides),
+`/ponytail-debt`, `/ponytail-gain`; every HANDOFF row has a lead verdict (it does); finalise LOCAL_VERIFY.md; fold
+`.handoff/` verdicts into `defects/FINAL_REPORT.md`, then purge `.handoff/`; `[Defects D1-D12 COMPLETE]`. Stop. Never merge.
 
 ## Notifications
 (append `[PHASE n DONE]`, `[BLOCKED]`, `[Defects D1-D12 COMPLETE]` entries here; the same prefixes go in commit messages)
@@ -91,6 +87,12 @@ F1-F7 (add, do not rewrite). Then the phase gate.
   (run 37399689894). ponytail-review of `b74d54b..HEAD -- packages`: `dataclasses.asdict` replaced a hand-written
   bin copy (-8 lines); two lazy loads of the missing-value table and a 4-line CLI load block kept (2 callers each).
   ptype failed D4's feasibility gate (`.handoff/D4.feasibility.md`): no dependency change this phase.
+
+- [PHASE 4 DONE] 2026-10-06: PHASE4_REPORT.md (after next to before; the 5 Phase 0 bars still unmet are D7 CO
+  and D8 CODE-UNKNOWN, both accepted design, explained there), property idempotency for the changed normalizers
+  (only the pre-existing COMPANY_NAME/PERSON_NAME empty-string case fails), docs (data contract §9, traceability
+  rows, README, report status). Gate: CI pytest 2809 passed / 23 skipped / 6 xfailed, `ci-fast` green on a820488;
+  ponytail-review: no code in the phase diff (docs only).
 
 ## Open escalations (worker/verifier results that passed only written tests or one case)
 - **D4 normalizer findings, outside D1-D12, for the user:** (j) the PHONE and CURRENCY validators answer
