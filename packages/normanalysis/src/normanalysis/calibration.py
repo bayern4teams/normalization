@@ -21,7 +21,7 @@ from __future__ import annotations
 import math
 from bisect import bisect_right
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from itertools import groupby, pairwise
 from typing import Any
 
@@ -176,16 +176,6 @@ def risk_coverage(pairs: Pairs) -> tuple[list[tuple[float, float]], float | None
     return points[::-1], area / n
 
 
-def _bin_json(b: Bin) -> dict[str, Any]:
-    return {
-        "lo": b.lo,
-        "hi": b.hi,
-        "count": b.count,
-        "mean_confidence": b.mean_confidence,
-        "accuracy": b.accuracy,
-    }
-
-
 def report(
     pairs: Pairs,
     *,
@@ -203,8 +193,8 @@ def report(
         "cost_ratio": cost_ratio,
         "ece": rel.ece,
         "ece_tolerance": ece_tolerance(len(pairs), k) if pairs else None,
-        "bins": [_bin_json(b) for b in rel.bins],
-        "overconfident_bins": [_bin_json(b) for b in rel.overconfident_bins],
+        "bins": [asdict(b) for b in rel.bins],
+        "overconfident_bins": [asdict(b) for b in rel.overconfident_bins],
         # JSON has no infinity: abstain-on-everything is a flag, not a number
         "threshold": None if t is None or math.isinf(t) else t,
         "abstain_on_everything": t is not None and math.isinf(t),
@@ -214,7 +204,7 @@ def report(
             label: {
                 "n": sum(b.count for b in g.bins),
                 "ece": g.ece,
-                "overconfident_bins": [_bin_json(b) for b in g.overconfident_bins],
+                "overconfident_bins": [asdict(b) for b in g.overconfident_bins],
             }
             for label, g in rel.groups.items()
         },
