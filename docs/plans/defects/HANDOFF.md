@@ -3,14 +3,14 @@
 Overwrite this file at every commit. A fresh session reads it first, then
 [the plan](../DEFECTS_IMPLEMENTATION_PLAN.md). Git is the memory; a session's context is not.
 
-**Lock:** 2026-10-06T00:17:12Z · **Autonomy:** unattended-through-phase-5 · **Last heartbeat:** 2026-10-06T00:17:12Z
+**Lock:** 2026-10-06T00:22:41Z · **Autonomy:** unattended-through-phase-5 · **Last heartbeat:** 2026-10-06T00:22:41Z
 
 (Lock/heartbeat protocol: plan §7. A session sets `Lock: <ISO time>`, pushes it, and refreshes it at
 every commit; a lock older than 75 min is stale. `Autonomy` is `off`, `dryrun` (a tick only records
 what works and exits) or `unattended-through-phase-N` (authorises the supervisor to chain phases).
 Only the user changes it.)
 
-**Branch:** `feat/defects-fixes` · **Current phase:** 2
+**Branch:** `feat/defects-fixes` · **Current phase:** 3
 
 | item | phase | state | commit | lead verdict |
 |---|---|---|---|---|
@@ -60,17 +60,11 @@ Derived 2026-10-05 from `graphify affected <file>` and `graft callers <sym> --de
 - Phase 3: worker D6 → lead D2; worker D4.
 
 ## Next action
-Phase 2. Lane A (lead): D5 (prove the storage_types cast gate adversarially on both engines, fix the stale
-postgres_destination.py:25-44 comment, ADR-020, DATE decision per §9), then D3 (lineage). Lane B: D10 derive ->
-worker -> attack. Lane C: D11 derive -> worker -> attack (pyproject/uv.lock/env_fingerprint owned by D11 this phase).
-Start with the D10 and D11 derive verifiers (2 slots) while the lead does D5.
-D5 finding (lead): `storage_types.coerce` has no engine/precision, so a finite decimal wider than the column
-(`1e30` into CH `Decimal(38,9)`, `10^40` into MONEY `NUMERIC(38,4)`) passes the gate and reaches the INSERT
-(the Phase 0 LOCAL_VERIFY "D5 overflow" case). Fix: coerce checks integer digits against (p,s) parsed from the
-engine type string; the executor passes the engine. Waits for a free slot: D5 derive verifier first (§4).
-Expectations moved by D7 (lead's round-2 sibling rule): for the legacy four countries, 217 of 1260 verifier probes
-went INVALID -> UNKNOWN ("valid under another <CC> identifier"), DE 184 of them; TAX_ID without a classified
-country VALID -> UNKNOWN; CODE VALID -> UNKNOWN. No golden/clone test asserted these.
+Phase 3. Lane A: D6 derive verifier -> worker (`normanalysis/gold.py`, `tests/gold/`, `normcli/cli.py`,
+`tests/unit/test_gold_*.py`) -> attack -> lead line-by-line review; then lead D2 (needs D6's
+`(stated confidence, correct)` pairs). Lane C: D4 feasibility gate (`ptype` install/licence/determinism) then
+derive -> worker -> attack (`pyproject.toml`/`uv.lock`/`env_fingerprint.py` owned by D4 this phase).
+Start with the D6 and D4 derive verifiers (2 slots). `cli.py` is shared by D6 and D2: serial.
 
 ## Notifications
 (append `[PHASE n DONE]`, `[BLOCKED]`, `[Defects D1-D12 COMPLETE]` entries here; the same prefixes go in commit messages)
@@ -82,6 +76,12 @@ country VALID -> UNKNOWN; CODE VALID -> UNKNOWN. No golden/clone test asserted t
   in CI's shallow checkout; made history-free. ponytail-review of `git diff e6fa923 -- packages`: 3 deliberate keeps
   (title-term tuple is the named source; `_save_progress` else-branch keeps the old write; optional `adjudication`
   param used by direct-call tests), net -4 lines possible, none taken.
+
+- [PHASE 2 DONE] 2026-10-06: D5, D3 (unverified-live), D10, D11 (accepted-cloud) decided.
+  Gate: ruff/format/mypy clean, CI pytest 2476 passed / 23 skipped / 2 xfailed, `ci-fast` green on a09ff1c
+  (run 37393201033; same tree as 76ca1ce, whose run 37367530536 never got a runner). ponytail-review of the
+  phase diff (`a42c3d2..76ca1ce -- packages`): dropped the unbounded per-name Beider-Morse cache, one-line `_unquote`.
+  Graphs refreshed by `scripts/cloud_setup.sh` (graft was missing from PATH at tick start; the script installed it).
 
 ## Open escalations (worker/verifier results that passed only written tests or one case)
 - **Outside D1-D12, for the user (Phase 0 fixtures):** (a) `03/2024` normalizes to `2024-03-03` — a day is
