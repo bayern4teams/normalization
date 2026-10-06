@@ -686,8 +686,6 @@ class TestNeverGuess:
         _, out, _ = env.run(data, {"d": "DATE"})
         assert out == old  # the resolve stage never touches a clean value
         assert env.queue() == []  # clean values are not questions
-        if case.id == "prec-month-year" and out[0]["d"] != case.expected_value:
-            pytest.xfail("pre-existing date normalizer fills in a day for 03/2024 (not D1)")
         assert out[0]["d"] == case.expected_value  # no month or day filled in
 
     def test_a_clean_value_equal_to_a_verdict_target_is_untouched(self, env: _Env) -> None:
