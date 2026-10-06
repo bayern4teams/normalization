@@ -3,14 +3,14 @@
 Overwrite this file at every commit. A fresh session reads it first, then
 [the plan](../DEFECTS_IMPLEMENTATION_PLAN.md). Git is the memory; a session's context is not.
 
-**Lock:** 2026-10-06T01:32:09Z · **Autonomy:** unattended-through-phase-5 · **Last heartbeat:** 2026-10-06T01:32:09Z
+**Lock:** 2026-10-06T02:13:15Z · **Autonomy:** unattended-through-phase-5 · **Last heartbeat:** 2026-10-06T02:13:15Z
 
 (Lock/heartbeat protocol: plan §7. A session sets `Lock: <ISO time>`, pushes it, and refreshes it at
 every commit; a lock older than 75 min is stale. `Autonomy` is `off`, `dryrun` (a tick only records
 what works and exits) or `unattended-through-phase-N` (authorises the supervisor to chain phases).
 Only the user changes it.)
 
-**Branch:** `feat/defects-fixes` · **Current phase:** 3
+**Branch:** `feat/defects-fixes` · **Current phase:** 4
 
 | item | phase | state | commit | lead verdict |
 |---|---|---|---|---|
@@ -60,11 +60,14 @@ Derived 2026-10-05 from `graphify affected <file>` and `graft callers <sym> --de
 - Phase 3: worker D6 → lead D2; worker D4.
 
 ## Next action
-Phase 3. Lane A: D6 derive verifier -> worker (`normanalysis/gold.py`, `tests/gold/`, `normcli/cli.py`,
-`tests/unit/test_gold_*.py`) -> attack -> lead line-by-line review; then lead D2 (needs D6's
-`(stated confidence, correct)` pairs). Lane C: D4 feasibility gate (`ptype` install/licence/determinism) then
-derive -> worker -> attack (`pyproject.toml`/`uv.lock`/`env_fingerprint.py` owned by D4 this phase).
-Start with the D6 and D4 derive verifiers (2 slots). `cli.py` is shared by D6 and D2: serial.
+Phase 4 (lead): re-measure and harden. (1) Run the D6 harness (`normcli gold generate/score`) and the D2 report
+(`normcli calibrate`, state the cost ratio used) on the engine as it is now; write AFTER numbers next to the Phase 0
+BEFORE numbers (PHASE0_REPORT.md §4, `.handoff/before_phase1.txt`, `.handoff/before_phase23.txt`,
+`tests/defects/measure_*`) in `defects/PHASE4_REPORT.md`. (2) Property idempotency tests for every normalizer a lane
+changed (identifier, url, phone, name), in batches (`pytest -m property tests/property/...`). (3) Docs for changed
+behaviour: data contract, ADR index (ADR-018/019/020), README, dependency inventory, traceability-matrix row.
+(4) A short "implementation status" note on `docs/improvement-report.md`'s status line pointing at the plan and
+F1-F7 (add, do not rewrite). Then the phase gate.
 
 ## Notifications
 (append `[PHASE n DONE]`, `[BLOCKED]`, `[Defects D1-D12 COMPLETE]` entries here; the same prefixes go in commit messages)
@@ -82,6 +85,12 @@ Start with the D6 and D4 derive verifiers (2 slots). `cli.py` is shared by D6 an
   (run 37393201033; same tree as 76ca1ce, whose run 37367530536 never got a runner). ponytail-review of the
   phase diff (`a42c3d2..76ca1ce -- packages`): dropped the unbounded per-name Beider-Morse cache, one-line `_unquote`.
   Graphs refreshed by `scripts/cloud_setup.sh` (graft was missing from PATH at tick start; the script installed it).
+
+- [PHASE 3 DONE] 2026-10-06: D6, D2, D4 decided (all unverified-live: BART/Raha, labelled data, a real table).
+  Gate: ruff/format/mypy clean, CI pytest 2809 passed / 23 skipped / 6 xfailed, `ci-fast` green on c75e24d
+  (run 37399689894). ponytail-review of `b74d54b..HEAD -- packages`: `dataclasses.asdict` replaced a hand-written
+  bin copy (-8 lines); two lazy loads of the missing-value table and a 4-line CLI load block kept (2 callers each).
+  ptype failed D4's feasibility gate (`.handoff/D4.feasibility.md`): no dependency change this phase.
 
 ## Open escalations (worker/verifier results that passed only written tests or one case)
 - **D4 normalizer findings, outside D1-D12, for the user:** (j) the PHONE and CURRENCY validators answer
