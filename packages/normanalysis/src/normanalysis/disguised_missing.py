@@ -11,16 +11,21 @@ A distinct value is reported when all of these hold:
 - the column's type has a validator that can say no (the same
   `_discriminates` probe `type_detection` uses; FREE_TEXT and UNKNOWN have
   none, so they abstain, a validator that cannot say no is no evidence);
-- the real normalizer's `validate` rejects it, so `NA` in a COUNTRY column
-  (Namibia) or a year-only DATE is valid and never reported;
-- it recurs (seen more than once): a disguised null is a value somebody
-  typed over and over, a value seen once is noise or a typo, not a sentinel;
+- the real normalizer's `validate` rejects it with a definitive verdict (not
+  AMBIGUOUS or UNKNOWN: a day/month-ambiguous date needs a locale, it is not
+  missing; such cells count on neither side of the minority rule), so `NA` in
+  a COUNTRY column (Namibia) or a year-only DATE is valid and never reported;
+- it recurs (seen more than once) as part of a small set: the recurring
+  failing values are no more numerous than the spellings of a missing value in the
+  project's missing-value table. A larger set is dirty data, not disguised
+  nulls, and then only the values that table names are reported;
 - the failing cells are a minority of the column: if as many cells fail as
   conform, the type is wrong and no cell is "the odd one out".
 
+Results are *candidates* for a person to confirm, never a rewrite.
 `hint` comes from the shared `missing-values.common` dictionary, the same
 table the Dispatcher applies; it is a hint, not a verdict, and `None` when a
-value is not in it.
+value is not in it ("not in the table", not "known to be missing").
 """
 
 from __future__ import annotations
@@ -39,6 +44,10 @@ if TYPE_CHECKING:
 
     from normcore.dispatch import NormalizerRegistry
 
+# ponytail: ceiling, every distinct value is validated once, and a failing value
+# can cost 10-400 ms in DateNormalizer (100k distinct failing dates = hours).
+# Upgrade path: validate a sample of distinct values, or fix the date slow path.
+
 # ponytail: numeric magic numbers (-999, 9999) are out of reach here. A bare
 # number is a valid number to every validator, so telling a magic number from
 # data needs a column-level model of the numeric distribution. The upgrade
@@ -46,8 +55,18 @@ if TYPE_CHECKING:
 # it supports pandas 3 / greenery 4 (feasibility gate: `.handoff/D4.feasibility.md`).
 
 
+# Verdict statuses that mean "cannot decide", not "does not conform"; derived
+# from the status strings the validators return (see dispatch._VALIDATION_SEVERITY).
+_UNDECIDED = frozenset({"AMBIGUOUS", "UNKNOWN"})
+
+
 @dataclass(frozen=True)
 class DisguisedMissing:
+    """A CANDIDATE disguised-missing value, never a verdict. `hint` is the
+    `MissingKind` the shared dictionary gives it; `None` means "not in the
+    missing-value table", NOT "known missing": the value merely fails the
+    column's validator and recurs (a malformed date or e-mail lands here too)."""
+
     value: str
     count: int
     hint: MissingKind | None
@@ -90,24 +109,34 @@ def detect_disguised_missing(
     if not _discriminates(normalizer, ctx):
         return []
 
-    valid_cells = failing_cells = 0
+    # AMBIGUOUS / UNKNOWN ("needs context", never guess) are neither failing
+    # nor valid: excluded from the minority rule and from the mean below.
+    valid_counts: list[int] = []
+    failing_cells = 0
     failing: dict[str, int] = {}
     for value, count in value_counts.items():
         if count <= 0 or not isinstance(value, str):
             continue
-        if normalizer.validate(value, ctx).is_valid:
-            valid_cells += count
-        else:
+        verdict = normalizer.validate(value, ctx)
+        if verdict.is_valid:
+            valid_counts.append(count)
+        elif verdict.status not in _UNDECIDED:
             failing[value] = count
             failing_cells += count
-    if failing_cells >= valid_cells:
+    if not valid_counts or failing_cells >= sum(valid_counts):
         return []
-    return [
-        DisguisedMissing(
-            value,
-            count,
-            MissingKind(kind) if (kind := sentinels.get(value.strip().casefold())) else None,
-        )
-        for value, count in sorted(failing.items(), key=lambda kv: (-kv[1], kv[0]))
-        if count > 1
-    ]
+    # "Recurs as a small set": the recurring failing values are candidates when there are no more
+    # of them than the missing-value table has spellings of a missing value (no column holds more
+    # ways to write it than the project's own table knows). More than that is dirty data, not
+    # disguised nulls, and only the values the table names are reported.
+    # ponytail: the table's size is the bound; a frequency model (ptype) is the upgrade path.
+    recurring = sorted(
+        ((v, c) for v, c in failing.items() if c > 1), key=lambda kv: (-kv[1], kv[0])
+    )
+    small_set = len(recurring) <= len(sentinels)
+    out = []
+    for value, count in recurring:
+        kind = sentinels.get(value.strip().casefold())
+        if kind or small_set:
+            out.append(DisguisedMissing(value, count, MissingKind(kind) if kind else None))
+    return out

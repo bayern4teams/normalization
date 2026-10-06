@@ -3,7 +3,7 @@
 Overwrite this file at every commit. A fresh session reads it first, then
 [the plan](../DEFECTS_IMPLEMENTATION_PLAN.md). Git is the memory; a session's context is not.
 
-**Lock:** 2026-10-06T01:19:29Z · **Autonomy:** unattended-through-phase-5 · **Last heartbeat:** 2026-10-06T01:19:29Z
+**Lock:** 2026-10-06T01:28:25Z · **Autonomy:** unattended-through-phase-5 · **Last heartbeat:** 2026-10-06T01:28:25Z
 
 (Lock/heartbeat protocol: plan §7. A session sets `Lock: <ISO time>`, pushes it, and refreshes it at
 every commit; a lock older than 75 min is stale. `Autonomy` is `off`, `dryrun` (a tick only records
@@ -25,7 +25,7 @@ Only the user changes it.)
 | D11 | 2 | accepted-cloud | this commit | ACCEPT after round 2: lead sent back the BMPM regex reading (faithful to Commons Codec, 131/131 vs jar); verifier ACCEPT (181 fail on 805190b; 0 diffs vs the Java encoder on 7250 inputs; gen_* files byte-identical to commons-codec 1.17.1; env_id moves on a rule edit; 143/170 pairs vs 124 any-key / 119 Soundex; 22 different-name pairs never collide). Verifier F1 (super-linear cost on long values) fixed by lead: no beider_morse beyond 255 chars (ponytail: measured bound) + test. Disclosed: distinct surnames share more codes (any-key 1785 vs 1320 of 798k pairs: Jean/Zhang, Khan/Chan); keys are match candidates, not identity |
 | D6 | 3 | unverified-live | this commit | ACCEPT after round 2: verifier REJECTed (COUNTRY `NA` labelled Namibia though it is a missing token; INVALID/FAILED credited as abstention; BOM, U+2028 and short-row loader bugs; `--out` traceback); worker fixed all; lead: missing-value-table inputs get an AMBIGUOUS truth (general rule, no `NA` check), 5th class `wrong-status` mirrors tests/defects/scorer.py, no 2-digit year from `yyyy` patterns, §2.4 scan reads the D6 files whole (history-free). 14,400 labels re-derived independently: 0 wrong; κ/α vs independent code on 3000 cases; byte-identical across PYTHONHASHSEED. Real engine (seed 0, n 30): 142/21/11/6/0. BART/Raha live-only |
 | D2 | 3 | unverified-live | this commit | ACCEPT after round 2 (lead implemented): verifier REJECTed 3 input gaps (cost ratio inf -> silent abstain-all + non-JSON `Infinity`; NaN bin edge; bool confidence) + O(n x groups) grouping; lead fixed all, 5 strict xfails flipped. Math held: calibrated predictor over tolerance 0/400 runs (7 laws, n 20..5000), bin false-flag <= 0.5%; Chow == exact brute force on 6000 cases incl. ties/abstain-all, monotone; AURC == average over all tie orders (1e-12); attack kills 7 mutants the acceptance missed. ADR-019 states independence, per-group 5% and that the tolerance (~4x real ECE) cannot certify calibration. 61 `confidence=` sites unchanged, not wired into dispatch. Real labelled data live-only |
-| D4 | 3 | todo | | |
+| D4 | 3 | unverified-live | this commit | ACCEPT after round 2 (lead finished it): ptype failed the feasibility gate (greenery 4 / pandas 3 incompatible, 311 MB) -> native detector. Verifier REJECTed: AMBIGUOUS dates reported, no "small set" bound, hint-None over-claim. Worker applied the lead's first small-set rule (mean valid count), which broke recall on categorical columns (21 tests); lead replaced it: only definitive INVALID verdicts count; recurring failing values are candidates when no more numerous than the spellings in the missing-value table (17), else only table-named ones. Recall: 12 planted sentinels at 1-5% across 6 types, exact counts; Namibia NA, year-only dates, 0/-1 never reported; 300 recurring junk strings not reported; column-type snapshot identical, type_detection untouched. 4 strict xfails = pre-existing normalizer findings (j, k, l). Live GROUP BY compare live-only |
 
 States: `todo` · `in-progress` · `accepted-cloud` (lead accepted, cloud-verifiable parts proven)
 · `unverified-live` (accepted but needs the real environment — see LOCAL_VERIFY.md) · `blocked`.
@@ -84,6 +84,13 @@ Start with the D6 and D4 derive verifiers (2 slots). `cli.py` is shared by D6 an
   Graphs refreshed by `scripts/cloud_setup.sh` (graft was missing from PATH at tick start; the script installed it).
 
 ## Open escalations (worker/verifier results that passed only written tests or one case)
+- **D4 normalizer findings, outside D1-D12, for the user:** (j) the PHONE and CURRENCY validators answer
+  AMBIGUOUS (never INVALID) for any non-matching text such as `N/A` or `TBD`, so the never-guess D4 detector
+  cannot report sentinels in those columns (strict xfails in `test_disguised_missing_attack.py`); with a
+  region PHONE does say INVALID. (k) `DateNormalizer.validate` costs 10-430 ms per FAILING value (dateparser
+  slow path): 100k distinct failing dates = hours (`ponytail:` ceiling in `disguised_missing.py`). (l) a
+  lone-surrogate string (`"\ud800"`) SEGFAULTS the interpreter in ciso8601 via `date.py` `_try_iso_fast_path`;
+  any path that hands such a string to the date normalizer (clone included) can kill the process.
 - **D6 engine findings, outside D1-D12, for the user:** (h) `url.py` assumes `https` for a bare host at
   confidence 0.8: under "never guess" a stated-no-scheme input is AMBIGUOUS; it is 10 of the 11 wrong-confident
   cases on the seed-0 corpus (66 of 72 at n 200), so the gold numbers are quoted with and without that kind.

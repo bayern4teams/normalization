@@ -96,3 +96,14 @@ destination is created. Never run these against the production metadata database
   ECE 0.072, flagged bin [0.8, 0.9) = URL bare-host (stated ~0.82, observed 0.31), threshold 0.85 at R = 5.
   Live: which literal-1.0 sites sit in a flagged bin.
 - Result (filled in locally):
+
+### D4 — disguised missing data (`normanalysis/disguised_missing.py`)
+- Why cloud could not verify: no real table; recall/precision measured on planted columns of authoritative
+  valid values only.
+- Command: for a typed column, `SELECT value, count(*) FROM t GROUP BY value` into a dict, then
+  `detect_disguised_missing(counts, "<TYPE>", NormalizationContext(field_name=..., semantic_type=..., country=...))`.
+- Independent check: the same `GROUP BY`, reading the values that are not of the type by eye.
+- Expected evidence: before, nothing at cell level. After, the sentinels (`N/A`, `-`, `unknown`, ...) with their
+  exact `GROUP BY` counts; `NA` in a country column is not reported; PHONE/CURRENCY columns without a region
+  report nothing (escalation j).
+- Result (filled in locally):
