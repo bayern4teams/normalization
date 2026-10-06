@@ -72,6 +72,11 @@ destination is created. Never run these against the production metadata database
 - **D1 on real Postgres:** `ensure_schema()` creates `normalization_adjudication_queue` and
   `normalization_adjudication_verdicts`; the upsert's `ON CONFLICT ... DO UPDATE` with the `AS q` alias was
   exercised on SQLite only.
+- **D1, NUL and lone surrogates in the queue (from the D1 verdict):** an AMBIGUOUS phone or money value containing
+  `\x00` must reach `normalization_adjudication_queue.original` on real Postgres (which rejects NUL in text) without
+  aborting the chunk; only SQLite was run.
+- **D10 / D11 persistence (accepted-cloud, live check optional):** a real clone keeps `structured["rfc3966"]` and the
+  new `phonetic` keys in the destination; the integration tests need the Postgres container.
 
 ### D6 — gold corpus (`normanalysis/gold.py`, `normcli gold`)
 - Why cloud could not verify: BART is a Java tool that needs Postgres; the six Raha datasets are external

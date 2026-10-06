@@ -13,7 +13,8 @@ is observed from outside:
   with raw SQL and decoded by introspection (the column layout is not assumed),
 * from the destination fake: the columns a table really received.
 
-What is assumed of the implementation is listed in `.handoff/D3.acceptance.md`.
+What is assumed of the implementation is listed in `.handoff/D3.acceptance.md`
+(git history: `git log -- .handoff/`).
 
 Payloads are validated against the OpenLineage JSON Schemas vendored under
 `tests/defects/openlineage_spec/` (core spec 2-0-2 plus the facet schemas, Apache

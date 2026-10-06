@@ -3,7 +3,7 @@
 Derived from docs/plans/DEFECTS_IMPLEMENTATION_PLAN.md section 9 D11 *Accept*, section 2.4, and
 docs/improvement-report.md D11 + Part 2 "Names, multi-script", not from the implementation.
 
-Target contract (field names are part of the spec; see .handoff/D11.acceptance.md):
+Target contract (field names are part of the spec; see .handoff/D11.acceptance.md in git history):
 
 * `structured["phonetic"]` (dict, already exists) holds the four legacy keys `soundex`, `nysiis`,
   `metaphone`, `match_rating_codex` ONLY for Latin-script input, and may additionally hold the

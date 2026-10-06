@@ -52,7 +52,7 @@ if TYPE_CHECKING:
 # number is a valid number to every validator, so telling a magic number from
 # data needs a column-level model of the numeric distribution. The upgrade
 # path is `ptype` (column type inference with missing/anomalous classes) once
-# it supports pandas 3 / greenery 4 (feasibility gate: `.handoff/D4.feasibility.md`).
+# it supports pandas 3 / greenery 4 (feasibility gate: `docs/plans/defects/FINAL_REPORT.md`, F6).
 
 
 # Verdict statuses that mean "cannot decide", not "does not conform"; derived

@@ -5,7 +5,8 @@ lead's finding: `coerce(semantic_type, value)` knew nothing about the engine or 
 precision/scale, so a finite decimal wider than the column passed the gate and reached INSERT,
 where one rejected row aborts the chunk and the error rows with it (decision #8).
 
-Assumed API (see .handoff/D5.acceptance.md): `coerce(semantic_type, value, engine="postgres")`.
+Assumed API (see .handoff/D5.acceptance.md in git history):
+`coerce(semantic_type, value, engine="postgres")`.
 The helpers below pass `engine` only if `coerce` / `_apply_value` / `_apply_column` accept it,
 so on today's code the failures are the real overflow failures and not a TypeError wall.
 
