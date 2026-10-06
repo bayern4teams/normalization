@@ -3,14 +3,14 @@
 Overwrite this file at every commit. A fresh session reads it first, then
 [the plan](../DEFECTS_IMPLEMENTATION_PLAN.md). Git is the memory; a session's context is not.
 
-**Lock:** 2026-10-06T02:29:35Z · **Autonomy:** unattended-through-phase-5 · **Last heartbeat:** 2026-10-06T02:29:35Z
+**Lock:** none · **Autonomy:** unattended-through-phase-5 · **Last heartbeat:** 2026-10-06T02:29:35Z
 
 (Lock/heartbeat protocol: plan §7. A session sets `Lock: <ISO time>`, pushes it, and refreshes it at
 every commit; a lock older than 75 min is stale. `Autonomy` is `off`, `dryrun` (a tick only records
 what works and exits) or `unattended-through-phase-N` (authorises the supervisor to chain phases).
 Only the user changes it.)
 
-**Branch:** `feat/defects-fixes` · **Current phase:** 5
+**Branch:** `feat/defects-fixes` · **Current phase:** done
 
 | item | phase | state | commit | lead verdict |
 |---|---|---|---|---|
@@ -60,10 +60,8 @@ Derived 2026-10-05 from `graphify affected <file>` and `graft callers <sym> --de
 - Phase 3: worker D6 → lead D2; worker D4.
 
 ## Next action
-Phase 5 (lead): the four CI commands green; `/ponytail-review` over the whole branch diff (`git diff main...HEAD --
-packages`), `/ponytail-audit` (paired with graph tiers: graphify/graft find the unreferenced, the audit decides),
-`/ponytail-debt`, `/ponytail-gain`; every HANDOFF row has a lead verdict (it does); finalise LOCAL_VERIFY.md; fold
-`.handoff/` verdicts into `defects/FINAL_REPORT.md`, then purge `.handoff/`; `[Defects D1-D12 COMPLETE]`. Stop. Never merge.
+Defects D1-D12 complete - waiting for the user. Read `defects/FINAL_REPORT.md` ("Decisions for the user"), run the
+live checks in `defects/LOCAL_VERIFY.md`, then merge `feat/defects-fixes` yourself (the supervisor never merges).
 
 ## Notifications
 (append `[PHASE n DONE]`, `[BLOCKED]`, `[Defects D1-D12 COMPLETE]` entries here; the same prefixes go in commit messages)
@@ -93,6 +91,12 @@ packages`), `/ponytail-audit` (paired with graph tiers: graphify/graft find the 
   (only the pre-existing COMPANY_NAME/PERSON_NAME empty-string case fails), docs (data contract §9, traceability
   rows, README, report status). Gate: CI pytest 2809 passed / 23 skipped / 6 xfailed, `ci-fast` green on a820488;
   ponytail-review: no code in the phase diff (docs only).
+
+- [Defects D1-D12 COMPLETE] 2026-10-06: Phase 5 done. Four CI commands green, `ci-fast` green on e591eff.
+  ponytail-review of the whole branch: 6 findings (~-37 lines), none taken, reasons in FINAL_REPORT.md.
+  ponytail-audit: D4 detector has no non-test caller (user decision), ~-250 lines of pre-existing test-only code
+  listed. Debt ledger: PONYTAIL_DEBT.md (33 markers, 3 without a trigger). `.handoff/` folded into FINAL_REPORT.md
+  and purged. Not merged.
 
 ## Open escalations (worker/verifier results that passed only written tests or one case)
 - **D4 normalizer findings, outside D1-D12, for the user:** (j) the PHONE and CURRENCY validators answer

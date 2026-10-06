@@ -2,7 +2,8 @@
 
 Measured 2026-10-06 on `feat/defects-fixes` after `[PHASE 3 DONE]` (79b95f9), with the Phase 0 scripts
 unchanged (`tests/defects/measure_phase1_before.py`, `measure_phase23_before.py`; BEFORE output in
-`.handoff/before_phase1.txt`, `.handoff/before_phase23.txt`, AFTER in `.tmp/after_phase*.txt`, regenerable) plus
+`.handoff/before_phase1.txt`, `.handoff/before_phase23.txt` (in git history since the
+Phase 5 purge), AFTER in `.tmp/after_phase*.txt`, regenerable) plus
 the D6 harness and the D2 report. Synthetic, planted ground truth: these numbers are evidence of mechanism, not
 proof that the live numbers moved (plan §6). The live values are in `LOCAL_VERIFY.md`.
 
