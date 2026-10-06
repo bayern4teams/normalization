@@ -85,3 +85,14 @@ destination is created. Never run these against the production metadata database
   21, wrong-confident 11 (10 are bare-host URLs: url.py assumes https), over-abstain 6 (day == month dates),
   wrong-status 0. Report Raha counts with and without the URL bare-host kind.
 - Result (filled in locally):
+
+### D2 — confidence calibration (`normanalysis/calibration.py`, `normcli calibrate`, ADR-019)
+- Why cloud could not verify: no labelled data from the user's databases; the cloud used synthetic predictors
+  and the seeded D6 corpus only.
+- Command: `uv run normcli calibrate <labelled corpus.jsonl|csv> --cost-ratio <R> --out-json cal.json --out-md cal.md`
+  (R = cost of a wrong value over the cost of an abstention: the user states it, Q16).
+- Independent check: for the bins `cal.md` flags, sample 20 cases each and count the right answers by hand.
+- Expected evidence: before, 61 `confidence=` sites (28 literal `1.0`) and no calibration code. Cloud seed-0 corpus:
+  ECE 0.072, flagged bin [0.8, 0.9) = URL bare-host (stated ~0.82, observed 0.31), threshold 0.85 at R = 5.
+  Live: which literal-1.0 sites sit in a flagged bin.
+- Result (filled in locally):

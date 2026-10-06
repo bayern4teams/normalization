@@ -75,8 +75,11 @@ def _run_calibrate(args: argparse.Namespace) -> int:
     from normanalysis.calibration import report  # noqa: PLC0415
     from normanalysis.gold import default_engine, load_cases, score  # noqa: PLC0415
 
-    if not args.cost_ratio > 0:
-        print(f"calibrate: --cost-ratio must be positive, got {args.cost_ratio}", file=sys.stderr)
+    if not 0 < args.cost_ratio < float("inf"):  # NaN fails too
+        print(
+            f"calibrate: --cost-ratio must be positive and finite, got {args.cost_ratio}",
+            file=sys.stderr,
+        )
         return 2
     try:
         cases = load_cases(args.path, semantic_type=args.semantic_type)

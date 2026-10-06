@@ -3,7 +3,7 @@
 Overwrite this file at every commit. A fresh session reads it first, then
 [the plan](../DEFECTS_IMPLEMENTATION_PLAN.md). Git is the memory; a session's context is not.
 
-**Lock:** 2026-10-06T01:17:45Z · **Autonomy:** unattended-through-phase-5 · **Last heartbeat:** 2026-10-06T01:17:45Z
+**Lock:** 2026-10-06T01:19:29Z · **Autonomy:** unattended-through-phase-5 · **Last heartbeat:** 2026-10-06T01:19:29Z
 
 (Lock/heartbeat protocol: plan §7. A session sets `Lock: <ISO time>`, pushes it, and refreshes it at
 every commit; a lock older than 75 min is stale. `Autonomy` is `off`, `dryrun` (a tick only records
@@ -24,7 +24,7 @@ Only the user changes it.)
 | D10 | 2 | accepted-cloud | this commit | ACCEPT after round 2: verifier ACCEPT (95 tests fail on main; 4548 inputs x 4 contexts: 0 extension-free diffs; 12,740 fixed-point cases); lead rejected residuals (tel: ext dropped beside isub/phone-context; non-ASCII ext digits), worker fixed both, the verifier's strict xfails for them now pass; `x45 x46` is a ponytail: ceiling. Accepted over-abstain: regionless `tel:+<cc>` without ext stays AMBIGUOUS |
 | D11 | 2 | accepted-cloud | this commit | ACCEPT after round 2: lead sent back the BMPM regex reading (faithful to Commons Codec, 131/131 vs jar); verifier ACCEPT (181 fail on 805190b; 0 diffs vs the Java encoder on 7250 inputs; gen_* files byte-identical to commons-codec 1.17.1; env_id moves on a rule edit; 143/170 pairs vs 124 any-key / 119 Soundex; 22 different-name pairs never collide). Verifier F1 (super-linear cost on long values) fixed by lead: no beider_morse beyond 255 chars (ponytail: measured bound) + test. Disclosed: distinct surnames share more codes (any-key 1785 vs 1320 of 798k pairs: Jean/Zhang, Khan/Chan); keys are match candidates, not identity |
 | D6 | 3 | unverified-live | this commit | ACCEPT after round 2: verifier REJECTed (COUNTRY `NA` labelled Namibia though it is a missing token; INVALID/FAILED credited as abstention; BOM, U+2028 and short-row loader bugs; `--out` traceback); worker fixed all; lead: missing-value-table inputs get an AMBIGUOUS truth (general rule, no `NA` check), 5th class `wrong-status` mirrors tests/defects/scorer.py, no 2-digit year from `yyyy` patterns, §2.4 scan reads the D6 files whole (history-free). 14,400 labels re-derived independently: 0 wrong; κ/α vs independent code on 3000 cases; byte-identical across PYTHONHASHSEED. Real engine (seed 0, n 30): 142/21/11/6/0. BART/Raha live-only |
-| D2 | 3 | todo | | |
+| D2 | 3 | unverified-live | this commit | ACCEPT after round 2 (lead implemented): verifier REJECTed 3 input gaps (cost ratio inf -> silent abstain-all + non-JSON `Infinity`; NaN bin edge; bool confidence) + O(n x groups) grouping; lead fixed all, 5 strict xfails flipped. Math held: calibrated predictor over tolerance 0/400 runs (7 laws, n 20..5000), bin false-flag <= 0.5%; Chow == exact brute force on 6000 cases incl. ties/abstain-all, monotone; AURC == average over all tie orders (1e-12); attack kills 7 mutants the acceptance missed. ADR-019 states independence, per-group 5% and that the tolerance (~4x real ECE) cannot certify calibration. 61 `confidence=` sites unchanged, not wired into dispatch. Real labelled data live-only |
 | D4 | 3 | todo | | |
 
 States: `todo` · `in-progress` · `accepted-cloud` (lead accepted, cloud-verifiable parts proven)

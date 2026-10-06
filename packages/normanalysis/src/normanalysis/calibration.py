@@ -58,7 +58,7 @@ def _edges(bins: int | Sequence[float]) -> list[float]:
             raise ValueError(f"bins must be positive, got {bins}")
         return [i / bins for i in range(bins + 1)]
     edges = [float(e) for e in bins]
-    if len(edges) < 2 or edges[0] != 0 or edges[-1] != 1:
+    if len(edges) < 2 or edges[0] != 0 or edges[-1] != 1 or any(map(math.isnan, edges)):
         raise ValueError(f"bin edges must span [0, 1], got {edges}")
     if any(a >= b for a, b in pairwise(edges)):
         raise ValueError(f"bin edges must increase, got {edges}")
@@ -67,7 +67,8 @@ def _edges(bins: int | Sequence[float]) -> list[float]:
 
 def _check(pairs: Pairs) -> None:
     for conf, _ in pairs:
-        if not 0 <= conf <= 1:  # also rejects NaN; a bad confidence is a bug, never clamped
+        # also rejects NaN and a bool (True is not a stated confidence); never clamped
+        if isinstance(conf, bool) or not 0 <= conf <= 1:
             raise ValueError(f"confidence {conf!r} is outside [0, 1]")
 
 
@@ -105,9 +106,11 @@ def reliability(
     ece = gaps / len(pairs) if pairs else None
     by_group: dict[str, Reliability] = {}
     if groups is not None:
-        for label in sorted(set(groups)):
-            sub = [p for p, g in zip(pairs, groups, strict=True) if g == label]
-            by_group[label] = reliability(sub, bins=edges)
+        split: dict[str, list[tuple[float, bool]]] = {}
+        for p, g in zip(pairs, groups, strict=True):
+            split.setdefault(g, []).append(p)
+        for label in sorted(split):
+            by_group[label] = reliability(split[label], bins=edges)
     return Reliability(out, ece, over, by_group)
 
 
@@ -133,8 +136,8 @@ def chow_threshold(pairs: Pairs, cost_ratio: float) -> float | None:
     earns. `math.inf` means abstaining on everything is cheapest; `None` means no pairs, so
     nothing to optimise. Among equal-cost thresholds the highest wins (abstain when in doubt),
     which also keeps the threshold monotone in the ratio."""
-    if not cost_ratio > 0:  # also rejects NaN
-        raise ValueError(f"cost_ratio must be positive, got {cost_ratio!r}")
+    if not 0 < cost_ratio < math.inf:  # also rejects NaN; inf * 0 wrong answers would be NaN
+        raise ValueError(f"cost_ratio must be positive and finite, got {cost_ratio!r}")
     _check(pairs)
     if not pairs:
         return None

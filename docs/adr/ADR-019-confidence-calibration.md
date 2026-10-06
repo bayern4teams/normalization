@@ -34,6 +34,11 @@ constant. Everything else follows from it:
 - *Overconfident bin:* a one-sided Hoeffding test rejects "observed accuracy >= stated" at
   delta/bins (Bonferroni over the bins).
 
+Both bounds assume the pairs are independent (one per distinct value and context, as D6 builds
+them). The tolerance is a worst-case bound: a calibrated engine's real ECE is typically about a
+quarter of it, so "ECE under tolerance" cannot certify calibration. The per-bin flags carry the
+power. Per-group flags hold each group at the 5% level, not the family of groups.
+
 **Chow's rule from a stated cost ratio.** The abstain/emit threshold is the confidence `t` with
 the lowest total cost. The engine emits when confidence >= `t`. A wrong emitted value costs
 `cost ratio` abstentions, and a right one costs nothing. The **cost ratio is a required argument
