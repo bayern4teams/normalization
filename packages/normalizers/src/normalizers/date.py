@@ -498,6 +498,9 @@ def _try_iso_fast_path(value: str, *, keep_time: bool = False) -> tuple[str, str
     """`(iso_text, precision)`. Truncated to the precision the value
     actually states: `ciso8601` parses `1990-03` into 1990-03-01, and
     emitting that day would be inventing it."""
+    # ISO 8601 is ASCII; ciso8601 segfaults on a lone surrogate.
+    if not value.isascii():
+        return None
     try:
         parsed = ciso8601.parse_datetime(value)
     except (ValueError, IndexError):

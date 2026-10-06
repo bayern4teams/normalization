@@ -247,12 +247,6 @@ def test_failing_dates_validate_fast() -> None:
     assert time.perf_counter() - t0 < 1.0
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="D4 attack: a lone-surrogate key (surrogateescape-decoded bytes) SEGFAULTS the "
-    "interpreter inside ciso8601 via DateNormalizer._try_iso_fast_path (pre-existing normalizer "
-    "bug, reachable through the detector).",
-)
 def test_lone_surrogate_key_does_not_crash_process() -> None:
     code = (
         "from normanalysis.disguised_missing import detect_disguised_missing as D\n"
