@@ -1,0 +1,304 @@
+{
+ "cases": {
+  "country_with_namibia|col_a|first20": [
+   [
+    "COUNTRY",
+    0.9,
+    "field name matched nothing, but 20/20 sample values validate as this type"
+   ]
+  ],
+  "country_with_namibia|country|first20": [
+   [
+    "COUNTRY",
+    0.95,
+    "field name matches /\\bcountry\\b/; confirmed by real parsing (20/20 sample values validated)"
+   ]
+  ],
+  "country_with_namibia|dob|first20": [
+   [
+    "COUNTRY",
+    0.9,
+    "field name matched nothing, but 20/20 sample values validate as this type"
+   ],
+   [
+    "DATE",
+    0.485,
+    "field name matches /\\b(dob|date[-_]?of[-_]?birth|birth[-_]?date)\\b/; demoted \u2014 only 1/20 sample values actually validated as this type"
+   ]
+  ],
+  "country_with_namibia|value|first20": [
+   [
+    "COUNTRY",
+    0.9,
+    "field name matched nothing, but 20/20 sample values validate as this type"
+   ]
+  ],
+  "dates_3pct_sentinels|col_a|first20": [
+   [
+    "FREE_TEXT",
+    0.3,
+    "no field-name pattern matched; defaulting to free text rather than guessing"
+   ]
+  ],
+  "dates_3pct_sentinels|country|first20": [
+   [
+    "COUNTRY",
+    0.45,
+    "field name matches /\\bcountry\\b/; demoted \u2014 only 0/20 sample values actually validated as this type"
+   ]
+  ],
+  "dates_3pct_sentinels|dob|first20": [
+   [
+    "DATE",
+    0.97,
+    "field name matches /\\b(dob|date[-_]?of[-_]?birth|birth[-_]?date)\\b/; confirmed by real parsing (19/20 sample values validated)"
+   ]
+  ],
+  "dates_3pct_sentinels|value|first20": [
+   [
+    "FREE_TEXT",
+    0.3,
+    "no field-name pattern matched; defaulting to free text rather than guessing"
+   ]
+  ],
+  "dates_no_sentinels|col_a|first20": [
+   [
+    "FREE_TEXT",
+    0.3,
+    "no field-name pattern matched; defaulting to free text rather than guessing"
+   ]
+  ],
+  "dates_no_sentinels|country|first20": [
+   [
+    "COUNTRY",
+    0.45,
+    "field name matches /\\bcountry\\b/; demoted \u2014 only 0/20 sample values actually validated as this type"
+   ]
+  ],
+  "dates_no_sentinels|dob|first20": [
+   [
+    "DATE",
+    0.97,
+    "field name matches /\\b(dob|date[-_]?of[-_]?birth|birth[-_]?date)\\b/; confirmed by real parsing (20/20 sample values validated)"
+   ]
+  ],
+  "dates_no_sentinels|value|first20": [
+   [
+    "FREE_TEXT",
+    0.3,
+    "no field-name pattern matched; defaulting to free text rather than guessing"
+   ]
+  ],
+  "dates_noise_not_sentinels|col_a|first20": [
+   [
+    "FREE_TEXT",
+    0.3,
+    "no field-name pattern matched; defaulting to free text rather than guessing"
+   ]
+  ],
+  "dates_noise_not_sentinels|country|first20": [
+   [
+    "COUNTRY",
+    0.45,
+    "field name matches /\\bcountry\\b/; demoted \u2014 only 0/20 sample values actually validated as this type"
+   ]
+  ],
+  "dates_noise_not_sentinels|dob|first20": [
+   [
+    "DATE",
+    0.97,
+    "field name matches /\\b(dob|date[-_]?of[-_]?birth|birth[-_]?date)\\b/; confirmed by real parsing (19/20 sample values validated)"
+   ]
+  ],
+  "dates_noise_not_sentinels|value|first20": [
+   [
+    "FREE_TEXT",
+    0.3,
+    "no field-name pattern matched; defaulting to free text rather than guessing"
+   ]
+  ],
+  "name_only|amount": [
+   [
+    "NUMERIC",
+    0.6,
+    "field name matches /\\b(price|amount|cost|total|balance|count|number|num)\\b/"
+   ]
+  ],
+  "name_only|company_name": [
+   [
+    "COMPANY_NAME",
+    0.9,
+    "field name matches /\\b(company|business|org(anization)?|employer)[-_]?name?\\b/"
+   ],
+   [
+    "PERSON_NAME",
+    0.8,
+    "field name matches /\\b(customer|full|contact|person)?[-_]?name\\b/"
+   ]
+  ],
+  "name_only|country": [
+   [
+    "COUNTRY",
+    0.9,
+    "field name matches /\\bcountry\\b/"
+   ]
+  ],
+  "name_only|currency": [
+   [
+    "CURRENCY",
+    0.85,
+    "field name matches /\\bcurrency\\b/"
+   ]
+  ],
+  "name_only|customer_name": [
+   [
+    "PERSON_NAME",
+    0.8,
+    "field name matches /\\b(customer|full|contact|person)?[-_]?name\\b/"
+   ]
+  ],
+  "name_only|displayName": [
+   [
+    "PERSON_NAME",
+    0.8,
+    "field name matches /\\b(customer|full|contact|person)?[-_]?name\\b/"
+   ]
+  ],
+  "name_only|dob": [
+   [
+    "DATE",
+    0.97,
+    "field name matches /\\b(dob|date[-_]?of[-_]?birth|birth[-_]?date)\\b/"
+   ]
+  ],
+  "name_only|email": [
+   [
+    "EMAIL",
+    0.97,
+    "field name matches /\\b(e[-_]?mail)\\b/"
+   ]
+  ],
+  "name_only|first_name": [
+   [
+    "GIVEN_NAME",
+    0.9,
+    "field name matches /\\b(given|first)[-_]?name\\b/"
+   ],
+   [
+    "PERSON_NAME",
+    0.8,
+    "field name matches /\\b(customer|full|contact|person)?[-_]?name\\b/"
+   ]
+  ],
+  "name_only|isPublic": [
+   [
+    "BOOLEAN",
+    0.8,
+    "field name matches /^(is|has)[-_]?[a-z]|[-_]flag\\b/"
+   ]
+  ],
+  "name_only|language": [
+   [
+    "LANGUAGE",
+    0.85,
+    "field name matches /\\blang(uage)?\\b/"
+   ]
+  ],
+  "name_only|last_name": [
+   [
+    "FAMILY_NAME",
+    0.9,
+    "field name matches /\\b(family|last|sur)[-_]?name\\b/"
+   ],
+   [
+    "PERSON_NAME",
+    0.8,
+    "field name matches /\\b(customer|full|contact|person)?[-_]?name\\b/"
+   ]
+  ],
+  "name_only|logo": [
+   [
+    "FREE_TEXT",
+    0.3,
+    "no field-name pattern matched; defaulting to free text rather than guessing"
+   ]
+  ],
+  "name_only|mobile": [
+   [
+    "PHONE",
+    0.9,
+    "field name matches /\\b(mobile|cell[-_]?phone|phone|tel(ephone)?|fax)\\b/"
+   ]
+  ],
+  "name_only|quantity": [
+   [
+    "QUANTITY",
+    0.75,
+    "field name matches /\\b(quantity|qty|weight|height|length|volume)\\b/"
+   ]
+  ],
+  "name_only|tax_id": [
+   [
+    "TAX_ID",
+    0.9,
+    "field name matches /\\b(tax[-_]?id|vat[-_]?number|ein)\\b/"
+   ]
+  ],
+  "name_only|user_id": [
+   [
+    "IDENTIFIER",
+    0.91,
+    "field name matches /\\b(user|customer|account|order|product)[-_]?id\\b/"
+   ]
+  ],
+  "name_only|uuid": [
+   [
+    "UUID",
+    0.95,
+    "field name matches /\\b(uuid|guid)\\b/"
+   ]
+  ],
+  "name_only|website": [
+   [
+    "URL",
+    0.9,
+    "field name matches /\\b(url|website|link|homepage|domain)\\b/"
+   ]
+  ],
+  "name_only|zip_code": [
+   [
+    "POSTCODE",
+    0.9,
+    "field name matches /\\b(zip|postal|postcode)([-_]?code)?\\b/"
+   ]
+  ],
+  "numbers_magic_999|col_a|first20": [
+   [
+    "FREE_TEXT",
+    0.3,
+    "no field-name pattern matched; defaulting to free text rather than guessing"
+   ]
+  ],
+  "numbers_magic_999|country|first20": [
+   [
+    "COUNTRY",
+    0.45,
+    "field name matches /\\bcountry\\b/; demoted \u2014 only 0/20 sample values actually validated as this type"
+   ]
+  ],
+  "numbers_magic_999|dob|first20": [
+   [
+    "DATE",
+    0.485,
+    "field name matches /\\b(dob|date[-_]?of[-_]?birth|birth[-_]?date)\\b/; demoted \u2014 only 11/20 sample values actually validated as this type"
+   ]
+  ],
+  "numbers_magic_999|value|first20": [
+   [
+    "FREE_TEXT",
+    0.3,
+    "no field-name pattern matched; defaulting to free text rather than guessing"
+   ]
+  ]
+ }
+}
