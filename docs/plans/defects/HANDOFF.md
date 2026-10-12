@@ -10,25 +10,26 @@ every commit; a lock older than 75 min is stale. `Autonomy` is `off`, `dryrun` (
 what works and exits) or `unattended-through-phase-N` (authorises the supervisor to chain phases).
 Only the user changes it.)
 
-**Branch:** `feat/defects-fixes` · **Current phase:** done
+**Branch:** `feat/defects-fixes` · **Current phase:** done; local close-out done 2026-10-12, waiting for the user's merge decision
 
 | item | phase | state | commit | lead verdict |
 |---|---|---|---|---|
-| D1 | 1 | unverified-live | this commit | ACCEPT after round 2: verifier REJECTed blank verdict (NULLs cell) and lone-surrogate queue crash; both fixed, 52 acceptance tests green; Postgres DDL/ON CONFLICT live-only |
+| D1 | 1 | verified-live (1 check failed: NUL) | this commit | ACCEPT after round 2: verifier REJECTed blank verdict (NULLs cell) and lone-surrogate queue crash; both fixed, 52 acceptance tests green; Postgres DDL/ON CONFLICT live-only |
 | D12 | 1 | accepted-cloud | this commit | ACCEPT: kept, one producer (verdict re-normalizes differently -> NEEDS_REVIEW), tested in test_adjudication_acceptance.py; severity order unchanged |
-| D7 | 1 | unverified-live | this commit | ACCEPT: verifier ACCEPT (60 acceptance+unit, 21 fail on 47df753; 86 stdnum pkgs hand-classified, no non-tax module chosen; 69 sibling-valid numbers UNKNOWN never INVALID); lead added the missing ponytail: ceilings; real numbers live-only |
+| D7 | 1 | verified-live | this commit | ACCEPT: verifier ACCEPT (60 acceptance+unit, 21 fail on 47df753; 86 stdnum pkgs hand-classified, no non-tax module chosen; 69 sibling-valid numbers UNKNOWN never INVALID); lead added the missing ponytail: ceilings; real numbers live-only |
 | D8 | 1 | accepted-cloud | this commit | ACCEPT: CODE canonical-only, no check-digit keys, validation_status UNKNOWN; IDENTIFIER unchanged |
 | D9 | 1 | accepted-cloud | this commit | ACCEPT: verifier ACCEPT (33 acceptance fail on 47df753; own PSL algorithm agrees on >15000 hosts; sockets blocked: no network); lead fixed `a b.com` getting a registrable domain (host char check + test) and added the ponytail: ceiling; MPL-2.0 accepted as a warning like certifi/hypothesis/pathspec |
-| D5 | 2 | unverified-live | this commit | ACCEPT after round 2: verifier REJECTed (PG 16.14 scratch instance: >16383 fractional digits overflow even NUMERIC(38,4)); lead added that ceiling (ponytail: PG docs 8.1.2), made `engine` required in the executor (verifier nit), narrowed the derive guard "tiny never rejected" to ClickHouse on that evidence; 20k-input fuzz vs exact ROUND_HALF_UP oracle 0 diffs; 589 pass; real ClickHouse INSERT live-only. DATE stays TEXT, flagged for the user (ADR-020) |
-| D3 | 2 | unverified-live | this commit | ACCEPT after round 2: verifier REJECTed (a store error or crash between checkpoint and COMPLETE stranded a run; a failing FAIL write masked the real error); lead fixed both (resume closes the open run with its runId; `TableRun.fail` logs instead of raising), plus START-first tie-break and no companion for a vanished base. 54/54 incl. 18 attack cases (46 fail on the parent). START/COMPLETE writes fail closed (Q13), forwarding best effort. Known: a hanging collector costs 2x5 s per table (ponytail:), no event for a failure before the first table. Postgres DDL + Marquez live-only |
+| D5 | 2 | verified-live (CH truncates) | this commit | ACCEPT after round 2: verifier REJECTed (PG 16.14 scratch instance: >16383 fractional digits overflow even NUMERIC(38,4)); lead added that ceiling (ponytail: PG docs 8.1.2), made `engine` required in the executor (verifier nit), narrowed the derive guard "tiny never rejected" to ClickHouse on that evidence; 20k-input fuzz vs exact ROUND_HALF_UP oracle 0 diffs; 589 pass; real ClickHouse INSERT live-only. DATE stays TEXT, flagged for the user (ADR-020) |
+| D3 | 2 | verified-live (Marquez partial) | this commit | ACCEPT after round 2: verifier REJECTed (a store error or crash between checkpoint and COMPLETE stranded a run; a failing FAIL write masked the real error); lead fixed both (resume closes the open run with its runId; `TableRun.fail` logs instead of raising), plus START-first tie-break and no companion for a vanished base. 54/54 incl. 18 attack cases (46 fail on the parent). START/COMPLETE writes fail closed (Q13), forwarding best effort. Known: a hanging collector costs 2x5 s per table (ponytail:), no event for a failure before the first table. Postgres DDL + Marquez live-only |
 | D10 | 2 | accepted-cloud | this commit | ACCEPT after round 2: verifier ACCEPT (95 tests fail on main; 4548 inputs x 4 contexts: 0 extension-free diffs; 12,740 fixed-point cases); lead rejected residuals (tel: ext dropped beside isub/phone-context; non-ASCII ext digits), worker fixed both, the verifier's strict xfails for them now pass; `x45 x46` is a ponytail: ceiling. Accepted over-abstain: regionless `tel:+<cc>` without ext stays AMBIGUOUS |
 | D11 | 2 | accepted-cloud | this commit | ACCEPT after round 2: lead sent back the BMPM regex reading (faithful to Commons Codec, 131/131 vs jar); verifier ACCEPT (181 fail on 805190b; 0 diffs vs the Java encoder on 7250 inputs; gen_* files byte-identical to commons-codec 1.17.1; env_id moves on a rule edit; 143/170 pairs vs 124 any-key / 119 Soundex; 22 different-name pairs never collide). Verifier F1 (super-linear cost on long values) fixed by lead: no beider_morse beyond 255 chars (ponytail: measured bound) + test. Disclosed: distinct surnames share more codes (any-key 1785 vs 1320 of 798k pairs: Jean/Zhang, Khan/Chan); keys are match candidates, not identity |
-| D6 | 3 | unverified-live | this commit | ACCEPT after round 2: verifier REJECTed (COUNTRY `NA` labelled Namibia though it is a missing token; INVALID/FAILED credited as abstention; BOM, U+2028 and short-row loader bugs; `--out` traceback); worker fixed all; lead: missing-value-table inputs get an AMBIGUOUS truth (general rule, no `NA` check), 5th class `wrong-status` mirrors tests/defects/scorer.py, no 2-digit year from `yyyy` patterns, §2.4 scan reads the D6 files whole (history-free). 14,400 labels re-derived independently: 0 wrong; κ/α vs independent code on 3000 cases; byte-identical across PYTHONHASHSEED. Real engine (seed 0, n 30): 142/21/11/6/0. BART/Raha live-only |
-| D2 | 3 | unverified-live | this commit | ACCEPT after round 2 (lead implemented): verifier REJECTed 3 input gaps (cost ratio inf -> silent abstain-all + non-JSON `Infinity`; NaN bin edge; bool confidence) + O(n x groups) grouping; lead fixed all, 5 strict xfails flipped. Math held: calibrated predictor over tolerance 0/400 runs (7 laws, n 20..5000), bin false-flag <= 0.5%; Chow == exact brute force on 6000 cases incl. ties/abstain-all, monotone; AURC == average over all tie orders (1e-12); attack kills 7 mutants the acceptance missed. ADR-019 states independence, per-group 5% and that the tolerance (~4x real ECE) cannot certify calibration. 61 `confidence=` sites unchanged, not wired into dispatch. Real labelled data live-only |
-| D4 | 3 | unverified-live | this commit | ACCEPT after round 2 (lead finished it): ptype failed the feasibility gate (greenery 4 / pandas 3 incompatible, 311 MB) -> native detector. Verifier REJECTed: AMBIGUOUS dates reported, no "small set" bound, hint-None over-claim. Worker applied the lead's first small-set rule (mean valid count), which broke recall on categorical columns (21 tests); lead replaced it: only definitive INVALID verdicts count; recurring failing values are candidates when no more numerous than the spellings in the missing-value table (17), else only table-named ones. Recall: 12 planted sentinels at 1-5% across 6 types, exact counts; Namibia NA, year-only dates, 0/-1 never reported; 300 recurring junk strings not reported; column-type snapshot identical, type_detection untouched. 4 strict xfails = pre-existing normalizer findings (j, k, l). Live GROUP BY compare live-only |
+| D6 | 3 | verified-live | this commit | ACCEPT after round 2: verifier REJECTed (COUNTRY `NA` labelled Namibia though it is a missing token; INVALID/FAILED credited as abstention; BOM, U+2028 and short-row loader bugs; `--out` traceback); worker fixed all; lead: missing-value-table inputs get an AMBIGUOUS truth (general rule, no `NA` check), 5th class `wrong-status` mirrors tests/defects/scorer.py, no 2-digit year from `yyyy` patterns, §2.4 scan reads the D6 files whole (history-free). 14,400 labels re-derived independently: 0 wrong; κ/α vs independent code on 3000 cases; byte-identical across PYTHONHASHSEED. Real engine (seed 0, n 30): 142/21/11/6/0. BART/Raha live-only |
+| D2 | 3 | verified-live | this commit | ACCEPT after round 2 (lead implemented): verifier REJECTed 3 input gaps (cost ratio inf -> silent abstain-all + non-JSON `Infinity`; NaN bin edge; bool confidence) + O(n x groups) grouping; lead fixed all, 5 strict xfails flipped. Math held: calibrated predictor over tolerance 0/400 runs (7 laws, n 20..5000), bin false-flag <= 0.5%; Chow == exact brute force on 6000 cases incl. ties/abstain-all, monotone; AURC == average over all tie orders (1e-12); attack kills 7 mutants the acceptance missed. ADR-019 states independence, per-group 5% and that the tolerance (~4x real ECE) cannot certify calibration. 61 `confidence=` sites unchanged, not wired into dispatch. Real labelled data live-only |
+| D4 | 3 | verified-live | this commit | ACCEPT after round 2 (lead finished it): ptype failed the feasibility gate (greenery 4 / pandas 3 incompatible, 311 MB) -> native detector. Verifier REJECTed: AMBIGUOUS dates reported, no "small set" bound, hint-None over-claim. Worker applied the lead's first small-set rule (mean valid count), which broke recall on categorical columns (21 tests); lead replaced it: only definitive INVALID verdicts count; recurring failing values are candidates when no more numerous than the spellings in the missing-value table (17), else only table-named ones. Recall: 12 planted sentinels at 1-5% across 6 types, exact counts; Namibia NA, year-only dates, 0/-1 never reported; 300 recurring junk strings not reported; column-type snapshot identical, type_detection untouched. 4 strict xfails = pre-existing normalizer findings (j, k, l). Live GROUP BY compare live-only |
 
 States: `todo` · `in-progress` · `accepted-cloud` (lead accepted, cloud-verifiable parts proven)
-· `unverified-live` (accepted but needs the real environment — see LOCAL_VERIFY.md) · `blocked`.
+· `unverified-live` (accepted but needs the real environment — see LOCAL_VERIFY.md) · `verified-live` (the live checks ran locally, see
+LOCAL_VERIFY.md Result lines and docs/benchmarks/REPORT.md; a failed check is named in the state) · `blocked`.
 
 ## Locked file-ownership table (Phase 0)
 Derived 2026-10-05 from `graphify affected <file>` and `graft callers <sym> --depth all` (shared symbols:
@@ -60,8 +61,9 @@ Derived 2026-10-05 from `graphify affected <file>` and `graft callers <sym> --de
 - Phase 3: worker D6 → lead D2; worker D4.
 
 ## Next action
-Defects D1-D12 complete - waiting for the user. Read `defects/FINAL_REPORT.md` ("Decisions for the user"), run the
-live checks in `defects/LOCAL_VERIFY.md`, then merge `feat/defects-fixes` yourself (the supervisor never merges).
+Local close-out done (2026-10-12): every live check ran on public data, with results in `LOCAL_VERIFY.md` and
+`docs/benchmarks/REPORT.md`. Step 7 (the user's own database) was skipped by the user. The user decides the merge;
+the open candidates are in REPORT.md §7. Never merge without the user's explicit "merge it".
 
 ## Notifications
 (append `[PHASE n DONE]`, `[BLOCKED]`, `[Defects D1-D12 COMPLETE]` entries here; the same prefixes go in commit messages)
@@ -97,6 +99,18 @@ live checks in `defects/LOCAL_VERIFY.md`, then merge `feat/defects-fixes` yourse
   ponytail-audit: D4 detector has no non-test caller (user decision), ~-250 lines of pre-existing test-only code
   listed. Debt ledger: PONYTAIL_DEBT.md (33 markers, 3 without a trigger). `.handoff/` folded into FINAL_REPORT.md
   and purged. Not merged.
+
+- [LOCAL CLOSE-OUT] 2026-10-12, local, lead.
+  - **Fixes:**
+    - Test memory cap: DuckDB `threads=1` (9bc9370).
+    - Surrogate segfault (c550330).
+    - Invented date components (e0f7ed8), plus its year-00 regression found by the benchmarks (ef60e8a).
+    - Name/company idempotency (ec9597c).
+  - **Benchmarks:** public data in docs/benchmarks/REPORT.md (91331b3).
+  - **Gates:** four CI commands green under a 6 GB cgroup cap: 2852 passed / 21 skipped / 4 xfailed. Integration
+    suite 24/24 on the isolated stack.
+  - **New bugs, not fixed (held out):** autodetect whole-column corruption, Postgres writer column names,
+    ClickHouse stream timeout, Decimal sources, invalid UTF-8, Pagila DDL, phone vanity letters, NUL in the queue.
 
 ## Open escalations (worker/verifier results that passed only written tests or one case)
 - **D4 normalizer findings, outside D1-D12, for the user:** (j) the PHONE and CURRENCY validators answer

@@ -73,9 +73,34 @@ Colombia and D8's `CODE -> UNKNOWN`. Both come from accepted design, not a guess
   and D5. Not on this branch.
 - **Findings, fix now on this branch (TDD, separate commits):** (l) lone-surrogate segfault in ciso8601 via
   `date.py`; (a) `03/2024` -> `2024-03-03`; COMPANY_NAME/PERSON_NAME property idempotency.
+- **Fix 2 widened (user):** the root fix for every invented date component, not only `03/2024` (e0f7ed8). The
+  benchmarks found its year-`00` regression, and the user approved fixing it (ef60e8a).
+- **Benchmarks (user):**
+  - downloads approved as listed in REPORT.md §2; CTU skipped;
+  - Marquez 0.51.1 image pull approved for D3(b);
+  - an isolated `normbench` stack on fresh volumes, so the user's `normalization_pg_data` was never mounted;
+  - Step 7 (a copy of the user's own database) skipped.
 - **Findings, deferred to a follow-up plan:** (b) `NA` in COUNTRY read as NOT_APPLICABLE (central dispatcher change,
   every type); (d) `\x00` in TEXT columns (destination-writer policy: strip vs NULL + error row); (h) `url.py` https
   guess at 0.8; (i) date M/d/y hand table (derive from CLDR).
+
+## Local close-out results (2026-10-12)
+
+The live checks ran on public data in an isolated docker stack, with results in `LOCAL_VERIFY.md` and the full
+evidence in `docs/benchmarks/REPORT.md`. Step 7 (a copy of the user's own database) was skipped by the user.
+
+| item | final state | live result |
+|---|---|---|
+| D1 | verified-live, 1 check failed | Postgres DDL and upsert pass; the round trip (queue → verdict → re-run changes the cell and clears its error rows) passes. **NUL in an AMBIGUOUS value fails the job** and loses that batch's error rows |
+| D2 | verified-live | seeded corpus: threshold 0.90 at R = 20 and R = 100. Raha erroneous cells: ECE 0.276 against a 0.046 tolerance, abstain on everything; answers at a stated 1.0 are observed right 78% of the time |
+| D3 | verified-live, Marquez partial | Postgres table and keys pass; `get_columns` and facets match 11/11 tables. Marquez stores the column-lineage facet, but its graph is empty (no schema facet) |
+| D4 | verified-live | `N/A` found with its exact counts; Namibia `NA` not reported; limitations: `''` in some types, `empty`, `1900-01-01` |
+| D5 | verified-live, ClickHouse truncates | overflow pass (NULL + error row, the chunk commits); the gate never lets an abort through. ClickHouse truncates where Postgres rounds, silently |
+| D6 | verified-live | seeded baseline reproduced 142/21/11/6/0. The Raha literal command measures formatting, and its CSV loader takes no context |
+| D7 | verified-live | 0 INVALID of 1,677,617 register numbers. Norway: 0 VALID (all UNKNOWN), a coverage gap |
+| D8-D12 | accepted-cloud | D10/D11 persistence: not applicable, because a clone never persists the `structured` dict |
+
+New findings outside D1-D12, not fixed (held out, for the user): REPORT.md §7.
 
 ## Findings outside D1-D12 (open escalations, verbatim from HANDOFF.md)
 
