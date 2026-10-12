@@ -126,9 +126,13 @@ def _stated_precision(text: str, parsed: datetime, claimed: str) -> str | None:
     states: the year and the day each as a number of their own, the month
     as a number or a word. Parsers reuse one number twice (`03/2024` ->
     2024-03-03) or fill gaps from today's date; neither is stated. None
-    when a number in the text is no component at all (`13/2024`)."""
+    when a number in the text is no component at all (`13/2024`). An
+    all-zero number may be the year (`12/31/00`); one no component claims
+    is a placeholder (`00/2024`)."""
     date_part = _TIME_OF_DAY_RE.sub(" ", text)
-    numbers = [n for n in _DIGITS_RE.findall(date_part) if n.strip("0")]
+    found = _DIGITS_RE.findall(date_part)
+    numbers = [n for n in found if n.strip("0")]
+    zeros = [n for n in found if not n.strip("0")]
     if any(len(n) > 4 for n in numbers):
         # ponytail: compact digits (`03032024`) are not split into components,
         # the parser is trusted; split by length if one is found inventing.
@@ -148,11 +152,13 @@ def _stated_precision(text: str, parsed: datetime, claimed: str) -> str | None:
         needed = {"day": [year, month, day], "month": [year, month], "year": [year]}[precision]
         options = [needed, [p for p in needed if p is not month]] if has_word else [needed]
         for parts in options:
-            if len(parts) == len(numbers) and any(
-                all(p(n) for p, n in zip(parts, order, strict=True))
-                for order in permutations(numbers)
-            ):
-                return precision
+            for claimed_zeros in range(len(zeros) + 1):
+                groups = numbers + zeros[:claimed_zeros]
+                if len(parts) == len(groups) and any(
+                    all(p(n) for p, n in zip(parts, order, strict=True))
+                    for order in permutations(groups)
+                ):
+                    return precision
     return None
 
 

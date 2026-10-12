@@ -89,6 +89,28 @@ def test_no_component_the_input_does_not_state(
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize(
+    ("value", "country", "expected", "precision"),
+    [
+        # a two-digit year 00 is the year 2000, not a placeholder (found by the rayyan benchmark)
+        ("12/31/00", None, "2000-12-31", "day"),
+        ("1/1/00", "US", "2000-01-01", "day"),
+        ("1/00", None, "2000-01", "month"),
+        # an all-zero group no component claims is a placeholder
+        ("00/2024", None, "2024", "year"),
+    ],
+)
+def test_an_all_zero_number_is_a_year_or_a_placeholder(
+    normalizer: DateNormalizer, value: str, country: str | None, expected: str, precision: str
+) -> None:
+    ctx = NormalizationContext(
+        field_name="d", semantic_type=FieldSemanticType.DATE, country=country
+    )
+    result = normalizer.normalize(value, ctx)
+    assert (result.display, result.structured["precision"]) == (expected, precision)
+
+
+@pytest.mark.unit
 @pytest.mark.parametrize("value", ["13/2024", "2024/13", "NA", "today"])
 def test_a_number_that_is_no_component_is_invalid(
     normalizer: DateNormalizer, ctx: NormalizationContext, value: str
