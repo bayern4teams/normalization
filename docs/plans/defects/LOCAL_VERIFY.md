@@ -52,7 +52,11 @@ destination is created. Never run these against the production metadata database
 - Expected evidence: no number the registry accepts comes back INVALID. US/GB/DE/FR rows that were INVALID
   before may now be UNKNOWN with reason "valid under another <CC> identifier" (DE moves the most: 184 of 1260
   probes in the verifier's sample). That change is intended.
-- Result (filled in locally):
+- Result (filled in locally, 2026-10-12): **pass on the rule, with a coverage gap.** 0 INVALID among 1,677,617
+  numbers taken straight from the national registers (Brreg 1,177,617; SIRENE sample 500,000), cross-checked with
+  python-stdnum outside the app. SIREN: 500,000/500,000 VALID. Norway: all UNKNOWN, 0 VALID, though stdnum
+  `no.orgnr` validates every one. The hand sample of 20 rows per country is unnecessary: every number is in its
+  register. See docs/benchmarks/REPORT.md §3.
 
 ## Phase 0 additions
 - **D5 overflow (modelled in the cloud):** on a real ClickHouse destination, insert NUMERIC values `1e999` and
@@ -77,6 +81,27 @@ destination is created. Never run these against the production metadata database
   aborting the chunk; only SQLite was run.
 - **D10 / D11 persistence (accepted-cloud, live check optional):** a real clone keeps `structured["rfc3966"]` and the
   new `phonetic` keys in the destination; the integration tests need the Postgres container.
+- **Results (filled in locally, 2026-10-12; evidence in docs/benchmarks/REPORT.md §3, §7):**
+  - D5 overflow on ClickHouse: **pass.** 6/6 rows committed. `1e999`, `1e40` and the 41-digit NUMERIC/MONEY values
+    became NULL plus an error row keeping the original.
+  - D5 gate vs. the real columns:
+    - (a) **fail on the stated expectation.** ClickHouse truncates (`…9.9999999994` stores `…9.999999999`;
+      `0.0000000005` stores `0`), server-side too. It does not round.
+    - (b) **pass.** A 131072-digit integer inserts; `1e131072` never reaches the INSERT.
+    - (c) neither engine aborts. Postgres rounds half-up and ClickHouse truncates, so the same input is stored
+      differently, with no error row.
+  - D3 lineage:
+    - (a) **pass.** The table, its PK `(run_id, event_type)` and the `job_id` index exist on Postgres 16, and events
+      are stored for every run.
+    - (b) **partial.** Marquez 0.51.1 stores the column-lineage facet, companions included, but its
+      `/column-lineage` graph is empty: the events carry no schema facet.
+    - (c) **pass.** 11/11 Chinook tables plus ClickHouse: the facet fields equal the destination columns.
+  - D1 on Postgres: **pass.** Both tables exist, and the `ON CONFLICT … AS q` upsert merged same-key rows
+    (`occurrences 2`) on a real clone.
+  - D1 NUL: **fail.** AMBIGUOUS `1,234\x00` aborts the error-row INSERT (`text fields cannot contain NUL`). The job
+    FAILS, the batch's error rows are lost and the queue is not written.
+  - D10/D11 persistence: **not applicable as written.** A clone persists `display` plus the `<col>_code` companion,
+    never the `structured` dict.
 
 ### D6 — gold corpus (`normanalysis/gold.py`, `normcli gold`)
 - Why cloud could not verify: BART is a Java tool that needs Postgres; the six Raha datasets are external
@@ -89,7 +114,17 @@ destination is created. Never run these against the production metadata database
 - Expected evidence: cloud baseline on `generate --seed 0 --n 30` (180 cases): correct 142, correct-abstain
   21, wrong-confident 11 (10 are bare-host URLs: url.py assumes https), over-abstain 6 (day == month dates),
   wrong-status 0. Report Raha counts with and without the URL bare-host kind.
-- Result (filled in locally):
+- Result (filled in locally, 2026-10-12):
+  - **Seeded corpus: pass.** It reproduced exactly: 142 / 21 / 11 / 6 / 0.
+  - **Raha: ran.** The literal command (`uv run python -m normcli gold score`; the console script `normcli`
+    does not exist) mostly measures formatting. Its CSV loader also takes no context, so PHONE and POSTCODE
+    abstain on every cell.
+  - Canonical-truth scoring, in docs/benchmarks/REPORT.md §4: 2,253 confident misses among 98,194 erroneous
+    cells.
+    - 3 are an engine bug (phone vanity letters).
+    - The rest are undetectable by syntax (permuted dates, a substituted zip, Y/N flips, typos) or a repair
+      candidate (doubled apostrophes).
+  - No URL column is scored on Raha, so the bare-host split does not apply there.
 
 ### D2 — confidence calibration (`normanalysis/calibration.py`, `normcli calibrate`, ADR-019)
 - Why cloud could not verify: no labelled data from the user's databases; the cloud used synthetic predictors
@@ -100,7 +135,16 @@ destination is created. Never run these against the production metadata database
 - Expected evidence: before, 61 `confidence=` sites (28 literal `1.0`) and no calibration code. Cloud seed-0 corpus:
   ECE 0.072, flagged bin [0.8, 0.9) = URL bare-host (stated ~0.82, observed 0.31), threshold 0.85 at R = 5.
   Live: which literal-1.0 sites sit in a flagged bin.
-- Result (filled in locally):
+- Result (filled in locally, 2026-10-12, R = 20 as decided, R = 100 as sensitivity):
+  - **Seeded corpus:** ECE 0.072, threshold 0.90 at both ratios; the flagged bin is the URL bare host.
+  - **Raha erroneous cells** (7,760 answers): ECE 0.276 against a 0.046 tolerance, "abstain on everything" at
+    both ratios.
+    - Flagged bins: [0.9, 1.0] stated 1.000, observed 0.782; [0.8, 0.9) DATE stated 0.85, observed 0.000.
+    - The literal-1.0 sites in the flagged bin are BOOLEAN, COMPANY_NAME, GIVEN_NAME, FAMILY_NAME, PHONE and
+      POSTCODE; NUMERIC is calibrated.
+    - The corpus holds only injected errors, so it shows confidence on wrong-but-well-formed input, not
+      typical calibration.
+  - See docs/benchmarks/REPORT.md §5.
 
 ### D4 — disguised missing data (`normanalysis/disguised_missing.py`)
 - Why cloud could not verify: no real table; recall/precision measured on planted columns of authoritative
@@ -111,4 +155,11 @@ destination is created. Never run these against the production metadata database
 - Expected evidence: before, nothing at cell level. After, the sentinels (`N/A`, `-`, `unknown`, ...) with their
   exact `GROUP BY` counts; `NA` in a country column is not reported; PHONE/CURRENCY columns without a region
   report nothing (escalation j).
-- Result (filled in locally):
+- Result (filled in locally, 2026-10-12): **pass, with limitations.** 13 real columns (Raha, Brreg, GLEIF, SIRENE).
+  - `N/A` was reported ×1005 with exactly its GROUP BY count.
+  - Namibia `NA` is present (GLEIF 109, Brreg 1) and was not reported.
+  - Not reported:
+    - `''` in URL, EMAIL, PHONE and NUMERIC columns (`''` is reported in COUNTRY and DATE columns);
+    - the sentinel `empty` (not in the missing-value table);
+    - valid-looking placeholders such as `1900-01-01`.
+  - Reported as a candidate: `XK` (Kosovo). See docs/benchmarks/REPORT.md §3, §7.
