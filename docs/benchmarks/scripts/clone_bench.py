@@ -82,6 +82,9 @@ def main() -> None:  # noqa: PLR0915 - one linear benchmark script
         "--src-conn-id", help="reuse a saved source connection (verdicts are scoped to it)"
     )
     ap.add_argument("--dst-conn-id", help="reuse a saved destination connection")
+    ap.add_argument(
+        "--resume-job", help="start an existing job again (FAILED or killed) instead of a new one"
+    )
     ap.add_argument("--out", required=True)
     args = ap.parse_args()
 
@@ -97,6 +100,27 @@ def main() -> None:  # noqa: PLR0915 - one linear benchmark script
         if r.status_code >= 400:
             raise SystemExit(f"{method} {path} -> {r.status_code}: {r.text[:2000]}")
         return r.json() if r.content else {}
+
+    if args.resume_job:
+        result: dict = {"args": vars(args), "stage": "phase2", "job_id": args.resume_job}
+        t1 = time.perf_counter()
+        call("POST", f"/clone-jobs/{args.resume_job}/start")
+        while (job := call("GET", f"/clone-jobs/{args.resume_job}"))["status"] not in (
+            "COMPLETED",
+            "FAILED",
+        ):
+            time.sleep(1)
+        result["phase2_s"] = round(time.perf_counter() - t1, 2)
+        result.update(stage="done", status=job["status"], error=job.get("error"), job=job)
+        result["peak_rss_mb_self"] = round(
+            resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024
+        )
+        result["peak_rss_mb_children"] = round(
+            resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss / 1024
+        )
+        Path(args.out).write_text(json.dumps(result, indent=1, default=str))
+        print(json.dumps({k: result.get(k) for k in ("job_id", "status", "error", "phase2_s")}))
+        return
 
     source = {**SOURCES[args.engine], **({"port": args.src_port} if args.src_port else {})}
     src = (
@@ -122,7 +146,7 @@ def main() -> None:  # noqa: PLR0915 - one linear benchmark script
         if args.field_configs
         else {},
     }
-    result: dict = {"args": vars(args), "stage": "create"}
+    result = {"args": vars(args), "stage": "create"}
     try:
         created = call("POST", "/clone-jobs", json=body)
         job_id = result["job_id"] = created["job_id"]
