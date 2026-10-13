@@ -184,7 +184,6 @@ class TestNulInAPersistedValue:
 
 
 class TestNoSilentFractionLoss:
-    @_open("2 (D5)")
     @pytest.mark.parametrize("engine", ["postgres", "clickhouse"])
     @pytest.mark.parametrize("text", ["12.34565", "0.00005", "0.0000000005"])
     def test_money_with_more_decimals_than_the_column_is_null_plus_error(
@@ -194,7 +193,6 @@ class TestNoSilentFractionLoss:
         assert cast is None
         assert error is not None
 
-    @_open("2 (D5)")
     def test_clickhouse_numeric_past_its_scale_is_null_plus_error(self) -> None:
         cast, error = storage_types.coerce("NUMERIC", "0.0000000005", "clickhouse")
         assert cast is None

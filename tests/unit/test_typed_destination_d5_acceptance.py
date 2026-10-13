@@ -392,14 +392,22 @@ class TestBoundary:
     def test_zero_and_tiny_are_never_rejected_for_size(
         self, semantic_type: str, engine: str, text: str
     ) -> None:
-        """Overflow is about integer digits only; a near-zero value has none."""
+        """Overflow is about integer digits only; a near-zero value has none.
+
+        fix/robustness: a non-zero value finer than the column's scale is no longer
+        stored as 0 (ClickHouse truncated it silently); it is NULL plus an error row,
+        like overflow. Zero itself, at any exponent, still fits."""
         if engine == "postgres" and "e-999999999" in text:
             # Lead, after the attack round: real PG 16.14 rejects more than 16383
             # fractional digits, typmod or not (TestPostgresScaleCeiling covers it).
             pytest.skip("beyond Postgres' 16383 fractional digits")
         cast, error = _coerce(semantic_type, text, engine)
-        assert error is None, f"{text} has no integer digits but was rejected: {error}"
-        assert isinstance(cast, decimal.Decimal)
+        if decimal.Decimal(text).is_zero():
+            assert error is None, f"{text} has no integer digits but was rejected: {error}"
+            assert isinstance(cast, decimal.Decimal)
+        else:
+            assert cast is None
+            assert error, f"{text} cannot be held by the column but passed silently"
 
     @pytest.mark.parametrize("engine", ENGINES)
     def test_boolean_has_no_width(self, engine: str) -> None:
@@ -798,6 +806,8 @@ class TestPostgresScaleCeiling:
     @pytest.mark.parametrize("semantic_type", DECIMAL_TYPED)
     @pytest.mark.parametrize("text", [f"1e-{PG_NUMERIC_MAX_SCALE}", f"0e-{PG_NUMERIC_MAX_SCALE}"])
     def test_the_stored_scale_itself_still_fits(self, semantic_type: str, text: str) -> None:
+        if semantic_type == "MONEY" and not decimal.Decimal(text).is_zero():
+            pytest.skip("finer than NUMERIC(38,4): NULL plus an error row since fix/robustness")
         cast, error = _coerce(semantic_type, text, "postgres")
         assert error is None
         assert cast == decimal.Decimal(text)
