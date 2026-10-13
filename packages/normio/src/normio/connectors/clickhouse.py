@@ -256,6 +256,7 @@ def _spooled(
                 with pa.OSFile(item) as source:
                     block = pa.ipc.open_file(source).read_all().combine_chunks()
                 os.remove(item)
+                block = _invalid_text_as_binary(block)
                 # Re-sliced to `batch_size` (the executor's checkpoint
                 # boundary); `.slice()` is zero-copy.
                 for batch in block.to_batches():
@@ -270,3 +271,24 @@ def _spooled(
         finally:
             stop.set()
             drainer.join()
+
+
+def _invalid_text_as_binary(block: pa.Table) -> pa.Table:
+    """A ClickHouse String is bytes; it arrives typed as Arrow `string`,
+    which promises UTF-8, and one value that is not (`ED A0 80`) made
+    `to_pylist()` raise and failed the whole job. Such a column is handed
+    over as binary for this block instead: every value arrives as the
+    source bytes, nothing is replaced or dropped, and the executor decides
+    what bytes mean for a normalized column."""
+    for i, field in enumerate(block.schema):
+        if not (pa.types.is_string(field.type) or pa.types.is_large_string(field.type)):
+            continue
+        try:
+            block.column(i).validate(full=True)
+        except pa.ArrowInvalid:
+            binary = pa.large_binary() if pa.types.is_large_string(field.type) else pa.binary()
+            column = pa.chunked_array(
+                [chunk.view(binary) for chunk in block.column(i).chunks], type=binary
+            )
+            block = block.set_column(i, field.with_type(binary), column)
+    return block

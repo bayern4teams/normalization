@@ -226,6 +226,24 @@ def _key_columns(source: Any, table: str) -> list[str]:
     return list(source.get_primary_key(table))
 
 
+def _source_text(value: object) -> str | None:
+    """A source value as the string a normalizer reads, or None when it is
+    not text at all. Normalizers are defined over strings; a typed source
+    column (numeric -> Decimal, a timestamp, an int) configured with a
+    semantic type used to reach the cache key as a Decimal and fail the
+    whole job. Bytes are decoded as UTF-8 (a ClickHouse String holding
+    invalid UTF-8 arrives as bytes, see ClickHouseConnector); bytes that do
+    not decode are not text, so None here."""
+    if value is None or isinstance(value, str):
+        return value
+    if isinstance(value, bytes):
+        try:
+            return value.decode("utf-8")
+        except UnicodeDecodeError:
+            return None
+    return str(value)
+
+
 def _sample_column_values(source: Any, table: str, columns: list[str]) -> dict[str, list[str]]:
     """First batch only — one bounded read per table, not a scan."""
     try:
@@ -234,7 +252,11 @@ def _sample_column_values(source: Any, table: str, columns: list[str]) -> dict[s
             # non-text columns; `suggest_semantic_type` is defined over the
             # string form a normalizer would actually see.
             return {
-                column: [str(v) for v in batch.column(column).to_pylist() if v is not None]
+                column: [
+                    t
+                    for v in batch.column(column).to_pylist()
+                    if (t := _source_text(v)) is not None
+                ]
                 for column in columns
             }
     except Exception:
@@ -1188,6 +1210,7 @@ def _apply_column(
         # it: the default is True, only bulk clone opts out.
         include_trace=False,
     )
+    undecodable = _decode_column(pending, column)
     distinct_values = list({row[column] for _, row in pending if row[column] is not None})
     # ADR-018 resolve stage: a value someone already decided is answered
     # from its verdict and never dispatched.
@@ -1282,6 +1305,57 @@ def _apply_column(
                     "error": "; ".join(errors),
                 }
             )
+    _restore_undecodable(
+        pending,
+        undecodable,
+        column=column,
+        table=table,
+        typed_as=typed_as,
+        errors_buffer=errors_buffer,
+    )
+
+
+def _decode_column(pending: list[tuple[int, dict[str, Any]]], column: str) -> dict[int, bytes]:
+    """Non-text source values become the string a normalizer reads, in
+    place. Bytes that are not UTF-8 are set aside (returned by offset) and
+    not normalized at all; `_restore_undecodable` puts them back."""
+    undecodable: dict[int, bytes] = {}
+    for offset, row in pending:
+        raw = row[column]
+        if raw is not None and not isinstance(raw, str):
+            row[column] = _source_text(raw)
+            if row[column] is None:
+                undecodable[offset] = raw
+    return undecodable
+
+
+def _restore_undecodable(
+    pending: list[tuple[int, dict[str, Any]]],
+    undecodable: Mapping[int, bytes],
+    *,
+    column: str,
+    table: str,
+    typed_as: str | None,
+    errors_buffer: list[dict[str, Any]],
+) -> None:
+    """The cell keeps the source bytes (NULL in a typed column, which
+    cannot hold them) and the error report says why, with the bytes shown
+    backslash-escaped."""
+    kept = "stored as NULL" if typed_as is not None else "kept unchanged"
+    for offset, row in pending:
+        raw = undecodable.get(offset)
+        if raw is None:
+            continue
+        row[column] = None if typed_as is not None else raw
+        errors_buffer.append(
+            {
+                "row_index": offset,
+                "table_name": table,
+                "field": column,
+                "original": raw.decode("utf-8", "backslashreplace"),
+                "error": f"value is not valid UTF-8; {kept}",
+            }
+        )
 
 
 def _apply_value(
@@ -1657,6 +1731,8 @@ def _scan_entity_countries(
         table, columns=[key_column, signal_column], batch_size=SOURCE_READ_BATCH_ROWS
     ):
         rows = batch.to_pylist()
+        for row in rows:
+            row[signal_column] = _source_text(row[signal_column])
         unseen = {
             row[signal_column]
             for row in rows
@@ -1680,11 +1756,11 @@ def _scan_entity_countries(
             alpha2 = alpha2_of.get(raw)
             if not alpha2:
                 continue
-            # str(): the same entity id is String in one table and
+            # Text: the same entity id is String in one table and
             # Nullable(Int64) in another on a real source, so the map is
             # keyed by the one form both sides agree on.
-            entity = str(key)
-            if entity in conflicted or (implied and entity in stated):
+            entity = _source_text(key)
+            if entity is None or entity in conflicted or (implied and entity in stated):
                 continue
             seen = mapping.setdefault(entity, alpha2)
             if seen != alpha2:
@@ -1976,7 +2052,8 @@ def _seed_from_entity_map(
         key = row.get(key_column)
         if key is None:
             continue
-        alpha2 = entity_countries.get(str(key))
+        entity = _source_text(key)
+        alpha2 = entity_countries.get(entity) if entity is not None else None
         if alpha2:
             seeded[offset] = alpha2
     return seeded

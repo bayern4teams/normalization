@@ -149,3 +149,25 @@ class TestClickHouseStreamSurvivesASlowConsumer:
                 time.sleep(timeout + 5)
         source.close()
         assert seen == rows
+
+
+class TestInvalidUtf8OnClickHouse:
+    def test_bytes_that_are_not_utf8_are_read_and_written_back_unchanged(
+        self, ch: Any, ch_db: str
+    ) -> None:
+        db = ch_q(ch_db)
+        ch.command(f"CREATE TABLE {db}.src (id UInt32, s String) ENGINE = MergeTree ORDER BY id")
+        ch.command(f"INSERT INTO {db}.src VALUES (1, 'ok'), (2, unhex('31322E3530EDA080'))")
+        source = ClickHouseConnector("s", CH_HOST, port=CH_PORT, database=ch_db, **_W)
+        rows = [
+            {k: v for k, v in r.items() if k != "source_row_key"}
+            for b in source.read_table("src")
+            for r in b.to_pylist()
+        ]
+        dest = ClickHouseDestination(CH_HOST, CH_PORT, _W["username"], _W["password"])
+        dest.create_table(ch_db, "dst", source.get_columns("src"), order_by=["id"])
+        dest.bulk_insert(ch_db, "dst", rows)
+        dest.close()
+        source.close()
+        q = "SELECT groupArray(hex(s)) FROM (SELECT s FROM {db}.{t} ORDER BY id)"
+        assert ch.command(q.format(db=db, t="dst")) == ch.command(q.format(db=db, t="src"))

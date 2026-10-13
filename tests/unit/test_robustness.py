@@ -361,7 +361,6 @@ class TestHostileIdentifiers:
 
 
 class TestNonTextSourceValues:
-    @_open("6 (Decimal / UTF-8)")
     def test_a_decimal_source_value_normalizes_instead_of_crashing(self, tmp_path: Path) -> None:
         store = _store(tmp_path)
         dest = _run_table(
@@ -369,7 +368,6 @@ class TestNonTextSourceValues:
         )
         assert dest.rows[0]["total"] == decimal.Decimal("1.98")
 
-    @_open("6 (Decimal / UTF-8)")
     def test_invalid_utf8_is_kept_as_is_with_an_error_row(self, tmp_path: Path) -> None:
         store = _store(tmp_path)
         raw = b"12.50\xed\xa0\x80"
@@ -483,3 +481,16 @@ class TestClickHouseStreamIsDrainedWhileNormalizing:
         batches = self._connector(stream).read_table("t", batch_size=10)
         next(batches)
         batches.close()  # e.g. autodetect sampling reads one batch only
+
+
+class _BadUtf8Stream(_SlowServerStream):
+    def _gen(self) -> Iterator[pa.RecordBatch]:
+        raw = pa.array([b"ok", b"12.50\xed\xa0\x80"], pa.binary())
+        yield pa.RecordBatch.from_arrays([pa.array([0, 1]), raw.view(pa.string())], ["id", "amt"])
+
+
+class TestInvalidUtf8FromClickHouse:
+    def test_the_rows_arrive_with_the_source_bytes(self) -> None:
+        connector = TestClickHouseStreamIsDrainedWhileNormalizing()._connector(_BadUtf8Stream(1))
+        (batch,) = list(connector.read_table("t", batch_size=10))
+        assert [r["amt"] for r in batch.to_pylist()] == [b"ok", b"12.50\xed\xa0\x80"]
