@@ -322,7 +322,6 @@ _SAMPLES: list[tuple[FieldSemanticType, str | None, str]] = [
 ]
 
 
-@pytest.mark.xfail(strict=False, reason="item 4 not fixed yet")
 class TestNoSilentCharacterDrop:
     def test_the_reported_value_is_ambiguous_and_keeps_the_original(self) -> None:
         dispatcher = build_dispatcher(env_id="e")

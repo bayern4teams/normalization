@@ -15,6 +15,7 @@ fixed point.
 
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING
 
 import blake3
@@ -108,7 +109,7 @@ class PhoneNormalizer:
         # `3342938xxx` became the confident `+1 334-293-8999`. A masked or
         # damaged number and a vanity number (`1-800-FLOWERS`) look the
         # same, so neither is guessed: AMBIGUOUS, original kept.
-        if phonenumbers.is_alpha_number(stripped):
+        if phonenumbers.is_alpha_number(stripped) or _ignores_a_letter(stripped, region, parsed):
             return _ambiguous_letters(value, ctx)
 
         # libphonenumber drops a `tel:` ext parameter that follows isub or
@@ -121,10 +122,8 @@ class PhoneNormalizer:
         is_possible = phonenumbers.is_possible_number(parsed)
         is_valid = phonenumbers.is_valid_number(parsed)
         e164 = phonenumbers.format_number(parsed, phonenumbers.PhoneNumberFormat.E164)
-        # ponytail: libphonenumber parses ONE extension; `+43 1 234567890x45 x46`
-        # merges the first marker into the number (variable-length bases).
-        # Upgrade: reject inputs with more than one extension marker if this
-        # shows up in data.
+        # libphonenumber parses ONE extension; with two markers it merges the
+        # first into the number, and `_ignores_a_letter` refuses that value.
         # RFC 3966 is the only standard form that carries an extension, so it
         # is the comparison key exactly when one is present. E.164 stays the
         # key otherwise (unchanged bytes). `search` stays extension-free.
@@ -299,6 +298,36 @@ def _resolve_region(
 
 def _ambiguous_no_region(value: str, ctx: NormalizationContext) -> NormalizedValue:
     return _ambiguous(value, ctx, structured={"region_source": "unknown"})
+
+
+_LETTER_RUN_RE = re.compile(r"[^\W\d_]+")
+
+
+def _ignores_a_letter(text: str, region: str | None, parsed: phonenumbers.PhoneNumber) -> bool:
+    """True when some letters in the number could be deleted without
+    changing what libphonenumber reads: it did not read them.
+
+    libphonenumber converts three or more letters (keypad) and drops fewer
+    without a word, so a damaged digit (an `O` for a 0) became a confident
+    number with that digit missing. Deleting a letter that WAS read changes
+    the parse: an
+    extension marker (`x12`, `ext. 12`) takes its digits with it. Only the
+    number's own span is checked, from the first digit (or a letter glued
+    to it, `(O334)`): a `tel:` scheme or a `Tel: ` label before it, and URI
+    parameters after `;`, are not digits' places.
+    """
+    start = next((i for i, ch in enumerate(text) if ch.isdigit()), len(text))
+    while start > 0 and text[start - 1].isalpha():
+        start -= 1
+    end = text.find(";", start)
+    for match in _LETTER_RUN_RE.finditer(text, start, end if end >= 0 else len(text)):
+        try:
+            unread = phonenumbers.parse(text[: match.start()] + text[match.end() :], region)
+        except phonenumbers.NumberParseException:
+            continue
+        if unread == parsed:
+            return True
+    return False
 
 
 def _ambiguous_letters(value: str, ctx: NormalizationContext) -> NormalizedValue:

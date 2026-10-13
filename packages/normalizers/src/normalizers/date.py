@@ -23,15 +23,15 @@ normalizer emits it — its one producer is an adjudicated value, ADR-018.)
 from __future__ import annotations
 
 import re
-from functools import lru_cache
+from functools import cache, lru_cache
 from itertools import permutations
 from typing import TYPE_CHECKING
 
 import blake3
 import ciso8601
-import dateparser
 import pyarrow as pa
 from dateparser.date import DateDataParser
+from dateparser.languages.loader import default_loader
 from edtf import natlang as edtf_natlang
 from edtf import parser as edtf_parser
 from normcore.context import NormalizationContext
@@ -46,6 +46,8 @@ from normcore.models import NormalizedValue
 from normcore.pii import character_class_mask, content_hash
 from normcore.rules import ComponentVersionInfo, ExplanationText, ValidationOutcome
 from normcore.trace import TraceStep
+
+from normalizers import text_ops
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -211,6 +213,64 @@ def _drop_unknown_components(value: str) -> str | None:
     return truncated if truncated != value else None
 
 
+_LETTER_RUN_RE = re.compile(r"[^\W\d_]+")
+
+
+@cache
+def _skip_words(locale: str) -> frozenset[str]:
+    """The words dateparser's data for `locale` says carry no date meaning."""
+    return frozenset(w.casefold() for w in default_loader.get_locale(locale).info.get("skip", []))
+
+
+def _letter_beside_a_digit_unread(text: str, locale: str | None) -> bool:
+    """True when a letter beside a digit is the shape of a damaged digit
+    that the parser did not read as a digit.
+
+    With no language given, dateparser tries every locale and keeps the
+    first that parses, so a stray letter in a damaged numeric date is some
+    language's word and vanishes: `1O/15/2024` became 2024-01-15 (Polish
+    skip word `o`), `l2:34:56` became 02:34:56 (Estonian `L`, Saturday). Two
+    shapes are refused:
+    - letters that all read as digits under Unicode TR39 (`O`, `I`, `l`),
+      glued to a digit;
+    - a value whose only words are filler in the detected language, one of
+      them glued to a digit: it gave the parser no language of its own.
+    Ordinals (`15th March`) and prepositions (`on 15 March`) still parse:
+    `th` is not a look-alike and `March` is not filler; `on` touches no digit.
+    """
+    runs = list(_LETTER_RUN_RE.finditer(text))
+    glued = [
+        m
+        for m in runs
+        if (m.start() > 0 and text[m.start() - 1].isdigit())
+        or (m.end() < len(text) and text[m.end()].isdigit())
+    ]
+    if not glued:
+        return False
+    if any(text_ops.is_digit_lookalike(m.group()) for m in glued):
+        return True
+    skip = _skip_words(locale) if locale else frozenset()
+    return all(m.group().casefold() in skip for m in runs)
+
+
+def _unread_letter(original: str, ctx: NormalizationContext) -> NormalizedValue:
+    return NormalizedValue(
+        original=original,
+        display=original,
+        structured={"assumption": None},
+        validation_status="AMBIGUOUS",
+        normalization_status=NormalizationStatus.AMBIGUOUS,
+        confidence=0.0,
+        errors=["a letter beside the digits was not read: a damaged digit, not guessed"],
+        trace=[_parse_trace_step(original, changed=False)],
+        lossiness=Reversibility.LOSSLESS,
+        profile_version="",
+        env_id="",
+        semantic_type=ctx.semantic_type,
+        context_hash=ctx.context_hash,
+    )
+
+
 def _parse_partial(candidate: str, date_order: str | None) -> tuple[str, str] | None:
     """`(iso_text, precision)` at the precision the input actually states,
     or None."""
@@ -221,6 +281,7 @@ def _parse_partial(candidate: str, date_order: str | None) -> tuple[str, str] | 
     parsed, period = data.date_obj, data.period
     if (
         parsed is None
+        or _letter_beside_a_digit_unread(candidate, data.locale)
         or period not in ("year", "month", "day")
         or not _year_is_supported(parsed.year, candidate)
     ):
@@ -416,7 +477,9 @@ class DateNormalizer:
     def can_handle(self, field_type: FieldSemanticType, ctx: NormalizationContext) -> bool:
         return field_type in self.supported_types
 
-    def normalize(self, value: str | None, ctx: NormalizationContext) -> NormalizedValue:
+    def normalize(  # noqa: PLR0911 - one early return per refusal, each named
+        self, value: str | None, ctx: NormalizationContext
+    ) -> NormalizedValue:
         if value is None:
             return _missing(None, MissingKind.NULL, ctx)
         if value.strip() == "":
@@ -444,7 +507,11 @@ class DateNormalizer:
         settings = dict(_DATEPARSER_SETTINGS_BASE)
         if date_order is not None:
             settings["DATE_ORDER"] = date_order
-        parsed = dateparser.parse(cleaned, settings=settings)
+        # What `dateparser.parse` does, keeping the locale it detected.
+        data = DateDataParser(settings=settings).get_date_data(cleaned)
+        parsed = data.date_obj
+        if parsed is not None and _letter_beside_a_digit_unread(cleaned, data.locale):
+            return _unread_letter(value, ctx)
 
         if (
             parsed is None

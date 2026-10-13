@@ -96,8 +96,7 @@ def test_residual_extension_digits_fold_to_ascii() -> None:
 
 
 @pytest.mark.unit
-@pytest.mark.xfail(
-    strict=True, reason="residual: two markers merge the first extension into the number"
-)
 def test_residual_two_markers_do_not_yield_a_confident_valid() -> None:
+    # Was a strict xfail. Fixed in fix/followups by the unread-letter rule:
+    # the first marker's `x` is a letter libphonenumber did not read.
     assert norm("+43 1 234567890x45 x46").validation_status != "VALID"

@@ -49,7 +49,7 @@ from normcore.pii import character_class_mask, content_hash
 from normcore.rules import ComponentVersionInfo, ExplanationText, ValidationOutcome
 from normcore.trace import TraceStep
 
-from normalizers.currency import CurrencyNormalizer
+from normalizers.currency import CurrencyNormalizer, resolve_name
 from normalizers.numeric import NumericNormalizer
 
 if TYPE_CHECKING:
@@ -222,10 +222,23 @@ class MoneyNormalizer:
             return None, True
         if _SINGLE_LETTER_RE.match(currency_text):
             return None, False
+        code = self._resolve(currency_text, ctx)
+        if code is not None:
+            # CURRENCY finds a code anywhere in its text ("SKU USD"), so the
+            # `O` of a damaged `1234.56O USD` was dropped the same way. The
+            # amount is already split off here, so several words must BE a
+            # currency name ("US dollar"); otherwise some were not read.
+            unread = (
+                len(currency_text.split()) > 1 and resolve_name(currency_text.casefold()) is None
+            )
+            return (None, False) if unread else (code, True)
+        return None, not _HAS_LETTER_RE.search(currency_text)
+
+    def _resolve(self, currency_text: str, ctx: NormalizationContext) -> str | None:
         resolved = self._currency.normalize(currency_text, _as(ctx, FieldSemanticType.CURRENCY))
         if resolved.normalization_status is NormalizationStatus.NORMALIZED:
-            return resolved.comparison, True
-        return None, not _HAS_LETTER_RE.search(currency_text)
+            return resolved.comparison
+        return None
 
     def normalize_batch(self, values: pa.Array, ctx: NormalizationContext) -> pa.StructArray:
         results = [self.normalize(v, ctx) for v in values.to_pylist()]

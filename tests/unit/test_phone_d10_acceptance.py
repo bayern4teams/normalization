@@ -184,6 +184,15 @@ class TestNoExtensionOutputUnchanged:
                 assert got["status"] == "AMBIGUOUS", row["value"]
                 assert got["display"] == row["value"]
                 continue
+            # fix/followups: so are fewer letters libphonenumber did not read
+            # (`x45`, a dangling `... x`); only ever toward AMBIGUOUS, kept.
+            if (
+                got != row["out"]
+                and any(ch.isalpha() for ch in row["value"])
+                and got["status"] == "AMBIGUOUS"
+                and got["display"] == row["value"]
+            ):
+                continue
             if got != row["out"]:
                 moved.append((row["value"], row["country"], row["default_region"]))
         assert moved == [], f"{len(moved)} extension-free outputs changed, e.g. {moved[:5]}"
