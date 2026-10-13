@@ -82,9 +82,11 @@ class CloneJobStateError(RuntimeError):
 
 
 def create_database_sql(database: str) -> str:
-    """Decision #6's one-line f-string — not a method, not a class. Valid
-    verbatim DDL text on both Postgres and ClickHouse."""
-    return f"CREATE DATABASE {database};"
+    """Decision #6's one-liner — not a method, not a class. Valid verbatim
+    DDL text on both Postgres and ClickHouse: both read a double-quoted
+    identifier with `""` as an escaped quote (checked live on both)."""
+    quoted = database.replace('"', '""')
+    return f'CREATE DATABASE "{quoted}";'
 
 
 def bootstrap_database(engine: str) -> str:

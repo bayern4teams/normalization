@@ -8,12 +8,18 @@ non-Arrow-native drivers.
 
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING
 
 import clickhouse_connect
 import pyarrow as pa
 
 from normio.connector import ColumnInfo
+from normio.connectors.clickhouse_destination import quote_identifier
+
+# One element of `system.tables.sorting_key`, which ClickHouse formats with
+# a name backquoted (and escaped) only when it needs it: `a.b`, `b\`t`, id.
+_SORTING_KEY_PART = re.compile(r"`((?:[^`\\]|\\.)*)`|([^,\s][^,]*)")
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Sequence
@@ -94,7 +100,10 @@ class ClickHouseConnector:
             parameters={"db": self._database, "t": table},
         )
         engine, sorting_key = result.result_rows[0]
-        order_by = [c.strip() for c in sorting_key.split(",") if c.strip()]
+        order_by = [
+            re.sub(r"\\(.)", r"\1", quoted) if quoted else bare.strip()
+            for quoted, bare in _SORTING_KEY_PART.findall(sorting_key)
+        ]
         return engine, order_by
 
     def _list_columns(self, table: str) -> set[str]:
@@ -127,7 +136,7 @@ class ClickHouseConnector:
             if unknown:
                 msg = f"Unknown columns for table {table!r}: {sorted(unknown)}"
                 raise ValueError(msg)
-            column_list = ", ".join(f"`{c}`" for c in columns)
+            column_list = ", ".join(map(quote_identifier, columns))
         else:
             column_list = "*"
         # ORDER BY the table's own sorting key, ALWAYS. ClickHouse gives no
@@ -156,8 +165,8 @@ class ClickHouseConnector:
         # the same comma-split that Phase 1 already uses to CREATE the
         # destination table's ORDER BY — if that DDL was valid, this is.
         _, order_by = self.get_table_engine_info(table)
-        order_clause = " ORDER BY " + ", ".join(f"`{c}`" for c in order_by) if order_by else ""
-        query = f"SELECT {column_list} FROM `{table}`{order_clause}"
+        order_clause = " ORDER BY " + ", ".join(map(quote_identifier, order_by)) if order_by else ""
+        query = f"SELECT {column_list} FROM {quote_identifier(table)}{order_clause}"
 
         # query_arrow() (what this used to call) materializes the ENTIRE
         # result set as one in-memory Arrow table before yielding the first

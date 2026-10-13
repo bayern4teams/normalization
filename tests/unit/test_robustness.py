@@ -319,7 +319,6 @@ _HOSTILE_NAMES = ["organisasjonsform.kode", "zip code", "x-y", "p:q", "50%", 'qu
 
 
 class TestHostileIdentifiers:
-    @_open("4 (identifiers)")
     def test_postgres_destination_creates_and_inserts_any_column_name(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -336,7 +335,6 @@ class TestHostileIdentifiers:
             got = conn.execute(sa.text('SELECT * FROM "ta""ble.x"')).mappings().all()
         assert [dict(r) for r in got] == rows
 
-    @_open("4 (identifiers)")
     def test_clickhouse_destination_escapes_backticks(self) -> None:
         sent: list[str] = []
 
@@ -353,7 +351,6 @@ class TestHostileIdentifiers:
         assert "`t\\`x`" in ddl
         assert ddl.count("`") % 2 == ddl.count("\\`") % 2  # every unescaped backtick is paired
 
-    @_open("4 (identifiers)")
     def test_create_database_sql_quotes_the_name(self) -> None:
         assert clone_executor.create_database_sql('my"db') == 'CREATE DATABASE "my""db";'
 
