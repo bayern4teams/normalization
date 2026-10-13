@@ -393,15 +393,17 @@ class TestNoSilentCharacterDrop:
         assert r.comparison == "2024-03-15"
 
 
-# --- 5. Scheduled workflows run commands that exist ------------------------------
+# --- 5. Workflows that run on their own call commands that exist ------------------------------
 
 
-def _scheduled_run_lines() -> list[tuple[str, str]]:
+def _triggered_run_lines() -> list[tuple[str, str]]:
+    """`run:` lines of every workflow that starts on its own (a schedule, a
+    push or a pull request), not only when someone dispatches it."""
     lines = []
     for path in sorted((_ROOT / ".github" / "workflows").glob("*.yml")):
         spec = yaml.safe_load(path.read_text())
         triggers = spec.get(True) or spec.get("on") or {}  # YAML 1.1 reads `on` as True
-        if "schedule" not in triggers:
+        if not {"schedule", "push", "pull_request"} & set(triggers):
             continue
         for job in spec["jobs"].values():
             for step in job.get("steps", []):
@@ -410,18 +412,28 @@ def _scheduled_run_lines() -> list[tuple[str, str]]:
     return lines
 
 
-@pytest.mark.xfail(strict=True, reason="item 5 not fixed yet")
-class TestScheduledWorkflowsCanRun:
+# gate.yml (push to milestone/** only; last run 2026-08-29) and release.yml
+# (tags) call normcli commands that were never built. Logged in REPORT.md §10,
+# not fixed here; a ratchet, so building one or breaking another workflow
+# both show up.
+_KNOWN_MISSING = {("gate.yml", c) for c in ("bench-compare", "run", "diff", "sbom", "gate")} | {
+    ("release.yml", "sbom")
+}
+
+
+class TestTriggeredWorkflowsCanRun:
     def test_every_normcli_command_they_call_exists(self) -> None:
-        missing = []
-        for name, line in _scheduled_run_lines():
+        missing, seen = [], 0
+        for name, line in _triggered_run_lines():
             for command in re.findall(r"-m normcli ([\w-]+)", line):
+                seen += 1
                 try:
                     normcli_main([command, "--help"])
                 except SystemExit as exc:
                     if exc.code != 0:
                         missing.append((name, command))
-        assert missing == []
+        assert seen > 0  # the check is not vacuous
+        assert set(missing) == _KNOWN_MISSING
 
     def test_every_pytest_option_they_pass_exists(self) -> None:
         help_text = subprocess.run(
@@ -431,12 +443,14 @@ class TestScheduledWorkflowsCanRun:
             cwd=_ROOT,
             check=False,
         ).stdout
-        missing = []
-        for name, line in _scheduled_run_lines():
+        missing, seen = [], 0
+        for name, line in _triggered_run_lines():
             if "pytest" not in line:
                 continue
             for token in shlex.split(line.split("||")[0]):
                 option = token.split("=")[0]
+                seen += option.startswith("--")
                 if option.startswith("--") and option not in help_text:
                     missing.append((name, option))
+        assert seen > 0  # the check is not vacuous
         assert missing == []

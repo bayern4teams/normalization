@@ -202,7 +202,7 @@ its milestone, phase, module, and test location.
 | `ci-fast.yml` | every push | lint, types, unit + fast golden subset (<3 min) |
 | `ci-full.yml` | every PR | full matrix: unit, golden, property, contract, coverage, license gate, audit, secret scan, compose integration (<25 min) |
 | `gate.yml` | manual dispatch / `milestone/*` branch | sign-off precondition, full `ci-full` scope, benchmarks, determinism replay, mutation testing (M8+), E2E, SBOM, verification pack generation (<90 min) |
-| `drift.yml` | nightly | re-resolve deps to latest, run golden corpus, diff against expectations, open an issue on any change |
+| `drift.yml` | manual only: not scheduled until built (see its header) | re-resolve deps to latest, run golden corpus, diff against expectations, open an issue on any change |
 | `release.yml` | tag `milestone/M*` | build/sign images, publish release with pack + SBOM + baseline |
 
 ## 12. Security and PII posture (§123)

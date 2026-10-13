@@ -26,7 +26,7 @@ bug to fix immediately.
 
 | Name | Version (pinned range) | License | Source | Purpose | Transitive risk | Upgrade notes |
 |---|---|---|---|---|---|---|
-| PyICU | >=2.14,<3 | ICU License | [pypi.org/project/pyicu](https://pypi.org/project/pyicu/) | Unicode normalization, case mapping, script detection, SpoofChecker | Wheel availability per-platform (see `cgohlke/pyicu-build` for Windows) | ICU version bump = `env_id` change; run nightly drift job before bumping |
+| PyICU | >=2.14,<3 | ICU License | [pypi.org/project/pyicu](https://pypi.org/project/pyicu/) | Unicode normalization, case mapping, script detection, SpoofChecker | Wheel availability per-platform (see `cgohlke/pyicu-build` for Windows) | ICU version bump = `env_id` change; run the drift job before bumping (not built yet; see drift.yml) |
 | ftfy | >=6.3,<7 | Apache-2.0 | [github.com/rspeer/python-ftfy](https://github.com/rspeer/python-ftfy) | Mojibake detection/repair | Low — pure Python, no native deps | Heuristic changes across versions can shift repair output; golden corpus catches this |
 | charset-normalizer | >=3.4,<4 | MIT | PyPI | Encoding detection | Low | Low-risk incremental updates |
 | anyascii | >=0.3.2,<1 | ISC | [github.com/anyascii/anyascii](https://github.com/anyascii/anyascii) | ASCII transliteration (Unidecode replacement) | Low | Table updates can change transliteration output; feeds `env_id` |
@@ -38,7 +38,7 @@ bug to fix immediately.
 | cleanco | >=2.3,<3 | MIT | [pypi.org/project/cleanco](https://pypi.org/project/cleanco/) | Company suffix stripping (secondary source) | Low — small, stable library | Suffix list updates rare |
 | phonenumbers | >=8.13,<9 | Apache-2.0 | [github.com/daviddrysdale/python-phonenumbers](https://github.com/daviddrysdale/python-phonenumbers) | Phone parsing/validation | Low | Metadata releases can change validity for specific numbers — feeds `env_id` |
 | email-validator | >=2.2,<3 | Unlicense | [github.com/JoshData/python-email-validator](https://github.com/JoshData/python-email-validator) | Email syntax/normalization | Low | `check_deliverability=False` must be re-verified as default after every upgrade |
-| dateparser | >=1.4.2,<2 | BSD-3-Clause | [github.com/scrapinghub/dateparser](https://github.com/scrapinghub/dateparser) | Multilingual date parsing | **Medium** — historically small volunteer maintainer base | Monitor via nightly drift job; no maintained fork identified as needed currently |
+| dateparser | >=1.4.2,<2 | BSD-3-Clause | [github.com/scrapinghub/dateparser](https://github.com/scrapinghub/dateparser) | Multilingual date parsing | **Medium** — historically small volunteer maintainer base | Monitor via the drift job (not built yet; see drift.yml); no maintained fork identified as needed currently |
 | edtf | >=5.0,<6 | MIT | [github.com/ixc/python-edtf](https://github.com/ixc/python-edtf) | EDTF / ISO 8601-2 dates: decades, intervals, uncertainty | **Low** — small, stable, no new transitive deps (needs only python-dateutil and pyparsing, both already present) | Keeps a decade (`1990s`) from being flattened to a year; dateparser cannot express qualified or range-valued dates |
 | python-dateutil | >=2.9,<3 | Apache-2.0/BSD dual | PyPI | ISO-adjacent date parsing fallback | Low | — |
 | ciso8601 | >=2.3,<3 | MIT | PyPI | Fast-path ISO 8601 parsing | Low — C extension, has wheels for all target platforms | — |

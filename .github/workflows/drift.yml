@@ -7,9 +7,19 @@ name: drift
 # lock, runs the full golden corpus against that environment, and diffs
 # output against the corpus's committed expectations.
 
+# NOT SCHEDULED (fix/followups, 2026-10-13). This job has never been able to
+# run: it failed every day from at least 2026-10-09 on three missing pieces,
+# none of which exists anywhere in the repo:
+#   - the pytest option `--golden-report` (no plugin registers it);
+#   - the CLI command `normcli drift-diff` (normcli has check-traceability,
+#     mutation-score-gate, gold and calibrate);
+#   - the committed expectations under tests/golden/expectations/.
+# A scheduled job that is always red hides real failures, so the cron
+# trigger is removed until those three are built (a golden-results reporter,
+# a diff command over its JSON, and a snapshot of the corpus outputs on the
+# pinned lock). tests/unit/test_followups.py fails if a scheduled workflow
+# calls a normcli command or pytest option that does not exist.
 on:
-  schedule:
-    - cron: "17 3 * * *" # 03:17 UTC daily — arbitrary offset to avoid GitHub's on-the-hour load spike
   workflow_dispatch: {}
 
 jobs:
