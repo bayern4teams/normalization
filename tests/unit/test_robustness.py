@@ -144,7 +144,6 @@ def _errors(store: PgPersistence) -> list[dict[str, Any]]:
 
 
 class TestNulInAPersistedValue:
-    @_open("1 (D1 NUL)")
     def test_the_job_continues_and_the_error_row_keeps_the_original(self, tmp_path: Path) -> None:
         store = _store(tmp_path)
         raw = "1,234\x00"
@@ -156,7 +155,6 @@ class TestNulInAPersistedValue:
         assert json.loads(stored) == raw  # recoverable, byte for byte
         assert "NUL" in by_original[stored]["error"]
 
-    @_open("1 (D1 NUL)")
     def test_the_queue_accepts_a_nul_original(self, tmp_path: Path) -> None:
         store = _store(tmp_path)
         store.create_clone_job("j", {})
