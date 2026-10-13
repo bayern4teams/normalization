@@ -266,11 +266,9 @@ class TestAutodetectIsOffByDefault:
             store, request=request, registry=build_normalizer_registry()
         )
 
-    @_open("3 (autodetect)")
     def test_the_request_default_is_off(self) -> None:
         assert CloneJobCreateRequest.model_fields["autodetect_field_types"].default is False
 
-    @_open("3 (autodetect)")
     def test_nothing_is_applied_but_every_column_gets_a_suggestion(
         self, store: PgPersistence
     ) -> None:
@@ -290,7 +288,6 @@ class TestAutodetectIsOffByDefault:
         job = self._create(store, autodetect_field_types=True)
         assert job["field_configs"] == job["inferred_field_configs"]
 
-    @_open("3 (autodetect)")
     def test_the_plan_shows_the_suggestion_next_to_each_column(
         self, store: PgPersistence, monkeypatch: pytest.MonkeyPatch
     ) -> None:

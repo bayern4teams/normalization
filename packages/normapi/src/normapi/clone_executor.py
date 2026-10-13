@@ -144,8 +144,11 @@ def build_destination_writer(conn: dict[str, Any]) -> PostgresDestination | Clic
 # normalizers for all three the whole time.
 #
 # `suggest_semantic_type` (normanalysis, §61) already does the detection and
-# already checks its own guess against real values. This just calls it for
-# the columns nobody configured. Three properties make that safe:
+# already checks its own guess against real values. This calls it for the
+# columns nobody configured and records the result as a SUGGESTION
+# (`suggested_field_types`, shown per column by the plan). Applying it is
+# opt-in, per job or per column (fix/robustness: applied by default it
+# corrupted whole columns on real data, see `create_clone_job`). When opted in:
 #   - an explicit config ALWAYS wins; inference only fills gaps,
 #   - only a guess confirmed by real sampled values clears the threshold,
 #   - what was inferred is written to the job as `inferred_field_configs`,
@@ -166,6 +169,7 @@ _AUTODETECT_SAMPLE_ROWS = int(os.environ.get("NORM_CLONE_AUTODETECT_SAMPLE_ROWS"
 # nobody configured — far too broad to do on a guess. An operator who wants
 # it can still ask for it explicitly.
 _NEVER_INFERRED = frozenset({FieldSemanticType.FREE_TEXT, FieldSemanticType.UNKNOWN})
+_REPORTED = frozenset(t.value for t in FieldSemanticType) - {t.value for t in _NEVER_INFERRED}
 
 # Detection only applies to columns the SOURCE stores as text. A column the
 # source already types as timestamp/boolean/numeric/uuid has no
@@ -239,24 +243,23 @@ def _sample_column_values(source: Any, table: str, columns: list[str]) -> dict[s
     return {}
 
 
-def _infer_field_configs(
+def _suggest_field_types(
     source: Any,
     tables: list[str],
     explicit: dict[str, dict[str, str | None]],
     registry: NormalizerRegistry,
     *,
-    fallback_free_text: bool = False,
     country: str | None = None,
     locale: str | None = None,
-) -> dict[str, dict[str, str]]:
-    """`fallback_free_text` sweeps every remaining textual column into
-    FREE_TEXT: unicode normalization, zero-width strip, whitespace collapse,
-    punctuation folding. Off by default because folding is lossy — an en
-    dash becomes a hyphen, and `(2018-present)` was not wrong to begin with
-    — so it is an operator's call, not a guess this can make. Measured
-    against an independently produced reference of a 13-table source, it
-    accounted for every remaining prose difference."""
-    inferred: dict[str, dict[str, str]] = {}
+) -> dict[str, dict[str, dict[str, Any]]]:
+    """What detection would pick for every unconfigured textual column,
+    with the evidence: `validated_share` is the share of the sampled
+    values the suggested type's own validator accepts, under the job's
+    country and locale. A suggestion only; nothing here writes a value.
+
+    Every column gets an entry, FREE_TEXT included: the job keeps only the
+    real suggestions (`_REPORTED`), the FREE_TEXT sweep needs the rest."""
+    suggested: dict[str, dict[str, dict[str, Any]]] = {}
     for table in tables:
         configured = explicit.get(table, {})
         keys = set(_key_columns(source, table))
@@ -269,21 +272,80 @@ def _infer_field_configs(
             continue
         samples = _sample_column_values(source, table, unconfigured)
         for column in unconfigured:
+            sample = samples.get(column)
             best = suggest_semantic_type(
-                column,
-                sample_values=samples.get(column),
-                registry=registry,
-                country=country,
-                locale=locale,
+                column, sample_values=sample, registry=registry, country=country, locale=locale
             )[0]
+            suggested.setdefault(table, {})[column] = {
+                "semantic_type": best.semantic_type.value,
+                "confidence": best.confidence,
+                "validated_share": _validated_share(
+                    registry, best.semantic_type, sample or [], country, locale
+                ),
+                "sampled": len(sample or []),
+                "reason": best.reason,
+            }
+    return suggested
+
+
+def _validated_share(
+    registry: NormalizerRegistry,
+    semantic_type: FieldSemanticType,
+    sample: list[str],
+    country: str | None,
+    locale: str | None,
+) -> float | None:
+    normalizer = registry.get(semantic_type)
+    if normalizer is None or not sample:
+        return None
+    ctx = NormalizationContext(
+        field_name="__suggestion__", semantic_type=semantic_type, country=country, locale=locale
+    )
+    return sum(1 for v in sample if normalizer.validate(v, ctx).is_valid) / len(sample)
+
+
+def _applied_types(
+    suggested: Mapping[str, Mapping[str, Mapping[str, Any]]],
+    *,
+    autodetect: bool,
+    fallback_free_text: bool,
+) -> dict[str, dict[str, str]]:
+    """Which suggestions become field configs. With `autodetect` off (the
+    default) none do; `fallback_free_text` sweeps every column not given a
+    type into FREE_TEXT: unicode normalization, zero-width strip,
+    whitespace collapse, punctuation folding. Also off by default because
+    folding is lossy — an en dash becomes a hyphen, and `(2018-present)` was
+    not wrong to begin with — so it is an operator's call, not a guess this
+    can make."""
+    applied: dict[str, dict[str, str]] = {}
+    for table, columns in suggested.items():
+        for column, s in columns.items():
             if (
-                best.confidence >= _AUTODETECT_MIN_CONFIDENCE
-                and best.semantic_type not in _NEVER_INFERRED
+                autodetect
+                and s["confidence"] >= _AUTODETECT_MIN_CONFIDENCE
+                and s["semantic_type"] in _REPORTED
             ):
-                inferred.setdefault(table, {})[column] = best.semantic_type.value
+                applied.setdefault(table, {})[column] = s["semantic_type"]
             elif fallback_free_text:
-                inferred.setdefault(table, {})[column] = FieldSemanticType.FREE_TEXT.value
-    return inferred
+                applied.setdefault(table, {})[column] = FieldSemanticType.FREE_TEXT.value
+    return applied
+
+
+def _infer_field_configs(
+    source: Any,
+    tables: list[str],
+    explicit: dict[str, dict[str, str | None]],
+    registry: NormalizerRegistry,
+    *,
+    fallback_free_text: bool = False,
+    country: str | None = None,
+    locale: str | None = None,
+) -> dict[str, dict[str, str]]:
+    """What an opted-in job (`autodetect_field_types: true`) applies."""
+    suggested = _suggest_field_types(
+        source, tables, explicit, registry, country=country, locale=locale
+    )
+    return _applied_types(suggested, autodetect=True, fallback_free_text=fallback_free_text)
 
 
 def _require_tables(source: Any, tables: list[str], request: Mapping[str, Any]) -> None:
@@ -354,17 +416,16 @@ def create_clone_job(
         request["source_database"] if in_place else request["destination_database"]
     )
     explicit_configs = request["field_configs"]
-    inferred_configs: dict[str, dict[str, str]] = {}
+    suggested: dict[str, dict[str, dict[str, Any]]] = {}
     try:
         tables = list(source.list_tables())
         _require_tables(source, tables, request)
-        if registry is not None and request.get("autodetect_field_types", True):
-            inferred_configs = _infer_field_configs(
+        if registry is not None:
+            suggested = _suggest_field_types(
                 source,
                 tables,
                 explicit_configs,
                 registry,
-                fallback_free_text=request.get("normalize_unconfigured_text", False),
                 # The job's own country/locale, so a column is judged by
                 # the same context that will normalize it. Without them a
                 # real PHONE column is demoted for holding phones a
@@ -374,6 +435,19 @@ def create_clone_job(
             )
     finally:
         source.close()
+    # Off by default. Applied to whole columns, a confident wrong guess
+    # rewrote every value with no error row and no original kept: on real
+    # data 499,985 of 500,000 French SIRENs became phone numbers, US state
+    # `al` became Albania, marital status S/M became the currencies SOS/LSL.
+    # Detection still runs and the plan shows each suggestion with its
+    # evidence; a column is normalized only by an explicit type (in the
+    # request, or set from the plan via PATCH .../plan) or by opting the
+    # whole job in.
+    inferred_configs = _applied_types(
+        suggested,
+        autodetect=request.get("autodetect_field_types", False),
+        fallback_free_text=request.get("normalize_unconfigured_text", False),
+    )
 
     # Explicit always wins, per column — inference only fills the gaps.
     field_configs = {
@@ -398,6 +472,10 @@ def create_clone_job(
         "tables": tables,
         "field_configs": field_configs,
         "inferred_field_configs": inferred_configs,
+        "suggested_field_types": {
+            table: {c: v for c, v in columns.items() if v["semantic_type"] in _REPORTED}
+            for table, columns in suggested.items()
+        },
         "typed_destination_columns": request.get("typed_destination_columns", True),
         "country": request.get("country"),
         "locale": request.get("locale"),
@@ -678,6 +756,7 @@ def plan_job(persistence: PgPersistence, job_id: str) -> dict[str, Any]:
     source_conn = _require_connection(persistence, job["source_connection_id"])
     source = build_source_connector(source_conn, job["source_database"], job.get("source_schema"))
     inferred = job.get("inferred_field_configs", {})
+    suggested = job.get("suggested_field_types", {})
     tables = []
     try:
         for table in job["tables"]:
@@ -699,6 +778,9 @@ def plan_job(persistence: PgPersistence, job_id: str) -> dict[str, Any]:
                             "decided_by": _decided_by(
                                 column.name, plan["semantic_types"], inferred.get(table, {})
                             ),
+                            # Detection's guess and its evidence, never applied
+                            # unless opted in: copy it into field_configs to use it.
+                            "suggestion": suggested.get(table, {}).get(column.name),
                             "destination_type": plan["column_overrides"].get(column.name),
                             "companion_column": companions.get(column.name),
                         }

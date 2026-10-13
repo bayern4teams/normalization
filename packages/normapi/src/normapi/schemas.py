@@ -205,11 +205,13 @@ class CloneJobCreateRequest(BaseModel):
     # source (see the validator below).
     destination_connection_id: str = ""
     destination_database: str = ""
-    # Columns absent from `field_configs` get their semantic type detected
-    # from the column name plus a sample of real values; an explicit entry
-    # always overrides the guess. Off means "clone anything I did not list
-    # verbatim", which is what this did before detection existed.
-    autodetect_field_types: bool = True
+    # Off by default: a column absent from `field_configs` is cloned
+    # verbatim. Detection still runs and the plan (`GET .../plan`) shows its
+    # suggestion per column with the share of sampled values that validate;
+    # opt a column in by giving it that type (here or via PATCH .../plan).
+    # On applies every confident suggestion to the whole job; an explicit
+    # entry always overrides the guess.
+    autodetect_field_types: bool = False
     # Sweep every remaining textual column into FREE_TEXT (unicode
     # normalization, zero-width strip, whitespace collapse, punctuation
     # folding). Off by default: folding is lossy, so it is the operator's
