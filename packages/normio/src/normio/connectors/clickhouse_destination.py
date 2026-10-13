@@ -150,6 +150,12 @@ class ClickHouseDestination:
             f"CREATE TABLE {quote_identifier(database)}.{quote_identifier(table)} ({column_defs}) "
             f"ENGINE = {engine} ORDER BY ({order_clause})"
         )
+        if "MergeTree" in engine:
+            # Remember the last block's dedup token, so a resume that replays
+            # it is dropped (`bulk_insert`). One: a job has one block in
+            # flight per table, and the DDL has no PARTITION BY, so one
+            # INSERT is one block.
+            ddl += " SETTINGS non_replicated_deduplication_window = 1"
         self._client_for(database).command(ddl)
 
     @staticmethod
@@ -212,9 +218,12 @@ class ClickHouseDestination:
         rows: Sequence[Mapping[str, object]],
         *,
         primary_key: Sequence[str] = (),
+        dedup_token: str | None = None,
     ) -> None:
         """One INSERT, so one part: the caller sizes the block
-        (`insert_block_rows`) and checkpoints after it."""
+        (`insert_block_rows`) and checkpoints after it. `dedup_token` makes
+        a resumed job's replay of a block that had already committed a
+        no-op (ClickHouse has no ON CONFLICT); see `create_table`."""
         if not rows:
             return
         columns = list(rows[0].keys())
@@ -226,7 +235,8 @@ class ClickHouseDestination:
         # pass column_type_names with pre-quoted names if one turns up.
         full_table = f"{quote_identifier(database)}.{quote_identifier(table)}"
         data = [[row[c] for c in columns] for row in rows]
-        client.insert(full_table, data, column_names=columns)
+        settings = {"insert_deduplication_token": dedup_token} if dedup_token else None
+        client.insert(full_table, data, column_names=columns, settings=settings)
 
     def swap_table(self, database: str, table: str, staging: str) -> None:
         """Replace `table` with `staging`, then drop the original.

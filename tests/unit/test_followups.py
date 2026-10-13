@@ -217,7 +217,6 @@ class _CrashOnSave:
         return save
 
 
-@pytest.mark.xfail(strict=True, reason="item 2 not fixed yet")
 class TestResumeAfterFailure:
     def test_one_insert_per_block_carrying_its_dedup_token(self) -> None:
         dest, client = _ch_dest()

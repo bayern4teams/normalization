@@ -1007,7 +1007,7 @@ def start_phase2(
     cache: NormalizationCache | None,
     job_id: str,
 ) -> bool:
-    """Claims the job (SCHEMA_READY|RUNNING -> RUNNING) and starts Phase 2
+    """Claims the job (SCHEMA_READY|RUNNING|FAILED -> RUNNING) and starts Phase 2
     on a daemon thread. Returns False without starting a new thread if
     either the claim fails (wrong state — 409 at the route level) or a
     thread for this job is already alive in this process."""
@@ -2146,7 +2146,15 @@ def _normalize_table(
         nonlocal checkpoint
         if not block:
             return
-        dest.bulk_insert(job["destination_database"], write_target, block, primary_key=primary_key)
+        # The same block gets the same token on a resume, so a block that
+        # committed just before a crash is not written twice (ClickHouse).
+        dest.bulk_insert(
+            job["destination_database"],
+            write_target,
+            block,
+            primary_key=primary_key,
+            dedup_token=f"{job_id}:{table}:{checkpoint + 1}-{block_last}",
+        )
         if block_errors:
             persistence.save_clone_job_errors(job_id, block_errors)
         checkpoint = block_last
@@ -2240,6 +2248,7 @@ def _run_phase2(
     job = persistence.get_clone_job(job_id)
     if job is None:
         raise CloneJobNotFoundError(job_id)
+    job.pop("error", None)  # a resumed FAILED job is no longer failing
     source_conn = _require_connection(persistence, job["source_connection_id"])
     dest_conn = _require_connection(persistence, job["destination_connection_id"])
     source = build_source_connector(source_conn, job["source_database"], job.get("source_schema"))

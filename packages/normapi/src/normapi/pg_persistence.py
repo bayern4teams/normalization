@@ -710,19 +710,21 @@ class PgPersistence:
         return [json.loads(r[0]) for r in rows]
 
     def claim_clone_job(self, job_id: str) -> bool:
-        """Atomic SCHEMA_READY|RUNNING -> RUNNING transition, same
+        """Atomic SCHEMA_READY|RUNNING|FAILED -> RUNNING transition, same
         conditional-UPDATE-with-rowcount pattern as `claim_run_for_execution`
         — RUNNING is an allowed source state too (not just SCHEMA_READY)
         so re-clicking start on an orphaned (crashed) job can resume it,
-        per decision #10; the executor's own re-stream-and-skip logic is
-        what makes that resume safe, not this claim."""
+        per decision #10, and FAILED for the same reason: OnTime failed after
+        four hours on one INSERT and nothing could resume it. The executor's
+        own re-stream-and-skip logic is what makes that resume safe, not
+        this claim."""
         with self._engine.begin() as conn:
             result = conn.execute(
                 sa.text(
                     "UPDATE normalization_clone_jobs SET data = "
                     "jsonb_set(data::jsonb, '{status}', '\"RUNNING\"')::text "
                     "WHERE job_id = :jid "
-                    "AND (data::jsonb ->> 'status') IN ('SCHEMA_READY', 'RUNNING')"
+                    "AND (data::jsonb ->> 'status') IN ('SCHEMA_READY', 'RUNNING', 'FAILED')"
                 ),
                 {"jid": job_id},
             )
