@@ -8,8 +8,12 @@ non-Arrow-native drivers.
 
 from __future__ import annotations
 
+import os
+import queue
 import re
-from typing import TYPE_CHECKING
+import tempfile
+import threading
+from typing import TYPE_CHECKING, Any
 
 import clickhouse_connect
 import pyarrow as pa
@@ -22,7 +26,7 @@ from normio.connectors.clickhouse_destination import quote_identifier
 _SORTING_KEY_PART = re.compile(r"`((?:[^`\\]|\\.)*)`|([^,\s][^,]*)")
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator, Sequence
+    from collections.abc import Callable, Iterator, Sequence
 
 
 class ClickHouseConnector:
@@ -162,7 +166,7 @@ class ClickHouseConnector:
         # there is no full-sort memory spike.
         #
         # The key comes from `get_table_engine_info`, the same source and
-        # the same comma-split that Phase 1 already uses to CREATE the
+        # the same sorting-key parse that Phase 1 already uses to CREATE the
         # destination table's ORDER BY — if that DDL was valid, this is.
         _, order_by = self.get_table_engine_info(table)
         order_clause = " ORDER BY " + ", ".join(map(quote_identifier, order_by)) if order_by else ""
@@ -191,17 +195,78 @@ class ClickHouseConnector:
         # found by running it, not by reading the docs. Slicing works
         # identically on both types, so this needs no isinstance branch and
         # survives the driver settling on either one.
-        with self._client.query_arrow_stream(query) as stream:
-            row_offset = 0
-            for block in stream:
-                for start in range(0, block.num_rows, batch_size):
-                    batch = block.slice(start, batch_size)
-                    keys = pa.array(
-                        [f"{table}:{row_offset + i}" for i in range(batch.num_rows)],
-                        type=pa.large_string(),
-                    )
-                    yield batch.append_column("source_row_key", keys)
-                    row_offset += batch.num_rows
+        yield from _spooled(lambda: self._client.query_arrow_stream(query), table, batch_size)
 
     def close(self) -> None:
         self._client.close()
+
+
+_SPOOL_OPTIONS = pa.ipc.IpcWriteOptions(compression="zstd")
+
+
+def _spooled(
+    open_stream: Callable[[], Any], table: str, batch_size: int
+) -> Iterator[pa.RecordBatch]:
+    """The server stream, drained on a background thread into compressed
+    Arrow files on local disk, and yielded from there.
+
+    Reading the HTTP stream lazily meant not reading it at all while the
+    caller normalized a chunk. ClickHouse gives up on a client that stops
+    reading for `http_send_timeout` (30 s by default, a server setting a
+    read-only user cannot change): OnTime died twice that way, after
+    155,648 and 296,478 of 1,598,468 rows, with SOCKET_TIMEOUT on the
+    server and an IncompleteRead on the client minutes later. Draining here
+    means the server is never waiting on normalization; memory stays at a
+    block, and each file is deleted as soon as it has been read back. The
+    one SELECT also keeps its snapshot of the table, which paging with
+    LIMIT/OFFSET would not.
+
+    ponytail: disk holds whatever is drained but not yet consumed, at most
+    the whole table compressed, under $TMPDIR. Add a byte cap that pauses
+    the drain (well inside the server timeout) if a disk ever fills.
+    """
+    ready: queue.Queue[str | BaseException | None] = queue.Queue()
+    stop = threading.Event()
+    with tempfile.TemporaryDirectory(prefix="norm-ch-spool-") as spool:
+
+        def drain() -> None:
+            try:
+                with open_stream() as stream:
+                    for n, block in enumerate(stream):
+                        if stop.is_set():
+                            return
+                        path = os.path.join(spool, f"{n}.arrow")
+                        with (
+                            pa.OSFile(path, "wb") as sink,
+                            pa.ipc.new_file(sink, block.schema, options=_SPOOL_OPTIONS) as out,
+                        ):
+                            out.write(block)
+                        ready.put(path)
+                ready.put(None)
+            except BaseException as exc:  # re-raised in the reader
+                ready.put(exc)
+
+        drainer = threading.Thread(target=drain, name=f"ch-spool:{table}", daemon=True)
+        drainer.start()
+        try:
+            row_offset = 0
+            while (item := ready.get()) is not None:
+                if isinstance(item, BaseException):
+                    raise item
+                with pa.OSFile(item) as source:
+                    block = pa.ipc.open_file(source).read_all().combine_chunks()
+                os.remove(item)
+                # Re-sliced to `batch_size` (the executor's checkpoint
+                # boundary); `.slice()` is zero-copy.
+                for batch in block.to_batches():
+                    for start in range(0, batch.num_rows, batch_size):
+                        part = batch.slice(start, batch_size)
+                        keys = pa.array(
+                            [f"{table}:{row_offset + i}" for i in range(part.num_rows)],
+                            type=pa.large_string(),
+                        )
+                        yield part.append_column("source_row_key", keys)
+                        row_offset += part.num_rows
+        finally:
+            stop.set()
+            drainer.join()

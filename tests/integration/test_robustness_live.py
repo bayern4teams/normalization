@@ -9,6 +9,7 @@ defaults are compose.yaml's, the same as test_clone_pipeline.py.
 from __future__ import annotations
 
 import os
+import time
 import uuid
 from typing import TYPE_CHECKING, Any
 
@@ -119,3 +120,32 @@ class TestIdentifiers:
         dest.close()
         source.close()
         assert ch.command(f"SELECT count() FROM {ch_q(ch_db)}.{ch_q('out.x')}") == 5
+
+
+class TestClickHouseStreamSurvivesASlowConsumer:
+    def test_a_pause_longer_than_the_server_send_timeout_loses_nothing(
+        self, ch: Any, ch_db: str
+    ) -> None:
+        """Incompressible rows so the result outgrows every socket buffer, then a
+        pause longer than the server's http_send_timeout (30 s by default) after
+        the first batch, the shape of one slow chunk. Before the fix the server
+        dropped the stream (57,344 of 400,000 rows arrived)."""
+        rows = 400_000
+        ch.command(
+            f"CREATE TABLE {ch_q(ch_db)}.noise (id UInt64, s String) ENGINE = MergeTree ORDER BY id"
+        )
+        ch.command(
+            f"INSERT INTO {ch_q(ch_db)}.noise "
+            f"SELECT number, randomPrintableASCII(200) FROM numbers({rows})"
+        )
+        timeout = int(
+            ch.command("SELECT value FROM system.settings WHERE name = 'http_send_timeout'")
+        )
+        source = ClickHouseConnector("s", CH_HOST, port=CH_PORT, database=ch_db, **_W)
+        seen = 0
+        for i, batch in enumerate(source.read_table("noise", batch_size=100_000)):
+            seen += batch.num_rows
+            if i == 0:
+                time.sleep(timeout + 5)
+        source.close()
+        assert seen == rows

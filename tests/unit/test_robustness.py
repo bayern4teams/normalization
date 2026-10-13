@@ -10,6 +10,7 @@ import decimal
 import json
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
 
@@ -26,6 +27,7 @@ from normcore.context import NormalizationContext
 from normcore.enums import FieldSemanticType, NormalizationStatus
 from normexec.planner import DistinctValuePlanner
 from normio.connector import ColumnInfo
+from normio.connectors import ClickHouseConnector
 from normio.connectors.clickhouse_destination import ClickHouseDestination
 from normio.connectors.postgres_destination import PostgresDestination
 
@@ -417,3 +419,67 @@ class TestEveryUnitTestIsSelectedByCi:
         ).stdout
         selected = [line for line in out.splitlines() if "::" in line]
         assert selected == [], f"{len(selected)} tests escape ci-fast, e.g. {selected[:3]}"
+
+
+# --- 5. ClickHouse stream drained while the consumer works ---------------------
+
+
+class _SlowServerStream:
+    """A server stream that records how far it has been read."""
+
+    def __init__(self, blocks: int) -> None:
+        self.pulled = 0
+        self._blocks = blocks
+
+    def __enter__(self) -> Iterator[pa.RecordBatch]:
+        return self._gen()
+
+    def __exit__(self, *exc: object) -> None:
+        pass
+
+    def _gen(self) -> Iterator[pa.RecordBatch]:
+        for i in range(self._blocks):
+            self.pulled += 1
+            yield pa.RecordBatch.from_pydict({"id": [i * 10 + j for j in range(10)]})
+
+
+class TestClickHouseStreamIsDrainedWhileNormalizing:
+    def _connector(self, stream: _SlowServerStream) -> Any:
+        class _Client:
+            def query(self, sql: str, parameters: Any = None) -> Any:
+                class _R:
+                    result_rows: ClassVar[list[Any]] = (
+                        [["t"]]
+                        if "system.tables WHERE database" in sql and "engine" not in sql
+                        else [["MergeTree", "id"]]
+                    )
+
+                return _R()
+
+            def query_arrow_stream(self, sql: str) -> _SlowServerStream:
+                return stream
+
+        connector = ClickHouseConnector.__new__(ClickHouseConnector)
+        connector._client = _Client()
+        connector._database = "d"
+        return connector
+
+    def test_the_server_stream_is_read_to_the_end_while_the_first_batch_is_in_use(self) -> None:
+        stream = _SlowServerStream(blocks=50)
+        batches = self._connector(stream).read_table("t", batch_size=10)
+        first = next(batches)
+        deadline = time.time() + 5
+        while stream.pulled < 50 and time.time() < deadline:
+            time.sleep(0.01)
+        assert stream.pulled == 50, f"only {stream.pulled} of 50 blocks read while busy"
+        rest = list(batches)
+        ids = [i for b in [first, *rest] for i in b.column("id").to_pylist()]
+        keys = [k for b in [first, *rest] for k in b.column("source_row_key").to_pylist()]
+        assert ids == list(range(500))
+        assert keys == [f"t:{i}" for i in range(500)]
+
+    def test_an_abandoned_read_stops_and_cleans_up(self) -> None:
+        stream = _SlowServerStream(blocks=5)
+        batches = self._connector(stream).read_table("t", batch_size=10)
+        next(batches)
+        batches.close()  # e.g. autodetect sampling reads one batch only
