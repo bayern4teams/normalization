@@ -298,29 +298,32 @@ def _resolve_region(
 
 
 def _ambiguous_no_region(value: str, ctx: NormalizationContext) -> NormalizedValue:
-    return NormalizedValue(
-        original=value,
-        display=value,
-        normalization_status=NormalizationStatus.AMBIGUOUS,
-        validation_status="AMBIGUOUS",
-        confidence=0.0,
-        structured={"region_source": "unknown"},
-        profile_version="",
-        env_id="",
-        semantic_type=ctx.semantic_type,
-        context_hash=ctx.context_hash,
-    )
+    return _ambiguous(value, ctx, structured={"region_source": "unknown"})
 
 
 def _ambiguous_letters(value: str, ctx: NormalizationContext) -> NormalizedValue:
+    return _ambiguous(
+        value,
+        ctx,
+        errors=["letters in the number: keypad letters or a damaged number, not guessed"],
+    )
+
+
+def _ambiguous(
+    value: str,
+    ctx: NormalizationContext,
+    *,
+    structured: dict[str, object] | None = None,
+    errors: list[str] | None = None,
+) -> NormalizedValue:
     return NormalizedValue(
         original=value,
         display=value,
         normalization_status=NormalizationStatus.AMBIGUOUS,
         validation_status="AMBIGUOUS",
         confidence=0.0,
-        errors=["letters in the number: keypad letters or a damaged number, not guessed"],
-        structured={},
+        structured=structured or {},
+        errors=errors or [],
         profile_version="",
         env_id="",
         semantic_type=ctx.semantic_type,
