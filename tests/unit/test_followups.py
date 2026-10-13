@@ -191,6 +191,63 @@ class TestClickHouseInsertBlocks:
         assert dest.insert_block_rows("d", wide) == 268402944 // row_bytes
 
 
+# --- 6. Low-cardinality columns are normalized once per job ------------------
+
+
+class TestDistinctValuesAreRememberedAcrossChunks:
+    def _calls(self, tmp_path: Path, values: list[str], rows: int) -> int:
+        calls = 0
+        dispatcher = build_dispatcher(env_id="e")
+        real = dispatcher.normalize
+
+        def counting(*a: Any, **k: Any) -> Any:
+            nonlocal calls
+            calls += 1
+            return real(*a, **k)
+
+        dispatcher.normalize = counting  # type: ignore[method-assign]
+        job = _job()
+        _normalize_table(
+            "t",
+            job=job,
+            job_id="j",
+            source=_Source(_batches(rows, 2000, values)),
+            dest=_DedupDest(block_rows=2000),
+            source_engine="clickhouse",
+            persistence=_store(tmp_path),
+            planner=DistinctValuePlanner(dispatcher, None),
+            pool=None,
+            progress=job["progress"],
+            in_place=False,
+            entity_countries={},
+            adjudication=None,
+        )
+        return calls
+
+    def test_a_column_with_three_values_costs_three_calls_not_three_per_chunk(
+        self, tmp_path: Path
+    ) -> None:
+        calls = self._calls(tmp_path, ["1.00", "2.00", "not money"], rows=20_000)
+        # 3 values, plus the idempotence re-check of the 2 displays; was 5 per
+        # chunk (50) before.
+        assert calls <= 5
+
+    def test_a_copied_context_hashes_its_own_fields(self) -> None:
+        """Found by the memo: `model_copy` kept the cached hash, so the
+        no-country retry of a cross-table country was keyed as the
+        country context and served its result."""
+        france = _ctx(FieldSemanticType.PHONE, "FR")
+        assert france.context_hash  # cached now
+        nowhere = france.model_copy(update={"country": None})
+        assert nowhere.context_hash == _ctx(FieldSemanticType.PHONE, None).context_hash
+        assert nowhere.context_hash != france.context_hash
+
+    def test_a_high_cardinality_column_is_still_bounded(self, tmp_path: Path) -> None:
+        dispatcher_values = [f"{i}.00" for i in range(6000)]
+        calls = self._calls(tmp_path, dispatcher_values, rows=6000)
+        assert calls >= 6000  # every value once at least: the memo never invents hits
+
+
 # --- 2. A FAILED job resumes from its last committed block ---------------------
 
 

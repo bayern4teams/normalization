@@ -1127,10 +1127,48 @@ def _normalize_distinct(
     context: NormalizationContext,
     profile: Any,
 ) -> dict[str, Any]:
-    """Distinct-value normalization, fanned across the pool when there is
-    enough work to pay for the IPC. Falls back to the in-process planner
-    for a missing pool, a small batch, or ANY worker failure — a pool
-    problem must degrade this job to "slower", never to "failed"."""
+    """Distinct-value normalization, remembered across the job's chunks and
+    fanned across the pool when there is enough work to pay for the IPC.
+
+    The planner dedups within a chunk only, so a column with few distinct
+    values paid for each of them again in every chunk: OnTime's WheelsOn
+    has 1,441 distinct values in 1.6M rows, ~937 per 2,000-row chunk, each
+    ~0.16 s in dateparser (cProfile), about 800 times over. Results are
+    kept per (type, context, profile) up to one read batch of distinct
+    values, the size one chunk already holds; past that the memo starts
+    over, so a high-cardinality column costs what it did before and memory
+    stays bounded."""
+    memo = planner.memo.setdefault((semantic_type, context.context_hash, profile.version), {})
+    hits = {v: memo[v] for v in distinct_values if v in memo}
+    computed = _compute_distinct(
+        pool,
+        planner,
+        [v for v in distinct_values if v not in memo],
+        semantic_type=semantic_type,
+        context=context,
+        profile=profile,
+    )
+    if len(memo) + len(computed) > SOURCE_READ_BATCH_ROWS:
+        memo.clear()
+    if len(computed) <= SOURCE_READ_BATCH_ROWS:
+        memo.update(computed)
+    return {**hits, **computed}
+
+
+def _compute_distinct(
+    pool: ProcessPoolExecutor | None,
+    planner: DistinctValuePlanner,
+    distinct_values: list[str],
+    *,
+    semantic_type: FieldSemanticType,
+    context: NormalizationContext,
+    profile: Any,
+) -> dict[str, Any]:
+    """Falls back to the in-process planner for a missing pool, a small
+    batch, or ANY worker failure — a pool problem must degrade this job to
+    "slower", never to "failed"."""
+    if not distinct_values:
+        return {}
     if pool is None or len(distinct_values) < _PARALLEL_MIN_VALUES:
         return planner.distinct_value_results(distinct_values, semantic_type, context, profile)
 
@@ -1604,11 +1642,16 @@ def _drop_rejected_country(
             # "the inferred country does not fit" about those would be a
             # misleading report row for a decision that changed nothing.
             continue
-        result.errors.append(
-            f"country {country} inferred from a sibling table does not fit this value; "
-            "normalized without it"
+        # A copy: results are shared across chunks (`_normalize_distinct`).
+        by_value[value] = result.model_copy(
+            update={
+                "errors": [
+                    *result.errors,
+                    f"country {country} inferred from a sibling table does not fit this "
+                    "value; normalized without it",
+                ]
+            }
         )
-        by_value[value] = result
 
 
 # A cross-table entity map is held in memory for the whole of Phase 2, one
@@ -2281,11 +2324,9 @@ def _run_phase2(
     # cardinality. The planner already treats None as "no cache tiers"
     # (normexec/planner.py), and the per-chunk `set()` of distinct values
     # below still dedups within a chunk, which is where the cheap win is.
-    # ponytail: unconditional None, not a cardinality-adaptive switch —
-    # genuinely low-cardinality columns (COUNTRY, BOOLEAN) now re-dispatch
-    # once per chunk instead of once per job. Add the adaptive version
-    # (sample the first chunk, keep the cache below ~50% uniqueness) only
-    # if that re-dispatch volume shows up in a real run's timings.
+    # Low-cardinality columns are remembered across chunks in memory instead
+    # (the planner's memo, bounded per column in `_normalize_distinct`): the
+    # re-dispatch this used to cost showed up in OnTime's timings.
     planner = DistinctValuePlanner(dispatcher, None)
     pool = _make_pool(dispatcher.env_id)
     progress = job["progress"]
