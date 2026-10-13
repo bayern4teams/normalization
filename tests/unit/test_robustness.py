@@ -40,11 +40,6 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.unit
 
 
-def _open(item: str) -> pytest.MarkDecorator:
-    """Reproducer of a bug not fixed yet at this commit (removed by its fix)."""
-    return pytest.mark.xfail(strict=True, reason=f"fix/robustness item {item}")
-
-
 _ROOT = Path(__file__).resolve().parents[2]
 _NOT_UNIT = ("-q", "-m", "not unit", "tests/unit")
 
@@ -405,7 +400,6 @@ class TestPhoneLettersAreNotDigits:
 
 
 class TestEveryUnitTestIsSelectedByCi:
-    @_open("7 (CI gap)")
     def test_nothing_under_tests_unit_lacks_the_unit_marker(self) -> None:
         out = subprocess.run(
             [sys.executable, "-m", "pytest", "--collect-only", *_NOT_UNIT],
