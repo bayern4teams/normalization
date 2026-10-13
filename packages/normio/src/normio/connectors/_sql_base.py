@@ -133,8 +133,19 @@ def _rows_to_batch(
     for row in rows:
         for i, value in enumerate(row):
             columns_data[i].append(value)
-    arrays = [pa.array(col) for col in columns_data]
+    arrays = [_to_arrow(col) for col in columns_data]
     keys = pa.array(
         [f"{table_name}:{row_offset + i}" for i in range(len(rows))], type=pa.large_string()
     )
     return pa.RecordBatch.from_arrays([*arrays, keys], names=[*column_names, "source_row_key"])
+
+
+def _to_arrow(values: list[object]) -> pa.Array:
+    """Arrow's own type inference, and for a Python type it has none for
+    (`uuid.UUID`: Pagila's PG18 uuidv7 key failed Phase 2 on its first
+    batch; also ranges, `inet`) the value's text, which is how the source
+    prints it and what Postgres casts back on insert."""
+    try:
+        return pa.array(values)
+    except (pa.ArrowInvalid, pa.ArrowTypeError):
+        return pa.array([None if v is None else str(v) for v in values], type=pa.string())

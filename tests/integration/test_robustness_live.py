@@ -195,10 +195,11 @@ class TestPostgresPassthroughTypes:
                 "CREATE TYPE mpaa_rating AS ENUM ('G', 'PG', 'NC-17');"
                 "CREATE TABLE film (film_id serial PRIMARY KEY, release_year year,"
                 " rating mpaa_rating, special_features text[], tags integer[],"
-                " email citext, price numeric(4,2), title varchar(20));"
+                " email citext, price numeric(4,2), title varchar(20), ref uuid);"
                 "INSERT INTO film (release_year, rating, special_features, tags, email,"
-                " price, title) VALUES (2006, 'NC-17', '{Trailers,\"Deleted Scenes\"}',"
-                " '{1,2}', 'A@B.org', 4.99, 'ACADEMY DINOSAUR')"
+                " price, title, ref) VALUES (2006, 'NC-17', '{Trailers,\"Deleted Scenes\"}',"
+                " '{1,2}', 'A@B.org', 4.99, 'ACADEMY DINOSAUR',"
+                " '019faa23-3a85-7d8b-9bf9-98d90b5d03a4')"
             )
         source = PostgresConnector("s", _pg_dsn(pg_db))
         columns = source.get_columns("film")
@@ -214,7 +215,7 @@ class TestPostgresPassthroughTypes:
         dest.close()
         q = (
             "SELECT release_year::text, rating::text, special_features::text, tags::text,"
-            " email::text, price::text, title FROM film"
+            " email::text, price::text, title, ref::text FROM film"
         )
         with psycopg.connect(_pg_dsn(pg_db)) as a, psycopg.connect(_pg_dsn(pg_db2)) as b:
             assert b.execute(q).fetchall() == a.execute(q).fetchall()
