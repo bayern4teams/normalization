@@ -124,6 +124,10 @@ class CompanyNormalizer:
             raise NormalizerFailure(msg, operation="unicode_process") from exc
 
         legal_name = unicode_result.final_value
+        if legal_name.strip() == "":
+            # only invisible/control characters (a soft hyphen): same as "", or
+            # re-normalizing the '' display would disagree with this pass
+            return _missing(value, MissingKind.EMPTY_STRING, ctx)
         trace = build_unicode_trace(unicode_result, enabled=ctx.include_trace)
 
         match = _find_suffix_match(legal_name, self._suffixes)

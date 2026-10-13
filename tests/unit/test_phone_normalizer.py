@@ -118,6 +118,49 @@ class TestExtensions:
         result = normalizer.normalize("+1 415-555-2671", _ctx())
         assert result.structured["extension"] is None
 
+    def test_extension_makes_comparison_rfc3966(self, normalizer: PhoneNormalizer) -> None:
+        a = normalizer.normalize("+1 415-555-2671 ext. 123", _ctx())
+        b = normalizer.normalize("+1 415-555-2671 ext. 124", _ctx())
+        assert a.comparison == a.structured["rfc3966"]
+        assert a.comparison.endswith(";ext=123")
+        assert a.comparison != b.comparison
+        assert a.search == "+14155552671"
+
+    def test_no_extension_comparison_stays_e164(self, normalizer: PhoneNormalizer) -> None:
+        result = normalizer.normalize("+1 415-555-2671", _ctx())
+        assert result.comparison == "+14155552671"
+        assert ";ext=" not in str(result.structured["rfc3966"])
+
+    def test_comparison_with_extension_is_a_fixed_point(self, normalizer: PhoneNormalizer) -> None:
+        first = normalizer.normalize("+1 415-555-2671 x45", _ctx())
+        again = normalizer.normalize(first.comparison, _ctx())
+        assert again.comparison == first.comparison
+
+    @pytest.mark.parametrize(
+        "text", ["tel:+14155552671;isub=123;ext=5", "tel:555-1234;phone-context=+1-415;ext=9"]
+    )
+    def test_uri_ext_after_isub_or_context_is_not_dropped(
+        self, normalizer: PhoneNormalizer, text: str
+    ) -> None:
+        result = normalizer.normalize(text, _ctx(country="US"))
+        assert result.structured["extension"] is not None
+        assert result.comparison == result.structured["rfc3966"]
+        assert result.comparison.endswith(f";ext={result.structured['extension']}")
+
+    def test_duplicate_uri_ext_is_never_confident(self, normalizer: PhoneNormalizer) -> None:
+        result = normalizer.normalize("tel:+14155552671;ext=5;ext=6", _ctx(country="US"))
+        assert result.validation_status != "VALID"
+
+    def test_non_ascii_digit_extension_equals_ascii(self, normalizer: PhoneNormalizer) -> None:
+        ascii_ = normalizer.normalize("+1 415-555-2671 x12", _ctx())
+        arabic = normalizer.normalize("+1 415-555-2671 x\u0661\u0662", _ctx())
+        assert arabic.comparison == ascii_.comparison
+        assert arabic.structured["extension"] == "12"
+
+    def test_regionless_national_tel_uri_stays_ambiguous(self, normalizer: PhoneNormalizer) -> None:
+        result = normalizer.normalize("tel:415-555-2671;ext=45", _ctx())
+        assert result.normalization_status is NormalizationStatus.AMBIGUOUS
+
 
 @pytest.mark.unit
 class TestInvalidNumbers:

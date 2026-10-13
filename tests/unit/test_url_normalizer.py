@@ -192,3 +192,41 @@ class TestBareHostnameRepair:
     def test_original_is_preserved_through_a_repair(self, normalizer: URLNormalizer) -> None:
         result = normalizer.normalize("www.example.com", _ctx())
         assert result.original == "www.example.com"
+
+
+@pytest.mark.unit
+class TestRegistrableDomain:
+    """D9: PSL-derived keys are additive and abstain rather than guess."""
+
+    def test_host_with_non_domain_characters_abstains(self, normalizer: URLNormalizer) -> None:
+        s = normalizer.normalize("http://a b.com/", _ctx()).structured
+        assert s["registrable_domain"] is None
+        assert s["registrable_domain_reason"] == "host has characters a domain name cannot carry"
+
+    @pytest.mark.parametrize(
+        ("value", "domain", "suffix", "private"),
+        [
+            ("https://b.a.co.uk/x", "a.co.uk", "co.uk", False),
+            ("https://x.github.io/", "x.github.io", "github.io", True),
+            ("https://例え.jp/", "xn--r8jz45g.jp", "jp", False),
+        ],
+    )
+    def test_listed_suffix(
+        self, normalizer: URLNormalizer, value: str, domain: str, suffix: str, private: bool
+    ) -> None:
+        s = normalizer.normalize(value, _ctx()).structured
+        assert (s["registrable_domain"], s["public_suffix"], s["is_private_suffix"]) == (
+            domain,
+            suffix,
+            private,
+        )
+        assert s["registrable_domain_reason"] is None
+
+    @pytest.mark.parametrize(
+        "value", ["http://192.0.2.1/", "http://localhost/", "http://foo.notatld/"]
+    )
+    def test_abstains_with_reason(self, normalizer: URLNormalizer, value: str) -> None:
+        result = normalizer.normalize(value, _ctx())
+        assert result.normalization_status is NormalizationStatus.NORMALIZED
+        assert result.structured["registrable_domain"] is None
+        assert result.structured["registrable_domain_reason"]

@@ -131,8 +131,51 @@ CREATE TABLE IF NOT EXISTS normalization_clone_job_errors (
     error TEXT NOT NULL,
     PRIMARY KEY (job_id, row_index, table_name, field)
 );
+
+CREATE TABLE IF NOT EXISTS normalization_adjudication_queue (
+    key TEXT PRIMARY KEY,
+    semantic_type TEXT NOT NULL,
+    context_hash TEXT NOT NULL,
+    profile_version TEXT NOT NULL,
+    context TEXT NOT NULL,
+    original TEXT NOT NULL,
+    detail TEXT NOT NULL,
+    first_job_id TEXT NOT NULL,
+    last_job_id TEXT NOT NULL,
+    occurrences INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS normalization_adjudication_verdicts (
+    key TEXT NOT NULL,
+    semantic_type TEXT NOT NULL,
+    context_hash TEXT NOT NULL,
+    profile_version TEXT NOT NULL,
+    decided_value TEXT NOT NULL,
+    decided_display TEXT,
+    decided_by TEXT NOT NULL,
+    decided_at TEXT NOT NULL,
+    rationale TEXT NOT NULL,
+    confidence DOUBLE PRECISION,
+    env_id TEXT NOT NULL,
+    PRIMARY KEY (key, decided_at)
+);
+
+CREATE TABLE IF NOT EXISTS normalization_lineage_events (
+    run_id TEXT NOT NULL,
+    event_type TEXT NOT NULL,
+    job_id TEXT NOT NULL,
+    table_name TEXT NOT NULL,
+    event_time TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    PRIMARY KEY (run_id, event_type)
+);
+CREATE INDEX IF NOT EXISTS normalization_lineage_events_job
+    ON normalization_lineage_events (job_id);
 """
-# The last statement retires the original one-blob-per-run table this
+# The adjudication tables are ADR-018: the queue holds one row per
+# (value, context, profile) key and the verdicts are append-only — the
+# newest row for a key wins, nothing is ever updated or deleted.
+# The DROP statement retires the original one-blob-per-run table this
 # schema replaces — safe on a table that only ever held this audit's own
 # test data, never real user data (v1, first deployment).
 
@@ -150,7 +193,7 @@ class PgPersistence:
 
     def ensure_schema(self) -> None:
         with self._engine.begin() as conn:
-            for raw_statement in _SCHEMA.strip().split(";\n\n"):
+            for raw_statement in _SCHEMA.strip().split(";\n"):
                 statement = raw_statement.strip()
                 if statement:
                     conn.execute(sa.text(statement))
@@ -750,6 +793,176 @@ class PgPersistence:
             }
             for row_index, table_name, field, original, error in rows
         ]
+
+    # --- lineage (D3) ---
+
+    def save_lineage_event(self, job_id: str, table: str, event: dict[str, Any]) -> None:
+        """One OpenLineage run event. A run has at most one event of each
+        type, so a replayed write is a no-op rather than a duplicate."""
+        with self._engine.begin() as conn:
+            conn.execute(
+                sa.text(
+                    "INSERT INTO normalization_lineage_events "
+                    "(run_id, event_type, job_id, table_name, event_time, payload) "
+                    "VALUES (:run, :type, :jid, :table, :time, :payload) "
+                    "ON CONFLICT (run_id, event_type) DO NOTHING"
+                ),
+                {
+                    "run": event["run"]["runId"],
+                    "type": event["eventType"],
+                    "jid": job_id,
+                    "table": table,
+                    "time": event["eventTime"],
+                    "payload": json.dumps(event),
+                },
+            )
+
+    def list_lineage_events(self, job_id: str) -> list[dict[str, Any]]:
+        with self._engine.begin() as conn:
+            rows = conn.execute(
+                sa.text(
+                    "SELECT payload FROM normalization_lineage_events "
+                    "WHERE job_id = :jid ORDER BY event_time, table_name, "
+                    # a START and its terminal event can share a timestamp
+                    "CASE event_type WHEN 'START' THEN 0 ELSE 1 END"
+                ),
+                {"jid": job_id},
+            ).scalars()
+            return [json.loads(row) for row in rows]
+
+    # --- adjudication (ADR-018) ---
+
+    def save_clone_job_and_enqueue(
+        self, job_id: str, data: dict[str, Any], queued: Sequence[dict[str, Any]]
+    ) -> None:
+        """Queue upserts and the checkpoint that covers them, in ONE
+        transaction: a chunk re-run on resume was by definition not
+        checkpointed, so its occurrences were not counted either, and
+        cannot be counted twice. `occurrences` is per job — a later job
+        that sees the value again restarts the count rather than adding a
+        re-read of the same rows to it."""
+        with self._engine.begin() as conn:
+            if queued:
+                conn.execute(
+                    sa.text(
+                        "INSERT INTO normalization_adjudication_queue AS q "
+                        "(key, semantic_type, context_hash, profile_version, context, "
+                        "original, detail, first_job_id, last_job_id, occurrences) "
+                        "VALUES (:key, :semantic_type, :context_hash, :profile_version, "
+                        ":context, :original, :detail, :job_id, :job_id, :occurrences) "
+                        "ON CONFLICT (key) DO UPDATE SET "
+                        "occurrences = CASE WHEN q.last_job_id = excluded.last_job_id "
+                        "THEN q.occurrences + excluded.occurrences "
+                        "ELSE excluded.occurrences END, "
+                        "last_job_id = excluded.last_job_id, detail = excluded.detail"
+                    ),
+                    [{**item, "job_id": job_id} for item in queued],
+                )
+            conn.execute(
+                sa.text("UPDATE normalization_clone_jobs SET data = :data WHERE job_id = :jid"),
+                {"jid": job_id, "data": json.dumps(data)},
+            )
+
+    def load_verdicts(
+        self, *, semantic_type: str, context_hash: str, profile_version: str
+    ) -> dict[str, dict[str, Any]]:
+        """Every current verdict for one context, newest per key.
+
+        One read per context per job, not per chunk: verdicts are made by
+        a person (or, later, an agent) one queue entry at a time, so the
+        set for one column's context is small next to the column."""
+        # ponytail: whole-context load; switch to a keyed IN-lookup per
+        # chunk if an agent decider ever produces millions of verdicts.
+        with self._engine.begin() as conn:
+            rows = conn.execute(
+                sa.text(
+                    f"SELECT {_VERDICT_COLUMNS} FROM normalization_adjudication_verdicts "
+                    "WHERE semantic_type = :st AND context_hash = :ch AND profile_version = :pv "
+                    "ORDER BY decided_at"
+                ),
+                {"st": semantic_type, "ch": context_hash, "pv": profile_version},
+            ).mappings()
+            return {row["key"]: dict(row) for row in rows}
+
+    def add_verdict(self, verdict: dict[str, Any]) -> None:
+        """Append-only: a newer row for the same key supersedes, nothing
+        is updated or deleted (the verdict history is the audit trail)."""
+        columns = _VERDICT_COLUMNS.split(", ")
+        with self._engine.begin() as conn:
+            conn.execute(
+                sa.text(
+                    f"INSERT INTO normalization_adjudication_verdicts ({_VERDICT_COLUMNS}) "
+                    f"VALUES ({', '.join(':' + c for c in columns)})"
+                ),
+                {c: verdict[c] for c in columns},
+            )
+
+    def list_verdicts(self, key: str) -> list[dict[str, Any]]:
+        with self._engine.begin() as conn:
+            rows = conn.execute(
+                sa.text(
+                    f"SELECT {_VERDICT_COLUMNS} FROM normalization_adjudication_verdicts "
+                    "WHERE key = :key ORDER BY decided_at"
+                ),
+                {"key": key},
+            ).mappings()
+            return [dict(row) for row in rows]
+
+    def get_queue_entry(self, key: str) -> dict[str, Any] | None:
+        with self._engine.begin() as conn:
+            row = (
+                conn.execute(
+                    sa.text(f"{_QUEUE_SELECT} WHERE q.key = :key"),
+                    {"key": key},
+                )
+                .mappings()
+                .first()
+            )
+        return dict(row) if row is not None else None
+
+    def list_queue(
+        self, *, semantic_type: str | None, decided: bool | None, limit: int, offset: int
+    ) -> tuple[int, list[dict[str, Any]]]:
+        """One page of the queue and the total the filters match."""
+        where, params = _queue_filter(semantic_type, decided)
+        with self._engine.begin() as conn:
+            total = conn.execute(
+                sa.text(f"SELECT count(*) FROM ({_QUEUE_SELECT}{where}) AS f"), params
+            ).scalar_one()
+            rows = conn.execute(
+                sa.text(
+                    f"{_QUEUE_SELECT}{where} "
+                    "ORDER BY q.occurrences DESC, q.key LIMIT :limit OFFSET :offset"
+                ),
+                {**params, "limit": limit, "offset": offset},
+            ).mappings()
+            return int(total), [dict(row) for row in rows]
+
+
+_VERDICT_COLUMNS = (
+    "key, semantic_type, context_hash, profile_version, decided_value, decided_display, "
+    "decided_by, decided_at, rationale, confidence, env_id"
+)
+_QUEUE_SELECT = (
+    "SELECT q.key, q.semantic_type, q.context_hash, q.profile_version, q.context, "
+    "q.original, q.detail, q.first_job_id, q.last_job_id, q.occurrences, "
+    "EXISTS (SELECT 1 FROM normalization_adjudication_verdicts v WHERE v.key = q.key) "
+    "AS decided FROM normalization_adjudication_queue q"
+)
+
+
+def _queue_filter(semantic_type: str | None, decided: bool | None) -> tuple[str, dict[str, Any]]:
+    clauses: list[str] = []
+    params: dict[str, Any] = {}
+    if semantic_type is not None:
+        clauses.append("q.semantic_type = :st")
+        params["st"] = semantic_type
+    if decided is not None:
+        clauses.append(
+            ("" if decided else "NOT ")
+            + "EXISTS (SELECT 1 FROM normalization_adjudication_verdicts v WHERE v.key = q.key)"
+        )
+    return (" WHERE " + " AND ".join(clauses) if clauses else ""), params
 
 
 def _connection_row_to_dict(row: sa.Row[Any]) -> dict[str, Any]:

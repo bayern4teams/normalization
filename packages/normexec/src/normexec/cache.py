@@ -106,7 +106,12 @@ class NormalizationCache:
 
     def __init__(self, duckdb_path: str | Path = ":memory:", *, lru_capacity: int = 50_000) -> None:
         self._lru = _LruCache(lru_capacity)
-        self._conn = duckdb.connect(str(duckdb_path))
+        # threads=1: by default each connection starts nproc-1 native worker
+        # threads that live until close(); this table only serves keyed
+        # lookups (200k put/get measured equal at 1 and 16 threads), and the
+        # unit suite's ~75 never-closed apps leaked 1129 threads / 21 GB of
+        # address space, past the 16 GB test cap in CLAUDE.md.
+        self._conn = duckdb.connect(str(duckdb_path), config={"threads": 1})
         # DuckDB sizes its buffer pool at 80% of DETECTED SYSTEM RAM, which
         # inside a container is the host's RAM, not the cgroup limit — a
         # real clone run measured `memory_limit` at 21.7 GiB inside a

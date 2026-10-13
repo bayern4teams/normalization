@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import subprocess
+import sys
+
 import pyarrow as pa
 import pytest
 from normalizers.date import DateNormalizer
@@ -130,3 +133,20 @@ class TestBatch:
         batch = normalizer.normalize_batch(pa.array(values, type=pa.large_string()), ctx)
         displays = batch.field("display").to_pylist()
         assert displays == [normalizer.normalize(v, ctx).display for v in values]
+
+
+@pytest.mark.unit
+def test_a_lone_surrogate_does_not_crash_the_process() -> None:
+    # ciso8601 segfaulted on a lone surrogate; a subprocess keeps a crash out of pytest.
+    code = (
+        "from normalizers.date import DateNormalizer\n"
+        "from normcore.context import NormalizationContext\n"
+        "from normcore.enums import FieldSemanticType as F\n"
+        "for t in (F.DATE, F.DATETIME):\n"
+        "    ctx = NormalizationContext(field_name='d', semantic_type=t)\n"
+        "    for v in ('\\ud800', '2020-01-01\\udcff'):\n"
+        "        DateNormalizer().normalize(v, ctx)\n"
+        "        DateNormalizer().validate(v, ctx)\n"
+    )
+    r = subprocess.run([sys.executable, "-c", code], capture_output=True, timeout=120, check=False)
+    assert r.returncode == 0, r.stderr.decode(errors="replace")[-500:]

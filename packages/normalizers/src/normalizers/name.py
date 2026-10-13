@@ -25,7 +25,9 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import blake3
+import icu
 import jellyfish
+import phonetics
 import pyarrow as pa
 from nameparser import HumanName
 from normcore.context import NormalizationContext
@@ -43,7 +45,7 @@ from normcore.trace import TraceStep
 from normcore.unicode_policy import UnicodeForm
 from normdict.loader import DictionaryLoader, DictionaryNotFoundError
 
-from normalizers import text_ops
+from normalizers import _bmpm, text_ops
 from normalizers.unicode_normalizer import (
     UnicodeNormalizer,
     UnicodeProcessingOptions,
@@ -97,19 +99,12 @@ def _load_dictionary(loader: DictionaryLoader, dictionary_id: str) -> dict[str, 
     return {str(k).casefold(): str(v) for k, v in dictionary.entries.items()}
 
 
-def _phonetic_codes(value: str) -> dict[str, str] | None:
+def _legacy_codes(value: str) -> dict[str, str] | None:
     """jellyfish's Soundex/NYSIIS/Metaphone/Match-Rating-Codex all expect
-    Latin-alphabet input. For non-Latin family names we transliterate via
-    anyascii first (a lossy, best-effort approximation — the phonetic
-    codes are a DERIVED diagnostic field, never the canonical name).
-
-    Note: jellyfish does not expose a "Double Metaphone" implementation
-    (only single-code `metaphone`) despite Source.txt §25 naming it —
-    confirmed empirically against jellyfish 1.x's public API in M3.
-    Documented as a known library-capability gap, not a bug in this code.
+    Latin-alphabet input; the caller only passes Latin-script names (after
+    anyascii folds diacritics, a lossy, best-effort step: the codes are a
+    DERIVED diagnostic field, never the canonical name).
     """
-    if not value.strip():
-        return None
     ascii_form, _ = text_ops.transliterate_ascii(value)
     letters_only = "".join(ch for ch in ascii_form if ch.isalpha())
     if not letters_only:
@@ -120,6 +115,61 @@ def _phonetic_codes(value: str) -> dict[str, str] | None:
         "metaphone": jellyfish.metaphone(letters_only),
         "match_rating_codex": jellyfish.match_rating_codex(letters_only),
     }
+
+
+def _scripts(value: str) -> frozenset[str]:
+    """ICU names of the scripts of the value's letters (Common/Inherited ignored)."""
+    names = {icu.Script.getScript(ord(ch)).getName() for ch in value if ch.isalpha()}
+    return frozenset(names - {"Common", "Inherited"})
+
+
+_BEIDER_MORSE_MAX_CHARS = 255  # ponytail: measured bound, see _language_aware_codes
+
+
+def _language_aware_codes(value: str) -> dict[str, object]:
+    """Double Metaphone (of the anyascii form, lossy and language-agnostic) and
+    Beider-Morse (of the name as written) as lists of alternative codes."""
+    ascii_form, _ = text_ops.transliterate_ascii(value)
+    double = [c for c in phonetics.dmetaphone("".join(filter(str.isalpha, ascii_form))) if c]
+    codes: dict[str, object] = {"double_metaphone": double}
+    # ponytail: Beider-Morse output and time grow super-linearly with length
+    # (measured: 255 chars ~15 ms / ~25 KB of codes, 7k chars 3.8 s / 2.4 MB,
+    # identical to Commons Codec), so a longer value, which is no name, gets no
+    # beider_morse key. Upgrade path: encode per token with a total budget.
+    if len(value) <= _BEIDER_MORSE_MAX_CHARS:
+        codes["beider_morse"] = list(_bmpm.encode(value))
+    return {k: v for k, v in codes.items() if v}
+
+
+def _phonetic_fields(value: str) -> dict[str, object]:
+    """The `phonetic*` / `script` entries of `structured` for one name (D11).
+
+    * Latin script: the four legacy keys (unchanged) plus the language-aware
+      `double_metaphone` and `beider_morse` keys (lists of alternative codes;
+      Beider-Morse's own language guess only selects rules, no language is
+      ever reported).
+    * Cyrillic or Arabic/Persian script: `phonetic_status = "not_applicable"`
+      (the Anglo-centric keys do not describe it) and the two language-aware
+      keys; Beider-Morse's rule files read these scripts directly.
+    * Anything else, or mixed scripts: `not_applicable` and the script, no key.
+      ponytail: Han/Hangul/Devanagari/Thai readings are polyphonic (one
+      character, several readings chosen by the language), so no key is
+      emitted rather than a guessed one. Upgrade path: a pinyin/romaji/
+      transliteration source plus the language to read the name in.
+    """
+    scripts = _scripts(value)
+    if not scripts:
+        return {}
+    if scripts == {"Latin"}:
+        phonetic = {**(_legacy_codes(value) or {}), **_language_aware_codes(value)}
+        return {"phonetic": phonetic} if phonetic else {}
+    fields: dict[str, object] = {
+        "phonetic_status": "not_applicable",
+        "script": "+".join(sorted(scripts)),
+    }
+    if scripts in ({"Cyrillic"}, {"Arabic"}) and (codes := _language_aware_codes(value)):
+        fields["phonetic"] = codes
+    return fields
 
 
 class NameNormalizer:
@@ -152,6 +202,10 @@ class NameNormalizer:
             raise NormalizerFailure(msg, operation="unicode_process") from exc
 
         cleaned = unicode_result.final_value
+        if cleaned.strip() == "":
+            # only invisible/control characters (a soft hyphen): same as "", or
+            # re-normalizing the '' display would disagree with this pass
+            return _missing(value, MissingKind.EMPTY_STRING, ctx)
         trace = build_unicode_trace(unicode_result, enabled=ctx.include_trace)
 
         if ctx.semantic_type in (FieldSemanticType.GIVEN_NAME, FieldSemanticType.FAMILY_NAME):
@@ -203,9 +257,8 @@ class NameNormalizer:
             structured["family_name"] = str(parsed.last) or None
             phonetic_source = str(parsed.last) or None
 
-        phonetic = _phonetic_codes(phonetic_source) if phonetic_source else None
-        if phonetic is not None:
-            structured["phonetic"] = phonetic
+        if phonetic_source:
+            structured.update(_phonetic_fields(phonetic_source))
 
         trace = [*trace, _name_parse_trace_step(cleaned, changed=not ambiguous)]
 
@@ -300,10 +353,8 @@ def _normalize_single_component(
     comparison, _ = text_ops.casefold(cleaned, ctx.locale)
     search_base = unicode_result.accent_stripped or cleaned
     search, _ = text_ops.casefold(search_base, ctx.locale)
-    phonetic = _phonetic_codes(cleaned)
     structured: dict[str, object] = {field_key: cleaned, "nickname": None}
-    if phonetic is not None:
-        structured["phonetic"] = phonetic
+    structured.update(_phonetic_fields(cleaned))
 
     return NormalizedValue(
         original=original,

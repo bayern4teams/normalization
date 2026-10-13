@@ -16,23 +16,12 @@ if TYPE_CHECKING:
 
     from normio.connector import ColumnInfo
 
-# FieldSemanticType -> ClickHouse column type. Every value is String —
-# deliberately, not an oversight; same reasoning as
-# postgres_destination.SEMANTIC_TYPE_TO_PG_TYPE (found via a real e2e run
-# against messy real-world data): decision #8 requires a failed value's
-# ORIGINAL raw string to always land in the cell, and a column typed e.g.
-# Date/Float64/UUID/Bool rejects a raw string that isn't already
-# well-formed for that type — exactly the malformed values decision #8
-# exists to handle. There is no per-row column typing in SQL — the type
-# is fixed at CREATE TABLE time, before any row's success/failure is
-# known — so only a text-compatible type can always hold both a
-# successful `display` and a failed fallback.
-# ponytail: every value collapsed to String for decision #8 safety, not
-# genuinely typed Date/Float64/etc — revisit only if the executor gains
-# real pre-insert type validation/casting (route a value that won't cast
-# through the same error-report path as a normalization failure, instead
-# of relying on the DB to reject it) that could safely re-differentiate
-# per type.
+# FieldSemanticType -> ClickHouse column type when the column is NOT typed
+# natively: String, for the same reason as
+# postgres_destination.SEMANTIC_TYPE_TO_PG_TYPE. NUMERIC, MONEY and BOOLEAN
+# are typed natively via `normio.storage_types` (`column_overrides`), behind
+# the `storage_types.coerce` pre-insert cast; DATE/DATETIME stay String
+# (partial EDTF dates, ADR-020).
 SEMANTIC_TYPE_TO_CH_TYPE: dict[str, str] = dict.fromkeys(
     (
         "PERSON_NAME",

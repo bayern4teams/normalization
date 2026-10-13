@@ -45,7 +45,8 @@ from normio.connectors import (
 )
 from normio.connectors._sql_base import SOURCE_READ_BATCH_ROWS
 
-from normapi import secrets
+from normapi import lineage, secrets
+from normapi.adjudication import Adjudication
 from normapi.scaffold_profile import SCAFFOLD_PROFILE
 from normcore import (
     CloneJobStatus,
@@ -170,10 +171,11 @@ _NEVER_INFERRED = frozenset({FieldSemanticType.FREE_TEXT, FieldSemanticType.UNKN
 # source already types as timestamp/boolean/numeric/uuid has no
 # normalization problem to solve — the database itself guarantees the
 # format — and configuring one is actively harmful, because a configured
-# column's destination type becomes TEXT (see SEMANTIC_TYPE_TO_PG_TYPE), so
-# auto-detecting `created_at` would silently downgrade a real timestamp
-# column to a string. An operator can still force a semantic type onto any
-# column explicitly; this only governs what is inferred.
+# column's destination type becomes TEXT unless it is one of the natively
+# typed NUMERIC/MONEY/BOOLEAN (normio.storage_types), so auto-detecting
+# `created_at` would silently downgrade a real timestamp column to a string.
+# An operator can still force a semantic type onto any column explicitly;
+# this only governs what is inferred.
 #
 # An allow-list of substrings rather than a deny-list of typed names, so an
 # unrecognised type fails toward "leave it alone" instead of toward
@@ -460,12 +462,22 @@ def staging_name(table: str) -> str:
 HEARTBEAT_TIMEOUT_SECONDS = _env_seconds("NORM_CLONE_HEARTBEAT_TIMEOUT_SECONDS", 900)
 
 
-def _save_progress(persistence: PgPersistence, job_id: str, job: dict[str, Any]) -> None:
+def _save_progress(
+    persistence: PgPersistence,
+    job_id: str,
+    job: dict[str, Any],
+    queued: list[dict[str, Any]] | None = None,
+) -> None:
     """Persist progress and stamp the heartbeat in one step, so the two
     can never drift apart — a saved checkpoint with a stale timestamp
-    would read as a dead job that is in fact working."""
+    would read as a dead job that is in fact working. Adjudication queue
+    rows ride the same transaction (ADR-018): what a checkpoint covers is
+    exactly what has been counted."""
     job["heartbeat_at"] = dt.datetime.now(tz=dt.UTC).isoformat()
-    persistence.save_clone_job(job_id, job)
+    if queued:
+        persistence.save_clone_job_and_enqueue(job_id, job, queued)
+    else:
+        persistence.save_clone_job(job_id, job)
 
 
 def is_stale(job: Mapping[str, Any], *, now: dt.datetime | None = None) -> bool:
@@ -1064,6 +1076,8 @@ def _apply_column(
     country_is_derived: bool,
     stats: _ColumnStats,
     errors_buffer: list[dict[str, Any]],
+    adjudication: Adjudication | None = None,
+    engine: str,
 ) -> None:
     """Normalize one column across one chunk, in place.
 
@@ -1091,10 +1105,29 @@ def _apply_column(
         include_trace=False,
     )
     distinct_values = list({row[column] for _, row in pending if row[column] is not None})
+    # ADR-018 resolve stage: a value someone already decided is answered
+    # from its verdict and never dispatched.
+    adjudicated = (
+        adjudication.resolve(
+            distinct_values,
+            semantic_type=semantic_type,
+            context=ctx,
+            renormalize=lambda values: _normalize_distinct(
+                pool,
+                planner,
+                values,
+                semantic_type=semantic_type,
+                context=ctx,
+                profile=SCAFFOLD_PROFILE,
+            ),
+        )
+        if adjudication is not None
+        else {}
+    )
     by_value = _normalize_distinct(
         pool,
         planner,
-        distinct_values,
+        [v for v in distinct_values if v not in adjudicated],
         semantic_type=semantic_type,
         context=ctx,
         profile=SCAFFOLD_PROFILE,
@@ -1108,6 +1141,18 @@ def _apply_column(
             country=country,
         )
     _check_idempotent(by_value, pool=pool, planner=planner, ctx=ctx, stats=stats)
+    if adjudication is not None:
+        ambiguous = Counter(
+            row[column]
+            for _, row in pending
+            if row[column] is not None
+            and row[column] in by_value
+            and by_value[row[column]].normalization_status is NormalizationStatus.AMBIGUOUS
+        )
+        adjudication.collect(
+            {v: by_value[v] for v in ambiguous}, ambiguous, semantic_type=semantic_type, context=ctx
+        )
+    by_value.update(adjudicated)
     for offset, row in pending:
         original = row[column]
         if original is None:
@@ -1134,6 +1179,7 @@ def _apply_column(
             typed_as=typed_as,
             companion=companion,
             code_column=code_column,
+            engine=engine,
         )
         # After the cast, not before it: a value that normalized fine and
         # then would not fit its native column is the loss this counts.
@@ -1162,6 +1208,7 @@ def _apply_value(
     typed_as: str | None,
     companion: str | None,
     code_column: str | None,
+    engine: str,
 ) -> list[str]:
     """One row, one column: write every projection the destination has a
     home for, and hand back whatever needs reporting."""
@@ -1193,7 +1240,7 @@ def _apply_value(
     # whole chunk (and with it the error rows that would have
     # explained why).
     if typed_as is not None:
-        cast_value, cast_error = storage_types.coerce(typed_as, row[column])
+        cast_value, cast_error = storage_types.coerce(typed_as, row[column], engine)
         row[column] = cast_value
         if cast_error is not None:
             errors.append(cast_error)
@@ -1608,6 +1655,8 @@ def _normalize_chunk(
     seeded: Mapping[int, str],
     stats: dict[str, _ColumnStats],
     errors_buffer: list[dict[str, Any]],
+    adjudication: Adjudication | None = None,
+    engine: str,
 ) -> None:
     """Every configured column of one chunk, COUNTRY columns first.
 
@@ -1674,6 +1723,8 @@ def _normalize_chunk(
                 country_is_derived=derived,
                 stats=stats[column],
                 errors_buffer=errors_buffer,
+                adjudication=adjudication,
+                engine=engine,
             )
 
 
@@ -1861,6 +1912,7 @@ def _normalize_table(
     progress: dict[str, Any],
     in_place: bool,
     entity_countries: Mapping[str, str],
+    adjudication: Adjudication | None = None,
 ) -> None:
     """One table, end to end: stream it, normalize every configured
     column, insert, checkpoint, and — in-place only — swap it in.
@@ -1928,6 +1980,9 @@ def _normalize_table(
             seeded=seeded,
             stats=stats,
             errors_buffer=errors_buffer,
+            adjudication=adjudication,
+            # Phase 1 refuses a clone across engines, so this is the destination too.
+            engine=source_engine,
         )
 
         dest_rows = []
@@ -1945,7 +2000,9 @@ def _normalize_table(
         progress["checkpoints"][table] = checkpoint
         progress["rows_done"] += len(pending)
         job["progress"] = progress
-        _save_progress(persistence, job_id, job)
+        _save_progress(
+            persistence, job_id, job, adjudication.drain() if adjudication is not None else None
+        )
 
     # Before the swap, deliberately: a job that trips its own
     # max_new_null_rate ceiling in in-place mode must leave the ORIGINAL
@@ -2019,6 +2076,7 @@ def _run_phase2(
     tables_completed = set(progress["tables_completed"])
     in_place = job.get("in_place", False)
     entity_countries: dict[str, str] = {}
+    adjudication = Adjudication(persistence, SCAFFOLD_PROFILE)
 
     try:
         key_column = job.get("cross_table_entity_key") or None
@@ -2030,27 +2088,55 @@ def _run_phase2(
             # agree with byte for byte.
             entity_countries, counts = _build_entity_country_map(source, job, planner, key_column)
             _report_entity_map(persistence, job_id, key_column, counts)
+        lineage.complete_open_runs(persistence, job_id, tables_completed)
         for table in job["tables"]:
             if table in tables_completed:
                 continue
-            _normalize_table(
-                table,
+            run = lineage.table_run(
+                persistence,
                 job=job,
                 job_id=job_id,
-                source=source,
-                dest=dest,
-                source_engine=source_conn["engine"],
-                persistence=persistence,
-                planner=planner,
-                pool=pool,
-                progress=progress,
-                in_place=in_place,
-                entity_countries=entity_countries,
+                table=table,
+                source_connection=source_conn,
+                destination_connection=dest_conn,
+                source_columns=[c.name for c in source.get_columns(table)],
+                semantic_types={
+                    c: FieldSemanticType(t)
+                    for c, t in job["field_configs"].get(table, {}).items()
+                    if t
+                },
+                registry=dispatcher.registry,
+                profile=SCAFFOLD_PROFILE,
             )
+            run.emit("START")
+            try:
+                _normalize_table(
+                    table,
+                    job=job,
+                    job_id=job_id,
+                    source=source,
+                    dest=dest,
+                    source_engine=source_conn["engine"],
+                    persistence=persistence,
+                    planner=planner,
+                    pool=pool,
+                    progress=progress,
+                    in_place=in_place,
+                    entity_countries=entity_countries,
+                    adjudication=adjudication,
+                )
+            except Exception:
+                run.fail()
+                raise
             tables_completed.add(table)
             progress["tables_completed"] = sorted(tables_completed)
             job["progress"] = progress
             _save_progress(persistence, job_id, job)
+            # After the checkpoint, not before: a resumed job skips a
+            # completed table, so it can never announce it twice.
+            # ponytail: a crash between the two leaves that run without a
+            # COMPLETE; write both in one transaction if that ever matters.
+            run.emit("COMPLETE")
 
         progress["current_table"] = None
         job["progress"] = progress

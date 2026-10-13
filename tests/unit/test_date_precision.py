@@ -53,6 +53,72 @@ def test_precision_is_preserved_never_invented(
     assert result.structured["precision"] == precision
 
 
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("value", "semantic_type", "expected", "precision"),
+    [
+        # one number read as both month and day
+        ("03/2024", FieldSemanticType.DATE, "2024-03", "month"),
+        ("12/2024", FieldSemanticType.DATE, "2024-12", "month"),
+        ("03.2024", FieldSemanticType.DATE, "2024-03", "month"),
+        ("03-2024", FieldSemanticType.DATE, "2024-03", "month"),
+        ("03 2024", FieldSemanticType.DATE, "2024-03", "month"),
+        # missing components filled from today's date
+        ("03/2024 10:30", FieldSemanticType.DATE, "2024-03", "month"),
+        ("03/2024 10:30", FieldSemanticType.DATETIME, "2024-03", "month"),
+        ("2024 10:30", FieldSemanticType.DATE, "2024", "year"),
+        # a time of day on a partial ISO date: no day 01
+        ("2024-03 10:30", FieldSemanticType.DATETIME, "2024-03", "month"),
+        # what the input does state still parses
+        ("March 3, 2024", FieldSemanticType.DATE, "2024-03-03", "day"),
+        ("3 March 2024", FieldSemanticType.DATE, "2024-03-03", "day"),
+        ("Mar/2024", FieldSemanticType.DATE, "2024-03", "month"),
+        ("00/2024", FieldSemanticType.DATE, "2024", "year"),
+    ],
+)
+def test_no_component_the_input_does_not_state(
+    normalizer: DateNormalizer,
+    value: str,
+    semantic_type: FieldSemanticType,
+    expected: str,
+    precision: str,
+) -> None:
+    ctx = NormalizationContext(field_name="d", semantic_type=semantic_type)
+    result = normalizer.normalize(value, ctx)
+    assert (result.display, result.structured["precision"]) == (expected, precision)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("value", "country", "expected", "precision"),
+    [
+        # a two-digit year 00 is the year 2000, not a placeholder (found by the rayyan benchmark)
+        ("12/31/00", None, "2000-12-31", "day"),
+        ("1/1/00", "US", "2000-01-01", "day"),
+        ("1/00", None, "2000-01", "month"),
+        # an all-zero group no component claims is a placeholder
+        ("00/2024", None, "2024", "year"),
+    ],
+)
+def test_an_all_zero_number_is_a_year_or_a_placeholder(
+    normalizer: DateNormalizer, value: str, country: str | None, expected: str, precision: str
+) -> None:
+    ctx = NormalizationContext(
+        field_name="d", semantic_type=FieldSemanticType.DATE, country=country
+    )
+    result = normalizer.normalize(value, ctx)
+    assert (result.display, result.structured["precision"]) == (expected, precision)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("value", ["13/2024", "2024/13", "NA", "today"])
+def test_a_number_that_is_no_component_is_invalid(
+    normalizer: DateNormalizer, ctx: NormalizationContext, value: str
+) -> None:
+    # each used to borrow the missing parts from the day the code ran (2024-10-13, today)
+    assert normalizer.normalize(value, ctx).normalization_status == NormalizationStatus.INVALID
+
+
 def test_partial_precision_is_flagged(
     normalizer: DateNormalizer, ctx: NormalizationContext
 ) -> None:

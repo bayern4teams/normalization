@@ -16,7 +16,7 @@ block below then checks the work branch out itself. The setup script installs on
 the project bootstrap runs inside the tick (step 4), where a failure is visible and becomes a `[BLOCKED]`.
 
 Create the routine **in the claude.ai Routines UI** (a routine made from inside a session cannot
-carry a repo — cloud re-check #2): repo `Reza-Sh83/normalization`, that dedicated environment, the
+carry a repo — cloud re-check #2): repo `bayern4teams/normalization`, that dedicated environment, the
 GitHub connector, cron `0 * * * *`, Opus 5.5, high effort, and the short pointer above as its
 prompt (the block below is read from git by that pointer). The routine is the user's standing authorisation to schedule and to chain phases; nothing
 else is. Set `Autonomy: dryrun` in HANDOFF.md first (step 1b), confirm one tick, then switch to

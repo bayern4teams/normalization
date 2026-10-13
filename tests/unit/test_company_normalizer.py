@@ -243,3 +243,13 @@ class TestGleifLegalForms:
         excluded for exactly this reason."""
         result = normalizer.normalize(value, ctx)
         assert result.structured["base_name"] == value
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("value", ["\xad", "\x7f", " \u200b ", "\x00"])
+def test_a_company_that_cleans_to_nothing_is_missing(
+    normalizer: CompanyNormalizer, ctx: NormalizationContext, value: str
+) -> None:
+    # '' as a value re-normalizes to missing: not idempotent (property test).
+    result = normalizer.normalize(value, ctx)
+    assert (result.display, result.original_kind) == (None, MissingKind.EMPTY_STRING)

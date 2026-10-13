@@ -1,8 +1,8 @@
 """Native destination column types, and the pre-insert cast that makes
 them safe.
 
-Every semantic type maps to TEXT by default, and that is deliberate (see
-the long note on `SEMANTIC_TYPE_TO_PG_TYPE`): decision #8 puts a failed
+A semantic type not listed here maps to TEXT, and that is deliberate:
+decision #8 puts a failed
 value's ORIGINAL raw string in the cell, and a DATE/NUMERIC column
 rejects exactly the malformed strings decision #8 exists to carry — the
 DB rejects the whole chunk, taking the job down with it, before the
@@ -32,6 +32,7 @@ date normalizer exists to prevent.
 from __future__ import annotations
 
 import decimal
+import re
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -54,9 +55,10 @@ _PG_TYPES: Mapping[str, str] = {
 # unbounded decimal, so NUMERIC pins Decimal(38,9) — 38 significant
 # digits, 9 after the point. A value needing more than 9 decimal places
 # (a unit price at 12dp, a scientific measurement) is rounded on
-# ClickHouse and exact on Postgres, and a value beyond 38 significant
-# digits fails to cast on ClickHouse and lands as NULL plus an error row
-# while Postgres stores it. MONEY is Decimal(38,4) on both, so it is
+# ClickHouse and exact on Postgres, and a value with more integer digits
+# than the 29 that Decimal(38,9) leaves fails the cast gate on ClickHouse
+# and lands as NULL plus an error row while Postgres stores it (`coerce`
+# checks the target column, ADR-020). MONEY is Decimal(38,4) on both, so it is
 # identical across engines by construction.
 #
 # ponytail: 38,9 is ClickHouse's widest Decimal that still fits its
@@ -76,6 +78,14 @@ _ENGINE_TYPES: Mapping[str, Mapping[str, str]] = {
 }
 
 _DECIMAL_TYPES = frozenset({"NUMERIC", "MONEY"})
+_PRECISION_SCALE = re.compile(r"\((\d+),\s*(\d+)\)")
+# PostgreSQL's documented NUMERIC ceilings: a finite Decimal past either
+# still aborts the INSERT, typmod or not.
+# ponytail: "up to 131072 digits before the decimal point" (PG docs, 8.1.2);
+# moved into the column map if Postgres ever raises it.
+_PG_UNBOUNDED_INTEGER_DIGITS = 131072
+# ponytail: "up to 16383 digits after the decimal point" (PG docs, 8.1.2).
+_PG_MAX_FRACTION_DIGITS = 16383
 _TRUE = "true"
 _FALSE = "false"
 
@@ -90,24 +100,31 @@ def is_typed(semantic_type: str) -> bool:
     return semantic_type in _PG_TYPES
 
 
-def coerce(semantic_type: str, value: object) -> tuple[object | None, str | None]:
-    """Cast a normalized `display` value for a natively-typed column.
+def coerce(
+    semantic_type: str, value: object, engine: str = "postgres"
+) -> tuple[object | None, str | None]:
+    """Cast a normalized `display` value for a natively-typed column of
+    this engine.
 
     Returns `(cast_value, error)`. On failure the value is None and the
     caller writes NULL plus an error-report row — never a raw string into
-    a typed column, and never an exception that would abort the chunk.
+    a typed column, never a number wider than the column (the INSERT
+    would abort the chunk), and never an exception.
     """
     if value is None:
         return None, None
 
-    text = str(value).strip()
+    try:
+        text = str(value).strip()
+    except ValueError:  # an int past the str() digit limit
+        return None, "value is too long to read as a number; stored as NULL"
     if not text:
         return None, None
 
     if semantic_type == "BOOLEAN":
         return _coerce_boolean(text)
     if semantic_type in _DECIMAL_TYPES:
-        return _coerce_decimal(text)
+        return _coerce_decimal(text, sql_type(semantic_type, engine) or "", engine)
     return value, None
 
 
@@ -119,7 +136,7 @@ def _coerce_boolean(text: str) -> tuple[object | None, str | None]:
     return None, f"value {text!r} is not a boolean; stored as NULL"
 
 
-def _coerce_decimal(text: str) -> tuple[object | None, str | None]:
+def _coerce_decimal(text: str, column_type: str, engine: str) -> tuple[object | None, str | None]:
     try:
         number = decimal.Decimal(text)
     except (decimal.InvalidOperation, ValueError):
@@ -129,4 +146,32 @@ def _coerce_decimal(text: str) -> tuple[object | None, str | None]:
     # and ClickHouse Decimal rejects them outright.
     if not number.is_finite():
         return None, f"value {text!r} is not a finite number; stored as NULL"
+    # Postgres parses the literal before the typmod rounds it, so even
+    # `0e-16384` into NUMERIC(38,4) overflows.
+    exponent = number.as_tuple().exponent
+    too_fine = (
+        engine == "postgres" and isinstance(exponent, int) and exponent < -_PG_MAX_FRACTION_DIGITS
+    )
+    if too_fine or not _fits(number, column_type):
+        return None, f"value {text!r} does not fit {column_type}; stored as NULL"
     return number, None
+
+
+def _fits(number: decimal.Decimal, column_type: str) -> bool:
+    """Whether the column can hold `number` once the database rounds it
+    to the column's scale. The value itself is returned unrounded: the
+    database rounds, nothing here invents precision."""
+    if number.is_zero():
+        return True  # `0e999` has a huge exponent and no integer digit
+    match = _PRECISION_SCALE.search(column_type)
+    if match is None:
+        return number.adjusted() < _PG_UNBOUNDED_INTEGER_DIGITS
+    precision, scale = int(match[1]), int(match[2])
+    integer_digits = precision - scale
+    if number.adjusted() >= integer_digits:
+        return False
+    # Rounding to the scale can carry into one more integer digit
+    # (99.995 -> 100.00); the context is wide enough to round exactly.
+    context = decimal.Context(prec=precision + 2, rounding=decimal.ROUND_HALF_UP)
+    rounded = number.quantize(decimal.Decimal(1).scaleb(-scale), context=context)
+    return rounded.is_zero() or rounded.adjusted() < integer_digits

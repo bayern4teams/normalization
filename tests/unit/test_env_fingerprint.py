@@ -115,3 +115,50 @@ class TestSourceHashesCloseTheCacheHole:
         assert digest_tree(tmp_path) != before
         (tmp_path / "a.py").rename(tmp_path / "b.py")
         assert digest_tree(tmp_path) != before
+
+
+@pytest.mark.unit
+def test_psl_package_is_fingerprinted_and_its_version_moves_env_id() -> None:
+    """D9: the Public Suffix List snapshot ships inside `publicsuffixlist`, whose
+    version carries the snapshot date, so a PSL update must move env_id."""
+    from env_fingerprint import FINGERPRINTED_PACKAGES, collect_package_versions
+
+    assert "publicsuffixlist" in FINGERPRINTED_PACKAGES
+    versions = collect_package_versions()
+    assert versions["publicsuffixlist"] not in ("", "MISSING")  # actually resolved
+    a, b = _baseline(), _baseline()
+    a.packages["publicsuffixlist"] = versions["publicsuffixlist"]
+    b.packages["publicsuffixlist"] = versions["publicsuffixlist"] + ".1"
+    assert compute_env_id(a) != compute_env_id(b)
+
+
+@pytest.mark.unit
+def test_phonetics_package_is_fingerprinted() -> None:
+    """D11: Double Metaphone codes come from `phonetics`; its version must move env_id."""
+    from env_fingerprint import FINGERPRINTED_PACKAGES, collect_package_versions
+
+    assert "phonetics" in FINGERPRINTED_PACKAGES
+    assert collect_package_versions()["phonetics"] not in ("", "MISSING")
+
+
+@pytest.mark.unit
+def test_vendored_rule_data_moves_the_source_hash(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """D11: the Beider-Morse rule files are `*.txt` data inside `normalizers`; editing one
+    must change the digest exactly like editing code does."""
+    from normexec import env_fingerprint
+
+    (tmp_path / "fakepkg").mkdir()
+    (tmp_path / "fakepkg" / "__init__.py").write_text("")
+    rules = tmp_path / "fakepkg" / "rules.txt"
+    rules.write_text('"a" "" "" "a"\n')
+    monkeypatch.syspath_prepend(str(tmp_path))
+    monkeypatch.setattr(env_fingerprint, "FINGERPRINTED_SOURCE_PACKAGES", ["fakepkg"])
+    before = env_fingerprint.collect_source_hashes()["fakepkg"]
+    rules.write_text('"a" "" "" "b"\n')
+    assert env_fingerprint.collect_source_hashes()["fakepkg"] != before
+    # and the real normalizers package really hashes its vendored data
+    assert any(
+        p.suffix == ".txt" for p in Path(env_fingerprint.__file__).parents[3].rglob("_bmpm_data/*")
+    )

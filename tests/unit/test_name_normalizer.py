@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pyarrow as pa
 import pytest
-from normalizers.name import NameNormalizer
+from normalizers.name import _BEIDER_MORSE_MAX_CHARS, NameNormalizer, _phonetic_fields
 from normcore.context import NormalizationContext
 from normcore.enums import FieldSemanticType, MissingKind, NormalizationStatus
 from normdict.loader import DictionaryLoader
@@ -175,6 +175,32 @@ class TestPhonetics:
         result = normalizer.normalize("Smith John", ctx)
         assert "phonetic" not in result.structured
 
+    def test_latin_name_also_carries_language_aware_keys(
+        self, normalizer: NameNormalizer, ctx: NormalizationContext
+    ) -> None:
+        phonetic = normalizer.normalize("Smith, John", ctx).structured["phonetic"]
+        assert phonetic["double_metaphone"]
+        assert phonetic["beider_morse"]
+        assert "phonetic_status" not in normalizer.normalize("Smith, John", ctx).structured
+
+    def test_cyrillic_gets_no_anglo_key_but_is_marked_and_keyed(
+        self, normalizer: NameNormalizer, ctx: NormalizationContext
+    ) -> None:
+        structured = normalizer.normalize("Иванов, Иван", ctx).structured
+        assert structured["phonetic_status"] == "not_applicable"
+        assert structured["script"] == "Cyrillic"
+        assert set(structured["phonetic"]) == {"double_metaphone", "beider_morse"}
+
+    def test_cjk_and_mixed_scripts_emit_no_key(self, normalizer: NameNormalizer) -> None:
+        ctx = NormalizationContext(
+            field_name="last_name", semantic_type=FieldSemanticType.FAMILY_NAME
+        )
+        for text, script in (("王", "Han"), ("Wang小明", "Han+Latin")):
+            structured = normalizer.normalize(text, ctx).structured
+            assert structured["phonetic_status"] == "not_applicable"
+            assert structured["script"] == script
+            assert "phonetic" not in structured
+
     def test_phonetic_codes_are_derived_not_canonical(
         self, normalizer: NameNormalizer, ctx: NormalizationContext
     ) -> None:
@@ -250,3 +276,29 @@ class TestBatchAndInverse:
 
     def test_inverse_name_parse_step_returns_none(self, normalizer: NameNormalizer) -> None:
         assert normalizer.inverse("name.parse_western", "Smith, John") is None
+
+
+@pytest.mark.unit
+def test_overlong_value_skips_beider_morse_but_keeps_other_keys() -> None:
+    """D11 verdict F1: Beider-Morse cost grows super-linearly with length."""
+    at_bound = _phonetic_fields("a" * _BEIDER_MORSE_MAX_CHARS)["phonetic"]
+    beyond = _phonetic_fields("a" * (_BEIDER_MORSE_MAX_CHARS + 1))["phonetic"]
+    assert "beider_morse" in at_bound
+    assert "beider_morse" not in beyond
+    assert {"soundex", "double_metaphone"} <= set(beyond)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "semantic_type",
+    [FieldSemanticType.PERSON_NAME, FieldSemanticType.GIVEN_NAME, FieldSemanticType.FAMILY_NAME],
+)
+@pytest.mark.parametrize("value", ["\xad", "\x7f", " \u200b ", "\x00"])
+def test_a_name_that_cleans_to_nothing_is_missing(
+    normalizer: NameNormalizer, semantic_type: FieldSemanticType, value: str
+) -> None:
+    # '' as a value re-normalizes to missing: not idempotent (property test).
+    result = normalizer.normalize(
+        value, NormalizationContext(field_name="n", semantic_type=semantic_type)
+    )
+    assert (result.display, result.original_kind) == (None, MissingKind.EMPTY_STRING)

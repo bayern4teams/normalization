@@ -238,7 +238,8 @@ column's destination type is fixed at `CREATE TABLE` time, before any
 row's success/failure is known, so decision #8's "always insertable
 fallback" guarantee is incompatible with any native (non-text) type.
 Fixed by collapsing `SEMANTIC_TYPE_TO_PG_TYPE`/`SEMANTIC_TYPE_TO_CH_TYPE`
-to map every semantic type to a text-compatible destination type,
+to map every semantic type to a text-compatible destination type (later superseded for NUMERIC/MONEY/BOOLEAN by the
+`storage_types.coerce` cast gate; see ADR-020),
 regression-tested (unit: every mapped type asserted text-compatible;
 integration: the exact `d`-prefixed-date scenario, against a real
 container), and re-verified against the same real database after

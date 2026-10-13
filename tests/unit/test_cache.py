@@ -13,6 +13,12 @@ from normcore import FieldSemanticType, NormalizationStatus, NormalizedValue
 
 
 @pytest.mark.unit
+def test_cache_connection_runs_single_threaded() -> None:
+    with NormalizationCache() as cache:
+        assert cache._conn.execute("SELECT current_setting('threads')").fetchone() == (1,)
+
+
+@pytest.mark.unit
 def test_cache_key_never_contains_the_raw_value() -> None:
     raw = "super-secret-pii-value@example.com"
     key = make_cache_key(

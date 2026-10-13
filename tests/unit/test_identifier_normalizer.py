@@ -3,11 +3,15 @@
 
 from __future__ import annotations
 
+import importlib
+
 import pyarrow as pa
 import pytest
 from normalizers.identifier import IdentifierNormalizer, UuidNormalizer
 from normcore.context import NormalizationContext
 from normcore.enums import FieldSemanticType, MissingKind, NormalizationStatus, QualityFlag
+
+from normalizers import identifier as identifier_mod
 
 
 @pytest.fixture
@@ -136,6 +140,109 @@ class TestCountrySpecificCheckDigits:
         ctx = _ctx(FieldSemanticType.IDENTIFIER, country="US")
         result = normalizer.normalize("12-3456789", ctx)
         assert result.structured["check_digit_valid"] is None
+
+
+@pytest.mark.unit
+class TestTaxIdDiscoveryAndCode:
+    def test_unlisted_country_is_unverifiable_not_valid(
+        self, normalizer: IdentifierNormalizer
+    ) -> None:
+        result = normalizer.normalize("12-3456789", _ctx(FieldSemanticType.TAX_ID, country="ZZ"))
+        assert result.validation_status == "UNKNOWN"
+        assert result.structured["verification"] == "unverifiable"
+        assert result.normalization_status is NormalizationStatus.NORMALIZED
+
+    def test_validator_exception_is_unverifiable_not_invalid(
+        self, normalizer: IdentifierNormalizer, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        class _Boom:
+            @staticmethod
+            def is_valid(value: str) -> bool:
+                raise RuntimeError("could not run")
+
+        monkeypatch.setattr("importlib.import_module", lambda name: _Boom)
+        result = normalizer.normalize("123456789", _ctx(FieldSemanticType.TAX_ID, country="US"))
+        assert result.validation_status == "UNKNOWN"
+        assert result.structured["check_digit_valid"] is None
+        assert result.normalization_status is not NormalizationStatus.INVALID
+
+    def test_code_is_canonicalized_without_check_digit_verdict(
+        self, normalizer: IdentifierNormalizer
+    ) -> None:
+        ctx = _ctx(FieldSemanticType.CODE, country="US")
+        result = normalizer.normalize("00-0000000", ctx)  # an invalid EIN as TAX_ID
+        assert result.comparison == "00-0000000"
+        assert "check_digit_valid" not in result.structured
+        assert result.validation_status == "UNKNOWN"
+        assert result.normalization_status is NormalizationStatus.NORMALIZED
+
+
+def _sibling_valid_numbers() -> list[tuple[str, str, str]]:
+    """(country, sibling module, number valid for the sibling, rejected by the chosen
+    tax-id module), built from each sibling's own calc_check_digit; no literals."""
+    out = []
+    for cc in sorted(identifier_mod._stdnum_country_packages()):
+        chosen, _ = identifier_mod.tax_id_module_for(cc)
+        if chosen is None:
+            continue
+        package = identifier_mod._stdnum_country_packages()[cc]
+        for name in identifier_mod._country_validators(package):
+            sib = importlib.import_module(name)
+            calc = getattr(sib, "calc_check_digit", None)
+            if name == chosen or calc is None:
+                continue
+            for width in (8, 9, 10):
+                for body in range(10 ** (width - 1), 10 ** (width - 1) + 200):
+                    try:
+                        number = str(body) + str(calc(str(body)))
+                        if sib.is_valid(number) and not importlib.import_module(chosen).is_valid(
+                            number
+                        ):
+                            out.append((cc, name, number))
+                            break
+                    except Exception:
+                        break
+                else:
+                    continue
+                break
+    return out
+
+
+@pytest.mark.unit
+class TestSiblingModuleAcceptance:
+    def test_number_valid_under_a_sibling_module_is_not_invalid(
+        self, normalizer: IdentifierNormalizer
+    ) -> None:
+        cases = _sibling_valid_numbers()
+        assert cases, "no country with a sibling module to test"
+        for cc, sibling, number in cases:
+            result = normalizer.normalize(number, _ctx(FieldSemanticType.TAX_ID, country=cc))
+            assert result.validation_status == "UNKNOWN", (cc, sibling)
+            assert result.normalization_status is not NormalizationStatus.INVALID
+            assert result.structured["verification"] == "unverifiable"
+            assert sibling in result.structured["candidate_modules"]  # type: ignore[operator]
+
+    def test_twin_invalid_everywhere_stays_invalid(self, normalizer: IdentifierNormalizer) -> None:
+        checked = 0
+        for cc, _sibling, number in _sibling_valid_numbers():
+            package = identifier_mod._stdnum_country_packages()[cc]
+            validators = [
+                importlib.import_module(n) for n in identifier_mod._country_validators(package)
+            ]
+            twin = next(
+                (
+                    t
+                    for ch in "0123456789"
+                    if not any(v.is_valid(t := number[:-1] + ch) for v in validators)
+                ),
+                None,
+            )
+            if twin is None:
+                continue
+            result = normalizer.normalize(twin, _ctx(FieldSemanticType.TAX_ID, country=cc))
+            assert result.validation_status == "INVALID", (cc, twin)
+            checked += 1
+        assert checked
 
 
 @pytest.mark.unit

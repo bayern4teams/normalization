@@ -199,3 +199,21 @@ Legend — **Mile.**: milestone; **Ph.**: implementation phase per §127.
   script proper (so a future PR that silently drops a row is caught by
   CI, not just by a human re-reading this file) is a reasonable M8
   follow-up, tracked here rather than silently assumed done.
+
+## Improvement-report defects D1-D12 (2026-10)
+
+Not `Source.txt` sections; tracked here so the matrix stays the single index. Acceptance tests were written
+by an independent verifier before each implementation.
+
+| item | implementation | tests |
+|---|---|---|
+| D1 abstention exit / D12 NEEDS_REVIEW | `normapi/adjudication.py`, `normcore/dispatch.py`, ADR-018 | `tests/unit/test_adjudication_acceptance.py` |
+| D2 confidence calibration | `normanalysis/calibration.py`, `normcli calibrate`, ADR-019 | `tests/unit/test_calibration_acceptance.py`, `test_calibration_attack.py` |
+| D3 OpenLineage | `normapi/lineage.py`, `GET /clone-jobs/{id}/lineage` | `tests/unit/test_lineage*.py` |
+| D4 disguised missing data | `normanalysis/disguised_missing.py` | `tests/unit/test_disguised_missing_acceptance.py`, `test_disguised_missing_attack.py` |
+| D5 typed destination | `normio/storage_types.py`, ADR-020 | `tests/unit/test_typed_destination_d5_acceptance.py`, `test_typed_destinations.py` |
+| D6 gold corpus | `normanalysis/gold.py`, `normcli gold` | `tests/unit/test_gold_acceptance.py`, `test_gold_attack.py` |
+| D7 stdnum discovery, tri-state / D8 CODE split | `normalizers/identifier.py` | `tests/unit/test_identifier*.py` |
+| D9 registrable domain | `normalizers/url.py` | `tests/unit/test_url*.py` |
+| D10 phone extensions | `normalizers/phone.py` | `tests/unit/test_phone_d10_acceptance.py` |
+| D11 phonetics | `normalizers/name.py`, `normalizers/_bmpm.py` | `tests/unit/test_name*.py` |

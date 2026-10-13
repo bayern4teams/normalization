@@ -65,3 +65,6 @@ graphify-out/
 
 # Local scratch (graph refresh log)
 .tmp/
+
+# Downloaded public benchmark data (never committed; SOURCE.md files are local too)
+data/benchmarks/
