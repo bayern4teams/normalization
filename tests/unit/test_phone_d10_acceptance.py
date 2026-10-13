@@ -178,6 +178,12 @@ class TestNoExtensionOutputUnchanged:
                 "flags": sorted(str(f.value) for f in r.flags),
                 "errors": [str(e) for e in r.errors],
             }
+            # fix/robustness: letters read as keypad digits are no longer a
+            # confident number; the original is kept as AMBIGUOUS instead.
+            if phonenumbers.is_alpha_number(row["value"].strip()):
+                assert got["status"] == "AMBIGUOUS", row["value"]
+                assert got["display"] == row["value"]
+                continue
             if got != row["out"]:
                 moved.append((row["value"], row["country"], row["default_region"]))
         assert moved == [], f"{len(moved)} extension-free outputs changed, e.g. {moved[:5]}"
@@ -261,7 +267,7 @@ class TestNeverGuess:
             r = norm(text)
             for view in (r.comparison, r.structured.get("rfc3966")):
                 assert view is None or not re.search(r";ext=\D*$", view), (text, view)
-            assert r.structured["extension"] in (None, ""), text
+            assert r.structured.get("extension") in (None, ""), text
         # trailing digits without a marker are part of the number, never silently an extension
         r = norm(c.base_international + " 45")
         assert r.structured["extension"] in (None, "")

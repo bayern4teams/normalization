@@ -384,7 +384,6 @@ class TestPhoneLettersAreNotDigits:
         "value",
         ["3342938xxx", "334-293-8xxx", "+1 334 293 8XXX", "(334) 293-ABCD", "1-800-FLOWERS"],
     )
-    @_open("6 (phone letters)")
     def test_letters_never_become_a_confident_number(self, value: str) -> None:
         ctx = NormalizationContext(
             field_name="p", semantic_type=FieldSemanticType.PHONE, country="US"
