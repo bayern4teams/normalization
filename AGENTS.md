@@ -112,8 +112,11 @@ uv run ruff check . && uv run ruff format --check . && uv run mypy packages
 
 ## Active implementation plan
 
-Defects D1-D12 of `docs/improvement-report.md` Part 1 are implemented from
-[`docs/plans/DEFECTS_IMPLEMENTATION_PLAN.md`](docs/plans/DEFECTS_IMPLEMENTATION_PLAN.md)
-on branch `feat/defects-fixes`. Live state is in
-[`docs/plans/defects/HANDOFF.md`](docs/plans/defects/HANDOFF.md); read it first.
+D1-D12 (`docs/improvement-report.md` Part 1) are merged to main; their record is
+[`docs/plans/defects/FINAL_REPORT.md`](docs/plans/defects/FINAL_REPORT.md).
+The bugs the public-data benchmarks then found (`docs/benchmarks/REPORT.md` §7)
+are fixed on branch `fix/robustness`, proven in REPORT.md §9; not merged until
+the user says so. Reproducers: `tests/unit/test_robustness.py` and
+`tests/integration/test_robustness_live.py` (point TEST_PG_PORT etc. at an
+isolated stack, never at a database you care about).
 `scripts/refresh_graphs.py` is the loud graph refresh (exits non-zero if a graph tool is missing).
