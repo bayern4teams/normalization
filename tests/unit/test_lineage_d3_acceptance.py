@@ -149,6 +149,9 @@ class _Dest:
         self.inserted: dict[str, list[dict[str, Any]]] = {}
         self.fail_on = fail_on or {}
 
+    def insert_block_rows(self, *a: Any) -> int:
+        return 2000
+
     def bulk_insert(self, database: str, table: str, rows: list[dict[str, Any]], **kw: Any) -> None:
         if table in self.fail_on:
             raise self.fail_on[table]

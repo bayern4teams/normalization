@@ -9,10 +9,10 @@ from typing import TYPE_CHECKING, Any
 
 import clickhouse_connect
 
-from normio.connectors._sql_base import DESTINATION_INSERT_CHUNK_ROWS
-
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
+
+    import pyarrow as pa
 
     from normio.connector import ColumnInfo
 
@@ -173,6 +173,38 @@ class ClickHouseDestination:
             return base[len("Nullable(") : -1] if base.startswith("Nullable(") else base
         return base if base.startswith("Nullable(") else f"Nullable({base})"
 
+    def insert_block_rows(self, database: str, sample: pa.RecordBatch) -> int:
+        """Rows per INSERT, from the server's own settings.
+
+        Every INSERT is a new part. OnTime (109 columns) was written 2,000
+        rows at a time: 859 parts, and each merge of parts that small runs
+        ClickHouse's horizontal algorithm, which holds a buffer for every
+        column of every part at once (~600 MB per merge), until the server
+        hit its memory cap. A merge runs vertically, one column at a time,
+        once it covers `vertical_merge_algorithm_min_rows_to_activate` rows;
+        a part that size makes every merge it is in vertical, and is ~65x
+        fewer parts. The block stops earlier for wide rows, at
+        `min_insert_block_size_bytes`: the size the server itself squashes
+        one INSERT's blocks up to, so neither side holds more than that.
+        Row width comes from the first source batch's Arrow size.
+
+        ponytail: the caller buffers a block as row dicts, measured at 5.7 KB
+        per OnTime row (6.7x its Arrow size): ~710 MB for 131,072 rows, and
+        at most ~1.7 GB at the bytes ceiling. Buffer tuples or Arrow instead
+        if a wider table brings that near a memory cap.
+        """
+        client = self._client_for(database)
+        rows_setting = "vertical_merge_algorithm_min_rows_to_activate"
+        bytes_setting = "min_insert_block_size_bytes"
+        values = dict(
+            client.query(
+                f"SELECT name, value FROM system.merge_tree_settings WHERE name = '{rows_setting}' "
+                f"UNION ALL SELECT name, value FROM system.settings WHERE name = '{bytes_setting}'"
+            ).result_rows
+        )
+        row_bytes = max(1, int(sample.nbytes) // max(1, int(sample.num_rows)))
+        return max(1, min(int(values[rows_setting]), int(values[bytes_setting]) // row_bytes))
+
     def bulk_insert(
         self,
         database: str,
@@ -181,16 +213,8 @@ class ClickHouseDestination:
         *,
         primary_key: Sequence[str] = (),
     ) -> None:
-        """Chunked native batch insert via `clickhouse_connect` — same
-        `DESTINATION_INSERT_CHUNK_ROWS` chunk-commit boundary as the Postgres destination,
-        doubling as the checkpoint-commit boundary (decision #10).
-        # ponytail: no insert-dedup guard on resume (ClickHouse has no
-        # `ON CONFLICT`) — a crash inside the in-flight chunk could
-        # double-insert on resume. Acceptable for now since the
-        # checkpoint only advances on a chunk that has already committed;
-        # add a dedup key (e.g. a ReplacingMergeTree on source_row_key) if
-        # resumed jobs on ClickHouse become a real requirement.
-        """
+        """One INSERT, so one part: the caller sizes the block
+        (`insert_block_rows`) and checkpoints after it."""
         if not rows:
             return
         columns = list(rows[0].keys())
@@ -201,10 +225,8 @@ class ClickHouseDestination:
         # quote character as already quoted (a column literally named `"x"`);
         # pass column_type_names with pre-quoted names if one turns up.
         full_table = f"{quote_identifier(database)}.{quote_identifier(table)}"
-        for start in range(0, len(rows), DESTINATION_INSERT_CHUNK_ROWS):
-            chunk = rows[start : start + DESTINATION_INSERT_CHUNK_ROWS]
-            data = [[row[c] for c in columns] for row in chunk]
-            client.insert(full_table, data, column_names=columns)
+        data = [[row[c] for c in columns] for row in rows]
+        client.insert(full_table, data, column_names=columns)
 
     def swap_table(self, database: str, table: str, staging: str) -> None:
         """Replace `table` with `staging`, then drop the original.

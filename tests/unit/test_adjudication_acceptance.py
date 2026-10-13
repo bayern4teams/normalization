@@ -86,6 +86,10 @@ class _Dest:
     def __init__(self) -> None:
         self.inserted: list[dict[str, Any]] = []
 
+    def insert_block_rows(self, *a: Any) -> int:
+        # One checkpointed block per source batch, as the resume tests assume.
+        return TestResumeNeverCountsTwice.N
+
     def bulk_insert(self, database: str, table: str, rows: list[dict[str, Any]], **kw: Any) -> None:
         self.inserted.extend(copy.deepcopy(rows))
 

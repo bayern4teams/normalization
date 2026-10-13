@@ -60,7 +60,7 @@ from normcore import (
 from normio import storage_types
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Collection, Mapping
+    from collections.abc import Callable, Collection, Iterator, Mapping
 
     from normcore.dispatch import NormalizerRegistry
     from normexec.cache import NormalizationCache
@@ -2059,6 +2059,21 @@ def _seed_from_entity_map(
     return seeded
 
 
+def _block_pieces(
+    pending: list[tuple[int, dict[str, Any]]], block_rows: int
+) -> Iterator[list[tuple[int, dict[str, Any]]]]:
+    """`pending` cut wherever an offset starts a new block of `block_rows`,
+    so a block is flushed with exactly its own rows, errors and queue
+    entries."""
+    start = 0
+    for i in range(1, len(pending)):
+        if pending[i][0] % block_rows == 0:
+            yield pending[start:i]
+            start = i
+    if pending:
+        yield pending[start:]
+
+
 def _normalize_table(
     table: str,
     *,
@@ -2116,54 +2131,68 @@ def _normalize_table(
         else ""
     )
 
-    for batch in source.read_table(table, batch_size=SOURCE_READ_BATCH_ROWS):
-        rows = batch.to_pylist()
-        pending: list[tuple[int, dict[str, Any]]] = []
-        for row in rows:
-            offset = int(row["source_row_key"].rsplit(":", 1)[1])
-            if offset > checkpoint:
-                pending.append((offset, row))
-        if not pending:
-            continue
+    # Rows go to the destination in blocks of `block_rows`, cut at offset
+    # multiples rather than at source batch ends: the destination decides
+    # the size (ClickHouse needs far bigger inserts than a read batch), and
+    # offset-aligned cuts are the same on a resume whatever block sizes the
+    # source happens to stream. Kept on the job so a resume cuts identically.
+    block_sizes = progress.setdefault("insert_block_rows", {})
+    block_rows: int | None = block_sizes.get(table)
+    block: list[dict[str, Any]] = []
+    block_errors: list[dict[str, Any]] = []
+    block_last = checkpoint
 
-        errors_buffer: list[dict[str, Any]] = []
-        seeded = _seed_from_entity_map(pending, key_column, entity_countries)
-        _normalize_chunk(
-            pending,
-            table=table,
-            job=job,
-            configured_columns=configured_columns,
-            typed_columns=typed_columns,
-            currency_columns=currency_columns,
-            code_columns=code_columns,
-            pool=pool,
-            planner=planner,
-            seeded=seeded,
-            stats=stats,
-            errors_buffer=errors_buffer,
-            adjudication=adjudication,
-            # Phase 1 refuses a clone across engines, so this is the destination too.
-            engine=source_engine,
-        )
-
-        dest_rows = []
-        for _, row in pending:
-            row.pop("source_row_key", None)
-            dest_rows.append(row)
-
-        dest.bulk_insert(
-            job["destination_database"], write_target, dest_rows, primary_key=primary_key
-        )
-        if errors_buffer:
-            persistence.save_clone_job_errors(job_id, errors_buffer)
-
-        checkpoint = max(offset for offset, _ in pending)
+    def flush() -> None:
+        nonlocal checkpoint
+        if not block:
+            return
+        dest.bulk_insert(job["destination_database"], write_target, block, primary_key=primary_key)
+        if block_errors:
+            persistence.save_clone_job_errors(job_id, block_errors)
+        checkpoint = block_last
         progress["checkpoints"][table] = checkpoint
-        progress["rows_done"] += len(pending)
+        progress["rows_done"] += len(block)
         job["progress"] = progress
         _save_progress(
             persistence, job_id, job, adjudication.drain() if adjudication is not None else None
         )
+        block.clear()
+        block_errors.clear()
+
+    for batch in source.read_table(table, batch_size=SOURCE_READ_BATCH_ROWS):
+        if block_rows is None:
+            block_rows = block_sizes[table] = dest.insert_block_rows(
+                job["destination_database"], batch
+            )
+        offsets = ((int(r["source_row_key"].rsplit(":", 1)[1]), r) for r in batch.to_pylist())
+        pending_all = [(offset, row) for offset, row in offsets if offset > checkpoint]
+
+        for pending in _block_pieces(pending_all, block_rows):
+            seeded = _seed_from_entity_map(pending, key_column, entity_countries)
+            _normalize_chunk(
+                pending,
+                table=table,
+                job=job,
+                configured_columns=configured_columns,
+                typed_columns=typed_columns,
+                currency_columns=currency_columns,
+                code_columns=code_columns,
+                pool=pool,
+                planner=planner,
+                seeded=seeded,
+                stats=stats,
+                errors_buffer=block_errors,
+                adjudication=adjudication,
+                # Phase 1 refuses a clone across engines, so this is the destination too.
+                engine=source_engine,
+            )
+            for _, row in pending:
+                row.pop("source_row_key", None)
+                block.append(row)
+            block_last = pending[-1][0]
+            if (block_last + 1) % block_rows == 0:
+                flush()
+    flush()
 
     # Before the swap, deliberately: a job that trips its own
     # max_new_null_rate ceiling in in-place mode must leave the ORIGINAL
