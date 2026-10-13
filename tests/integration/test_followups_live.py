@@ -217,3 +217,34 @@ class TestAFailedJobCanBeClaimed:
         assert store.get_clone_job("j")["status"] == "RUNNING"
         store.create_clone_job("k", {"status": "COMPLETED"})
         assert not store.claim_clone_job("k")
+
+
+class TestPostgresReadOrderIsStable:
+    def test_a_concurrent_scan_does_not_shift_row_offsets(self, pg_db: str) -> None:
+        """Resume keys rows by arrival offset. Postgres lets a sequential scan
+        join one already running (synchronize_seqscans, tables over a quarter
+        of shared_buffers), so a resumed job, whose killed predecessor's scan
+        was still in flight, read the table from the middle: on UK Price Paid
+        406,000 rows were written twice and 406,000 never."""
+        from normio.connectors import PostgresConnector  # noqa: PLC0415
+
+        with psycopg.connect(_pg_dsn(pg_db), autocommit=True) as conn:
+            buffers = conn.execute(
+                "SELECT setting::bigint * 8192 FROM pg_settings WHERE name = 'shared_buffers'"
+            ).fetchone()[0]
+            rows = buffers // 4 // 200 * 2  # ~2x the synchronized-scan threshold
+            # No autovacuum: its worker on a fresh 300k-row table outlives the test
+            # and the teardown's DROP DATABASE ... FORCE may not terminate it.
+            conn.execute("CREATE TABLE t (n bigint, pad text) WITH (autovacuum_enabled = off)")
+            conn.execute(
+                f"INSERT INTO t SELECT g, repeat('x', 180) FROM generate_series(0, {rows - 1}) g"
+            )
+        with psycopg.connect(_pg_dsn(pg_db)) as other, other.cursor(name="mid") as scan:
+            scan.itersize = 1000
+            scan.execute("SELECT n FROM t")
+            for _ in range(rows // 2):
+                next(scan)
+            source = PostgresConnector("s", _pg_dsn(pg_db))
+            first = next(source.read_table("t", batch_size=1000))
+            source.close()
+        assert first.column("n").to_pylist()[:5] == [0, 1, 2, 3, 4]
