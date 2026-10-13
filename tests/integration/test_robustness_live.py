@@ -171,3 +171,50 @@ class TestInvalidUtf8OnClickHouse:
         source.close()
         q = "SELECT groupArray(hex(s)) FROM (SELECT s FROM {db}.{t} ORDER BY id)"
         assert ch.command(q.format(db=db, t="dst")) == ch.command(q.format(db=db, t="src"))
+
+
+@pytest.fixture
+def pg_db2(pg_db: str) -> Iterator[str]:
+    name = f"{pg_db}_b"
+    with psycopg.connect(_pg_dsn("postgres"), autocommit=True) as conn:
+        conn.execute(f"CREATE DATABASE {pg_q(name)}")
+    yield name
+    with psycopg.connect(_pg_dsn("postgres"), autocommit=True) as conn:
+        conn.execute(f"DROP DATABASE IF EXISTS {pg_q(name)} WITH (FORCE)")
+
+
+class TestPostgresPassthroughTypes:
+    def test_array_domain_enum_and_extension_columns_clone(self, pg_db: str, pg_db2: str) -> None:
+        """Pagila's shapes: `text[]`, the `year` domain, the `mpaa_rating` enum, plus a
+        type that exists only by extension (Pagila on PG18 also has pgvector; citext is
+        the one a database owner can create on every supported Postgres)."""
+        with psycopg.connect(_pg_dsn(pg_db), autocommit=True) as conn:
+            conn.execute("CREATE EXTENSION IF NOT EXISTS citext")
+            conn.execute(
+                "CREATE DOMAIN year AS integer CHECK (VALUE >= 1901 AND VALUE <= 2155);"
+                "CREATE TYPE mpaa_rating AS ENUM ('G', 'PG', 'NC-17');"
+                "CREATE TABLE film (film_id serial PRIMARY KEY, release_year year,"
+                " rating mpaa_rating, special_features text[], tags integer[],"
+                " email citext, price numeric(4,2), title varchar(20));"
+                "INSERT INTO film (release_year, rating, special_features, tags, email,"
+                " price, title) VALUES (2006, 'NC-17', '{Trailers,\"Deleted Scenes\"}',"
+                " '{1,2}', 'A@B.org', 4.99, 'ACADEMY DINOSAUR')"
+            )
+        source = PostgresConnector("s", _pg_dsn(pg_db))
+        columns = source.get_columns("film")
+        rows = [
+            {k: v for k, v in r.items() if k != "source_row_key"}
+            for b in source.read_table("film")
+            for r in b.to_pylist()
+        ]
+        source.close()
+        dest = PostgresDestination(PG_HOST, PG_PORT, _W["username"], _W["password"])
+        dest.create_table(pg_db2, "film", columns, primary_key=["film_id"])
+        dest.bulk_insert(pg_db2, "film", rows, primary_key=["film_id"])
+        dest.close()
+        q = (
+            "SELECT release_year::text, rating::text, special_features::text, tags::text,"
+            " email::text, price::text, title FROM film"
+        )
+        with psycopg.connect(_pg_dsn(pg_db)) as a, psycopg.connect(_pg_dsn(pg_db2)) as b:
+            assert b.execute(q).fetchall() == a.execute(q).fetchall()
