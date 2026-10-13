@@ -16,7 +16,11 @@ concurrency:
 jobs:
   fast:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    # 5 was already within a minute of main's own run (4m22s) and cancelled
+    # the run once the 75 tests that were never selected (no unit marker)
+    # started running: pytest 2m49s -> 3m28s. A ceiling for a hung run, not
+    # the target (the target stays "under 3 minutes" for the test step).
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
 

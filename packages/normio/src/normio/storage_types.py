@@ -54,12 +54,12 @@ _PG_TYPES: Mapping[str, str] = {
 # 131072 digits before the point, 16383 after); ClickHouse has no
 # unbounded decimal, so NUMERIC pins Decimal(38,9) — 38 significant
 # digits, 9 after the point. A value needing more than 9 decimal places
-# (a unit price at 12dp, a scientific measurement) is rounded on
-# ClickHouse and exact on Postgres, and a value with more integer digits
-# than the 29 that Decimal(38,9) leaves fails the cast gate on ClickHouse
-# and lands as NULL plus an error row while Postgres stores it (`coerce`
-# checks the target column, ADR-020). MONEY is Decimal(38,4) on both, so it is
-# identical across engines by construction.
+# (a unit price at 12dp, a scientific measurement), or more integer digits
+# than the 29 that Decimal(38,9) leaves, fails the cast gate on ClickHouse
+# and lands as NULL plus an error row while Postgres stores it exactly
+# (`coerce` checks the target column, ADR-020). Nothing is ever rounded or
+# truncated to fit. MONEY is (38,4) on both, so it is identical across
+# engines by construction.
 #
 # ponytail: 38,9 is ClickHouse's widest Decimal that still fits its
 # 128-bit backing type. Decimal256 goes to 76 digits if a real column
@@ -158,20 +158,24 @@ def _coerce_decimal(text: str, column_type: str, engine: str) -> tuple[object | 
 
 
 def _fits(number: decimal.Decimal, column_type: str) -> bool:
-    """Whether the column can hold `number` once the database rounds it
-    to the column's scale. The value itself is returned unrounded: the
-    database rounds, nothing here invents precision."""
+    """Whether the column holds `number` EXACTLY. A value with more
+    fraction digits than the scale is refused rather than left to the
+    database, because the engines disagree about what to do with it:
+    Postgres rounds half-up and ClickHouse truncates (measured live,
+    `12.34565` -> `12.3457` vs `12.3456`, and `0.00005` -> `0.0001` vs `0`),
+    and either way the stored number is not the source's. Trailing zeros
+    past the scale are not a loss and fit. The value itself is returned
+    unchanged: nothing here rounds, nothing here invents precision."""
     if number.is_zero():
         return True  # `0e999` has a huge exponent and no integer digit
     match = _PRECISION_SCALE.search(column_type)
     if match is None:
         return number.adjusted() < _PG_UNBOUNDED_INTEGER_DIGITS
     precision, scale = int(match[1]), int(match[2])
-    integer_digits = precision - scale
-    if number.adjusted() >= integer_digits:
+    if number.adjusted() >= precision - scale:
         return False
-    # Rounding to the scale can carry into one more integer digit
-    # (99.995 -> 100.00); the context is wide enough to round exactly.
-    context = decimal.Context(prec=precision + 2, rounding=decimal.ROUND_HALF_UP)
-    rounded = number.quantize(decimal.Decimal(1).scaleb(-scale), context=context)
-    return rounded.is_zero() or rounded.adjusted() < integer_digits
+    # Exact at the scale: every digit past it is zero. Read off the digit
+    # tuple, so no Decimal context (and no context precision) is involved.
+    _, digits, exponent = number.as_tuple()
+    excess = -int(exponent) - scale
+    return excess <= 0 or not any(digits[-excess:])

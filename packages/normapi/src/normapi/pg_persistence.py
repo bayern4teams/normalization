@@ -71,7 +71,7 @@ from normcore import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
+    from collections.abc import Callable, Mapping, Sequence
 
 # _WRITE_CHUNK_ROWS bounds peak memory for save_execution's writes,
 # load_execution's full-run reconstruction, and (DB-clone-and-normalize
@@ -733,17 +733,22 @@ class PgPersistence:
         writes — bounds peak memory the same way."""
         for start in range(0, len(errors), _WRITE_CHUNK_ROWS):
             chunk = errors[start : start + _WRITE_CHUNK_ROWS]
-            rows = [
-                {
-                    "jid": job_id,
-                    "idx": e["row_index"],
-                    "table": e["table_name"],
-                    "field": e["field"],
-                    "orig": e["original"],
-                    "err": e["error"],
-                }
-                for e in chunk
-            ]
+            rows = []
+            for e in chunk:
+                original, encoded = _pg_text(e["original"])
+                error = e["error"].replace("\x00", "\\x00")
+                if encoded:
+                    error += f"; {_NUL_NOTE}"
+                rows.append(
+                    {
+                        "jid": job_id,
+                        "idx": e["row_index"],
+                        "table": e["table_name"],
+                        "field": e["field"],
+                        "orig": original,
+                        "err": error,
+                    }
+                )
             with self._engine.begin() as conn:
                 conn.execute(
                     sa.text(
@@ -856,7 +861,7 @@ class PgPersistence:
                         "ELSE excluded.occurrences END, "
                         "last_job_id = excluded.last_job_id, detail = excluded.detail"
                     ),
-                    [{**item, "job_id": job_id} for item in queued],
+                    [{**_queue_row(item), "job_id": job_id} for item in queued],
                 )
             conn.execute(
                 sa.text("UPDATE normalization_clone_jobs SET data = :data WHERE job_id = :jid"),
@@ -949,6 +954,28 @@ _QUEUE_SELECT = (
     "EXISTS (SELECT 1 FROM normalization_adjudication_verdicts v WHERE v.key = q.key) "
     "AS decided FROM normalization_adjudication_queue q"
 )
+
+
+# Postgres `text` cannot hold U+0000, and one such value used to abort the
+# whole INSERT: the job failed and the batch's error rows were lost. A value
+# containing NUL is stored as its JSON string literal instead, which holds no
+# NUL and decodes back to the exact original (`json.loads`). Only those
+# values are encoded, and each one is marked as encoded where it is stored.
+_NUL_NOTE = "original contains NUL, stored JSON-encoded (json.loads restores it)"
+
+
+def _pg_text(value: str | None) -> tuple[str | None, bool]:
+    if value is None or "\x00" not in value:
+        return value, False
+    return json.dumps(value), True
+
+
+def _queue_row(item: Mapping[str, Any]) -> dict[str, Any]:
+    original, encoded = _pg_text(item["original"])
+    if not encoded:
+        return dict(item)
+    detail = {**json.loads(item["detail"]), "original_encoding": "json"}
+    return {**item, "original": original, "detail": json.dumps(detail, sort_keys=True)}
 
 
 def _queue_filter(semantic_type: str | None, decided: bool | None) -> tuple[str, dict[str, Any]]:

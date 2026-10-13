@@ -60,6 +60,14 @@ SEMANTIC_TYPE_TO_PG_TYPE: dict[str, str] = dict.fromkeys(
 PASSTHROUGH_PG_TYPE = "TEXT"
 
 
+def quote_identifier(name: str) -> str:
+    """A Postgres identifier, quoted and escaped. Every table and column
+    name here comes from SOURCE metadata, so it can hold anything: `.`,
+    spaces, `-`, `%`, and `"` itself (which, unescaped, was also an
+    injection path). Real Norway and GLEIF columns could not be cloned."""
+    return '"' + name.replace('"', '""') + '"'
+
+
 class PostgresDestination:
     """Write-capable, server-level (no `database` at construction — mirrors
     the server-level saved-connection shape, decision #13). No
@@ -122,7 +130,8 @@ class PostgresDestination:
         # empty when the job turned `typed_destination_columns` off.
         column_overrides = column_overrides or {}
         column_defs = [
-            f'"{col.name}" '
+            quote_identifier(col.name)
+            + " "
             + (
                 column_overrides.get(col.name)
                 or SEMANTIC_TYPE_TO_PG_TYPE.get(semantic_types[col.name], PASSTHROUGH_PG_TYPE)
@@ -133,11 +142,12 @@ class PostgresDestination:
         ]
         # Companion columns the normalizer produces alongside a value it
         # would otherwise have to discard (a MONEY column's currency).
-        column_defs += [f'"{name}" {sql_type}' for name, sql_type in (extra_columns or {}).items()]
+        extra = (extra_columns or {}).items()
+        column_defs += [f"{quote_identifier(name)} {sql_type}" for name, sql_type in extra]
         if primary_key:
-            pk_cols = ", ".join(f'"{c}"' for c in primary_key)
+            pk_cols = ", ".join(map(quote_identifier, primary_key))
             column_defs.append(f"PRIMARY KEY ({pk_cols})")
-        ddl = f'CREATE TABLE "{table}" ({", ".join(column_defs)})'
+        ddl = f"CREATE TABLE {quote_identifier(table)} ({', '.join(column_defs)})"
         with self._engine_for(database).begin() as conn:
             conn.execute(sa.text(ddl))
 
@@ -163,20 +173,24 @@ class PostgresDestination:
         if not rows:
             return
         columns = list(rows[0].keys())
-        col_list = ", ".join(f'"{c}"' for c in columns)
-        placeholders = ", ".join(f":{c}" for c in columns)
+        col_list = ", ".join(map(quote_identifier, columns))
+        # Positional bind names: a `:name` built from a column name breaks
+        # on `.`, space, `-`, `:` or `%`.
+        placeholders = ", ".join(f":c{i}" for i in range(len(columns)))
         conflict_clause = ""
         if primary_key:
-            pk_cols = ", ".join(f'"{c}"' for c in primary_key)
+            pk_cols = ", ".join(map(quote_identifier, primary_key))
             conflict_clause = f" ON CONFLICT ({pk_cols}) DO NOTHING"
         insert_sql = sa.text(
-            f'INSERT INTO "{table}" ({col_list}) VALUES ({placeholders}){conflict_clause}'
+            f"INSERT INTO {quote_identifier(table)} ({col_list}) "
+            f"VALUES ({placeholders}){conflict_clause}"
         )
         engine = self._engine_for(database)
         for start in range(0, len(rows), DESTINATION_INSERT_CHUNK_ROWS):
             chunk = rows[start : start + DESTINATION_INSERT_CHUNK_ROWS]
+            params = [{f"c{i}": row[c] for i, c in enumerate(columns)} for row in chunk]
             with engine.begin() as conn:
-                conn.execute(insert_sql, list(chunk))
+                conn.execute(insert_sql, params)
 
     def swap_table(self, database: str, table: str, staging: str) -> None:
         """Replace `table` with `staging`, then drop the original.
@@ -198,15 +212,16 @@ class PostgresDestination:
         revisit if something reads constraint names.
         """
         retired = f"{staging}_retired"
+        q = quote_identifier
         with self._engine_for(database).begin() as conn:
-            conn.execute(sa.text(f'ALTER TABLE "{table}" RENAME TO "{retired}"'))
-            conn.execute(sa.text(f'ALTER TABLE "{staging}" RENAME TO "{table}"'))
+            conn.execute(sa.text(f"ALTER TABLE {q(table)} RENAME TO {q(retired)}"))
+            conn.execute(sa.text(f"ALTER TABLE {q(staging)} RENAME TO {q(table)}"))
         with self._engine_for(database).begin() as conn:
-            conn.execute(sa.text(f'DROP TABLE "{retired}"'))
+            conn.execute(sa.text(f"DROP TABLE {q(retired)}"))
 
     def drop_table(self, database: str, table: str) -> None:
         with self._engine_for(database).begin() as conn:
-            conn.execute(sa.text(f'DROP TABLE IF EXISTS "{table}"'))
+            conn.execute(sa.text(f"DROP TABLE IF EXISTS {quote_identifier(table)}"))
 
     def close(self) -> None:
         self._admin_engine.dispose()

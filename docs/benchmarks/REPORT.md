@@ -350,3 +350,142 @@ Each finding has a reproducer. None is fixed (held-out rule), except F-YEAR00.
   committed.
 - **Raw results:** they stay local because they hold dataset values. This report quotes only counts and
   short examples.
+
+## 9. fix/robustness: the §7 bugs fixed and re-measured (2026-10-13)
+
+Branch `fix/robustness` from main at dcb739e. Each bug got a reproducer first
+(`tests/unit/test_robustness.py`, committed as strict xfail and run against main's
+code; live counterparts in `tests/integration/test_robustness_live.py` against
+the normbench Postgres 16 and ClickHouse 24.9), one root-cause fix in the shared
+place, then the benchmark that found it, rerun with the same arguments as in §6
+(held out: no normalizer, dictionary or threshold was changed to move a number).
+Every pass below was decided by direct SQL on source, destination and metadata
+database, not by the job status.
+
+### Step 1: starting point
+D1 NUL and D5 ClickHouse truncation were NOT fixed on main (both reproduced, below);
+ci-fast was green on main (run 38364358452); the normbench stack was up.
+
+### Reproduces on main?
+
+| bug | reproduces on main | fix commit |
+|---|---|---|
+| D1 NUL in an AMBIGUOUS value fails the job, loses the batch's error rows | yes | d682b51 |
+| D5 ClickHouse truncates / Postgres rounds excess fraction digits silently | yes | dd957b2 |
+| F-AUTODETECT applied to whole columns by default | yes | 792a9cc |
+| F-PG-COLNAME (`.`, space, `-`, `:`, `%`, `"`; backtick on ClickHouse) | yes | ed9c141 |
+| F-CH-STREAM (server drops the stream after 30 s of not reading) | yes, live: IncompleteRead after 57,344 of 400,000 rows | f7bc88f |
+| F-DECIMAL-SOURCE | yes | 4be3fa7 |
+| F-CH-BADUTF8 | yes | 4be3fa7 |
+| F-PAGILA-DDL (`ARRAY`, `DOMAIN`, unknown extension types) | yes, live | 9a51bd8 |
+| F-PAGILA-UUID (new: PG18 uuid values have no Arrow type; hidden behind the DDL bug) | yes | 645019f |
+| F-PHONE-VANITY (`xxx` -> `999`) | yes | b4836b1 |
+| 75 unit tests never selected by ci-fast | yes | 75cdc9f |
+
+### What changed
+- **D1 NUL.** `PgPersistence` stores a value containing U+0000 as its JSON string
+  literal (`json.loads` gives back the exact value) and says so where it is stored:
+  the error text, or `detail.original_encoding = "json"` in the queue. All other
+  values are stored unchanged.
+- **D5.** The cast gate refuses any non-zero value with more fraction digits than the
+  column's scale: NULL plus an error row, the same as overflow, on both engines.
+  Trailing zeros still fit, and unbounded Postgres NUMERIC keeps every digit. Two D5
+  acceptance tests encoded the opposite ("a tiny value is never rejected", meaning it
+  was stored as 0) and were updated.
+- **Autodetect (decision taken: default OFF).** Detection still runs. The job stores
+  `suggested_field_types` and the plan shows a `suggestion` for every unconfigured
+  column: type, detector confidence, `validated_share` (the share of sampled values
+  the type's own validator accepts under the job's country and locale) and the
+  sample size. Nothing is written unless the column is opted in: per column by giving
+  it the type (in the request or with `PATCH .../plan`), or per job with
+  `autodetect_field_types: true`, which is the old behaviour and keeps the old gate.
+  No new threshold was introduced.
+- **Identifiers.** There is one `quote_identifier` per engine, used by the DDL,
+  insert, swap and drop paths, the ClickHouse source read and the sorting-key
+  parse. Postgres binds are positional.
+  - ClickHouse reports the sorting key with names already backquoted (`` `a.b` ``);
+    the old comma split then re-wrapped them.
+  - The driver leaves a table name containing `.` unquoted, so the destination
+    insert now passes a pre-quoted `db.table`.
+  - `CREATE DATABASE "x"` with `""` escaping was checked live on both engines.
+- **ClickHouse stream.** `read_table` drains the server stream on a thread into
+  zstd Arrow files under `$TMPDIR`, one per block, each deleted once read back.
+  The server never waits on normalization, memory stays at one block, and the
+  single SELECT keeps its snapshot. Ceiling (noted in the code): disk holds the
+  drained but unread part, at most the table compressed.
+- **Decimal, UTF-8 and UUID.**
+  - Normalizers receive the value's text (Decimal, timestamp, int).
+  - A ClickHouse String column with invalid UTF-8 arrives as binary for that block.
+    In a normalized column those bytes are not normalized: the cell keeps them
+    (NULL in a typed column) and an error row shows them backslash-escaped.
+  - A value Arrow cannot type (uuid) is read as its text, and Postgres casts it back.
+- **Pagila DDL.** Postgres `get_columns` uses `format_type`.
+  - A domain becomes its base type, so the CHECK is not copied.
+  - Any non-built-in type (enum, citext, vector, arrays of those) becomes `text`.
+  - Values are preserved; the constraint is not.
+- **Phone.** `phonenumbers.is_alpha_number` (libphonenumber's own keypad-conversion
+  condition) leads to AMBIGUOUS with the original kept. Vanity numbers
+  (`1-800-FLOWERS`) are AMBIGUOUS too, because the two cannot be told apart. The D10
+  byte-identical test exempts exactly the alpha inputs.
+- **CI.**
+  - `tests/unit/conftest.py` marks every test under `tests/unit` as `unit` by
+    location. All 75 tests pass; the slowest takes 1.3 s, so none needed `slow`.
+  - Running them pushed ci-fast past its 5-minute job timeout (main already took
+    4m22s), so the timeout is now 10 minutes. No test was skipped to fit. Green
+    run: 38399297104, 3m09s.
+
+### Reruns (same arguments as §6, autodetect opted in as it was then; caps as in §1)
+
+| run | before (§6/§3) | after | phase 2 s | independent check |
+|---|---|---|---|---|
+| D1 NUL (CH `d1src`, MONEY+PHONE) | FAILED, batch's error rows lost | COMPLETED | 1.0 | 4/4 rows; the NUL row's error row stored as `"1,234\u0000"`, `json.loads` gives the exact original; 4 queue entries, NUL ones marked `original_encoding: json` |
+| D5 on ClickHouse (`d5src`) | `12.34565`→`12.3456`, `0.00005`→`0`, no error row | COMPLETED | 1.0 | 6/6 rows; row 1 `12.5`; rows 2-6 NULL in both columns, each with an error row keeping the original |
+| D5 on Postgres (twin `rb_d5src`) | rounded half-up silently | COMPLETED | 1.0 | 6/6; MONEY identical to ClickHouse (only row 1 stored); unbounded NUMERIC keeps every digit (`1e999` as 1,000 digits, `0.0000000005`) |
+| bad UTF-8 (CH `d1src_badutf8`) | FAILED | COMPLETED | 1.0 | typed MONEY cell NULL + "not valid UTF-8" error; text PHONE cell byte-identical (`…EDA080`, hex compared) |
+| SIRENE, product default (autodetect off) | 499,985 SIRENs written as phones | COMPLETED | 15.6 | 500,000/500,000; `siren` differs in 0 rows (joined on `_bench_row`); the plan suggests PHONE (confidence 0.90, 95% of 200 sampled values validate) and writes nothing |
+| Norway Brreg | FAILED (dotted names) | COMPLETED | 96.2 | 1,177,617 both sides; 9 dotted columns; 0 differing rows in the 2 compared dotted passthrough columns |
+| GLEIF | FAILED (dotted names) | COMPLETED | 595.2 | 3,458,719 both sides; 15 dotted columns; md5 over every `Entity.LegalName`/`Entity.LegalAddress.City` value identical |
+| Pagila (PG18) | FAILED in Phase 1 (DDL) | COMPLETED (after the uuid fix; first rerun FAILED on F-PAGILA-UUID) | 13.2 | 71/71 tables, every row count equal (173,270 rows); its 7 views are not cloned (clones copy tables) |
+| TPC-H SF1 | COMPLETED, 97.5 s | COMPLETED | 106.6 | every table's count equal; `sum(c_acctbal)` and `sum(l_extendedprice)` equal |
+| OnTime 2022 | FAILED at 155,648 / 296,478 rows (stream timeout) | **FAILED, new cause** at 1,407,955 rows | 14,687 | stream: no timeout; whole result spooled (≤ 160 MB on disk, then shrinking). Committed rows: 1,407,955, all distinct and all present in the source (hash anti-join, 0 missing) |
+| TPC-H SF10 | COMPLETED | not rerun (needs your go-ahead: ~20 min, 86M rows) | – | – |
+
+### Remaining failures (minimal reproducers)
+- **F-CH-INSERT-OOM (new).** OnTime FAILED after 4 h on one 2,000-row INSERT:
+  `MEMORY_LIMIT_EXCEEDED`, "Memory limit (total) exceeded … maximum: 3.60 GiB". The
+  INSERT itself used 4.7 MB; the server was at its cap, which is the benchmark's
+  4 GB `docker update` limit. Every 2,000-row insert is a new part of a 109-column
+  MergeTree: 859 parts, 166 merges, each merge peaking at ~600 MB. ClickHouse's
+  own `MemoryTracking` metric read 50-98 GiB the whole time, so its accounting
+  drifted. The job is FAILED and cannot be resumed through the API (only
+  SCHEMA_READY/RUNNING can be claimed). Reproducer: §6's OnTime run with
+  ClickHouse capped at 4 GB. Not fixed. Candidates are larger insert blocks for
+  ClickHouse destinations or resume-from-FAILED; both are design changes for you
+  to decide.
+- **OnTime throughput.** About 95 rows/s with WheelsOn as DATETIME and
+  ArrivalDelayGroups as MONEY. The pre-fix run did ~220 rows/s before it died.
+  Profiling detection shows dateparser costs 0.1-0.2 s per value that misses the
+  date fast paths (§7 "finding k"); this run also shared the CPU with test runs.
+  The cause of the 2x gap is not verified.
+
+### Logged, not fixed (as asked)
+- **F-VERDICT-SCOPE.** A verdict key includes the saved connection id, so a
+  re-added connection orphans its verdicts. Unchanged.
+- **Norway tax IDs never VALID.** 1,177,617 UNKNOWN (§3 D7): the chosen module is
+  not `no.orgnr`. Unchanged.
+- **Scheduled `drift` workflow.** It fails daily (exit 2, a drift-report artifact)
+  since at least 2026-10-09 on main. Not investigated.
+- **Detection cost.** Each sampled non-date value costs 0.1-0.2 s in dateparser
+  through the DATE/DATETIME validators, at job creation. A related observation:
+  relaxed name matching suggests PHONE (confidence 0.27, 0% validating) for
+  SIRENE's `…UniteLegale` columns ("uni**teLe**gale"). Shown, never applied.
+- **`33429381O23`** (a letter O among the digits) is still read with the O
+  dropped. libphonenumber drops fewer than three letters without converting
+  them, and is_alpha_number does not fire. Not reported in the data; noted.
+
+### CI and memory
+The four ci-fast commands, run exactly as CI runs them under `ulimit -v 16 GB`:
+ruff, ruff format and mypy are clean; pytest gives 2,961 passed, 22 skipped and
+4 xfailed in 131 s (before: 2,852 passed). On GitHub, run 38399297104 is green
+(3m09s). Integration (Postgres/ClickHouse files only; Mongo/MySQL are not in
+normbench): `test_clone_pipeline.py` + `test_robustness_live.py` give 17 passed.

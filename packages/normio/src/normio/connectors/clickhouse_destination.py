@@ -54,6 +54,15 @@ SEMANTIC_TYPE_TO_CH_TYPE: dict[str, str] = dict.fromkeys(
 )
 
 PASSTHROUGH_CH_TYPE = "String"
+
+
+def quote_identifier(name: str) -> str:
+    """A ClickHouse identifier, backquoted with `\\` and `` ` `` escaped.
+    Names come from source metadata and can hold anything; an unescaped
+    backtick broke the DDL (and was an injection path)."""
+    return "`" + name.replace("\\", "\\\\").replace("`", "\\`") + "`"
+
+
 # Every column is wrapped in Nullable(...) at create_table time
 # (including ORDER BY columns) since origin values can be null anywhere —
 # ClickHouse recommends avoiding Nullable in ORDER BY for performance;
@@ -120,7 +129,8 @@ class ClickHouseDestination:
         column_overrides = column_overrides or {}
         order_by_set = set(order_by)
         defs = [
-            f"`{col.name}` "
+            quote_identifier(col.name)
+            + " "
             + self._column_type(
                 col,
                 semantic_types,
@@ -131,11 +141,13 @@ class ClickHouseDestination:
         ]
         # Companion columns (a MONEY column's currency) are never part of
         # the replicated sorting key, so they are always nullable.
-        defs += [f"`{name}` Nullable({t})" for name, t in (extra_columns or {}).items()]
+        defs += [
+            f"{quote_identifier(name)} Nullable({t})" for name, t in (extra_columns or {}).items()
+        ]
         column_defs = ", ".join(defs)
-        order_clause = ", ".join(f"`{c}`" for c in order_by) if order_by else "tuple()"
+        order_clause = ", ".join(map(quote_identifier, order_by)) if order_by else "tuple()"
         ddl = (
-            f"CREATE TABLE `{database}`.`{table}` ({column_defs}) "
+            f"CREATE TABLE {quote_identifier(database)}.{quote_identifier(table)} ({column_defs}) "
             f"ENGINE = {engine} ORDER BY ({order_clause})"
         )
         self._client_for(database).command(ddl)
@@ -183,10 +195,16 @@ class ClickHouseDestination:
             return
         columns = list(rows[0].keys())
         client = self._client_for(database)
+        # Pre-quoted: the driver leaves a table name containing `.` unquoted
+        # and ignores `database` for it. Column names it quotes itself.
+        # ponytail: the driver takes a name that starts and ends with a
+        # quote character as already quoted (a column literally named `"x"`);
+        # pass column_type_names with pre-quoted names if one turns up.
+        full_table = f"{quote_identifier(database)}.{quote_identifier(table)}"
         for start in range(0, len(rows), DESTINATION_INSERT_CHUNK_ROWS):
             chunk = rows[start : start + DESTINATION_INSERT_CHUNK_ROWS]
             data = [[row[c] for c in columns] for row in chunk]
-            client.insert(table, data, column_names=columns, database=database)
+            client.insert(full_table, data, column_names=columns)
 
     def swap_table(self, database: str, table: str, staging: str) -> None:
         """Replace `table` with `staging`, then drop the original.
@@ -202,11 +220,16 @@ class ClickHouseDestination:
         table is known to be done.
         """
         client = self._client_for(database)
-        client.command(f"EXCHANGE TABLES `{database}`.`{table}` AND `{database}`.`{staging}`")
-        client.command(f"DROP TABLE `{database}`.`{staging}`")
+        db = quote_identifier(database)
+        client.command(
+            f"EXCHANGE TABLES {db}.{quote_identifier(table)} AND {db}.{quote_identifier(staging)}"
+        )
+        client.command(f"DROP TABLE {db}.{quote_identifier(staging)}")
 
     def drop_table(self, database: str, table: str) -> None:
-        self._client_for(database).command(f"DROP TABLE IF EXISTS `{database}`.`{table}`")
+        self._client_for(database).command(
+            f"DROP TABLE IF EXISTS {quote_identifier(database)}.{quote_identifier(table)}"
+        )
 
     def close(self) -> None:
         for client in self._clients.values():

@@ -63,7 +63,9 @@ class PhoneNormalizer:
     def can_handle(self, field_type: FieldSemanticType, ctx: NormalizationContext) -> bool:
         return field_type in self.supported_types
 
-    def normalize(self, value: str | None, ctx: NormalizationContext) -> NormalizedValue:
+    def normalize(  # noqa: PLR0911 - one early return per refusal, each named
+        self, value: str | None, ctx: NormalizationContext
+    ) -> NormalizedValue:
         if value is None:
             return _missing(None, MissingKind.NULL, ctx)
         if value.strip() == "":
@@ -101,6 +103,13 @@ class PhoneNormalizer:
         # It judges libphonenumber's own parse, before the ext re-read below.
         if region is None and not has_explicit_plus and not parsed.extension:
             return _ambiguous_no_region(value, ctx)
+
+        # libphonenumber reads three or more letters as keypad digits, so
+        # `3342938xxx` became the confident `+1 334-293-8999`. A masked or
+        # damaged number and a vanity number (`1-800-FLOWERS`) look the
+        # same, so neither is guessed: AMBIGUOUS, original kept.
+        if phonenumbers.is_alpha_number(stripped):
+            return _ambiguous_letters(value, ctx)
 
         # libphonenumber drops a `tel:` ext parameter that follows isub or
         # phone-context. Dropping it is the D10 failure shape, so re-read it.
@@ -289,13 +298,32 @@ def _resolve_region(
 
 
 def _ambiguous_no_region(value: str, ctx: NormalizationContext) -> NormalizedValue:
+    return _ambiguous(value, ctx, structured={"region_source": "unknown"})
+
+
+def _ambiguous_letters(value: str, ctx: NormalizationContext) -> NormalizedValue:
+    return _ambiguous(
+        value,
+        ctx,
+        errors=["letters in the number: keypad letters or a damaged number, not guessed"],
+    )
+
+
+def _ambiguous(
+    value: str,
+    ctx: NormalizationContext,
+    *,
+    structured: dict[str, object] | None = None,
+    errors: list[str] | None = None,
+) -> NormalizedValue:
     return NormalizedValue(
         original=value,
         display=value,
         normalization_status=NormalizationStatus.AMBIGUOUS,
         validation_status="AMBIGUOUS",
         confidence=0.0,
-        structured={"region_source": "unknown"},
+        structured=structured or {},
+        errors=errors or [],
         profile_version="",
         env_id="",
         semantic_type=ctx.semantic_type,

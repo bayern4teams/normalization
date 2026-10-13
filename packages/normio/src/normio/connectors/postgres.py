@@ -8,10 +8,21 @@ import sqlalchemy as sa
 
 from normio.connector import ColumnInfo
 from normio.connectors._sql_base import SqlConnectorBase
+from normio.connectors.postgres_destination import quote_identifier
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+
+_COLUMNS_SQL = sa.text(
+    "SELECT a.attname, CASE WHEN b.typnamespace = 'pg_catalog'::regnamespace "
+    "THEN format_type(b.oid, CASE WHEN t.typtype = 'd' THEN t.typtypmod ELSE a.atttypmod END) "
+    "ELSE 'text' END "
+    "FROM pg_attribute a JOIN pg_type t ON t.oid = a.atttypid "
+    "JOIN pg_type b ON b.oid = CASE WHEN t.typtype = 'd' THEN t.typbasetype ELSE t.oid END "
+    "WHERE a.attrelid = CAST(:rel AS regclass) AND a.attnum > 0 AND NOT a.attisdropped "
+    "ORDER BY a.attnum"
+)
 
 # The server's own namespaces, which are never a clone source.
 _SERVER_SCHEMAS = frozenset({"information_schema", "pg_catalog", "pg_toast"})
@@ -73,14 +84,28 @@ class PostgresConnector(SqlConnectorBase):
         ]
 
     def get_columns(self, table: str) -> Sequence[ColumnInfo]:
-        """Columns with native type strings, for the clone-job DDL/type
-        passthrough path. Same inspector idiom as
-        `SqlConnectorBase.list_tables` just above."""
-        inspector = sa.inspect(self._engine)
-        return [
-            ColumnInfo(name=c["name"], native_type=str(c["type"]))
-            for c in inspector.get_columns(table, schema=self._schema)
-        ]
+        """Columns with the type string the clone's DDL will use for a
+        passthrough column, so it must be one the DESTINATION can create.
+
+        SQLAlchemy's reflected type rendered `text[]` as a bare `ARRAY`
+        and a domain as `DOMAIN`, so Pagila's `CREATE TABLE film` was a
+        syntax error. Postgres formats its own types instead
+        (`format_type`), with one rule for what the destination database
+        may not have: a domain becomes its base type (the values fit; the
+        CHECK is not copied), and any type that is not built in (an enum,
+        an extension's `citext` or `vector`, arrays of those) becomes
+        `text`, which holds every such value as the text Postgres prints.
+        ponytail: one level of domain; a domain over a domain also falls
+        to `text`. Resolve the chain recursively if one turns up.
+        """
+        relation = (
+            f"{quote_identifier(self._schema)}.{quote_identifier(table)}"
+            if self._schema
+            else quote_identifier(table)
+        )
+        with self._engine.connect() as conn:
+            rows = conn.execute(_COLUMNS_SQL, {"rel": relation}).all()
+        return [ColumnInfo(name=name, native_type=native_type) for name, native_type in rows]
 
     def get_primary_key(self, table: str) -> Sequence[str]:
         """Primary-key column names, for clone-job DDL replication
