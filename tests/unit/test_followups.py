@@ -263,7 +263,6 @@ def _ch_source(sizes: dict[str, int]) -> ClickHouseConnector:
     return source
 
 
-@pytest.mark.xfail(strict=True, reason="item 3 not fixed yet")
 class TestSpoolFreeSpace:
     def test_a_job_whose_largest_table_does_not_fit_fails_before_reading(
         self, monkeypatch: pytest.MonkeyPatch

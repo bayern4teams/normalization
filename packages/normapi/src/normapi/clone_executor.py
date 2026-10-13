@@ -2234,6 +2234,23 @@ def _normalize_table(
     _save_progress(persistence, job_id, job)
 
 
+def _entity_country_context(
+    source: Any, job: dict[str, Any], planner: DistinctValuePlanner, persistence: Any, job_id: str
+) -> dict[str, str]:
+    """The cross-table entity -> country map, or {} when the job has no key.
+
+    Rebuilt on resume rather than persisted: it is one bounded extra read of
+    two columns per country-bearing table (617 distinct country strings
+    behind 1.76M rows on a real source), and it is advisory context, not
+    state a resumed job must agree with byte for byte."""
+    key_column = job.get("cross_table_entity_key") or None
+    if not key_column:
+        return {}
+    entity_countries, counts = _build_entity_country_map(source, job, planner, key_column)
+    _report_entity_map(persistence, job_id, key_column, counts)
+    return entity_countries
+
+
 def _run_phase2(
     persistence: PgPersistence,
     dispatcher: Dispatcher,
@@ -2274,19 +2291,13 @@ def _run_phase2(
     progress = job["progress"]
     tables_completed = set(progress["tables_completed"])
     in_place = job.get("in_place", False)
-    entity_countries: dict[str, str] = {}
     adjudication = Adjudication(persistence, SCAFFOLD_PROFILE)
 
     try:
-        key_column = job.get("cross_table_entity_key") or None
-        if key_column:
-            # Rebuilt on resume rather than persisted: it is one bounded
-            # extra read of two columns per country-bearing table (617
-            # distinct country strings behind 1.76M rows on a real source),
-            # and it is advisory context, not state a resumed job must
-            # agree with byte for byte.
-            entity_countries, counts = _build_entity_country_map(source, job, planner, key_column)
-            _report_entity_map(persistence, job_id, key_column, counts)
+        if isinstance(source, ClickHouseConnector):
+            # Before any row is read: OnTime's spool needed 169 MB on a 149 MB /tmp.
+            source.check_spool_space([t for t in job["tables"] if t not in tables_completed])
+        entity_countries = _entity_country_context(source, job, planner, persistence, job_id)
         lineage.complete_open_runs(persistence, job_id, tables_completed)
         for table in job["tables"]:
             if table in tables_completed:
