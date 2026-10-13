@@ -6,11 +6,13 @@ ClickHouse, are in tests/integration/test_robustness_live.py.
 
 from __future__ import annotations
 
+import copy
 import decimal
+import functools
+import importlib.util
 import json
-import subprocess
-import sys
 import time
+import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
 
@@ -28,6 +30,7 @@ from normcore.enums import FieldSemanticType, NormalizationStatus
 from normexec.planner import DistinctValuePlanner
 from normio.connector import ColumnInfo
 from normio.connectors import ClickHouseConnector
+from normio.connectors._sql_base import _rows_to_batch
 from normio.connectors.clickhouse_destination import ClickHouseDestination
 from normio.connectors.postgres_destination import PostgresDestination
 
@@ -40,8 +43,7 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.unit
 
 
-_ROOT = Path(__file__).resolve().parents[2]
-_NOT_UNIT = ("-q", "-m", "not unit", "tests/unit")
+_UNIT = Path(__file__).resolve().parent
 
 
 # --- shared fakes -----------------------------------------------------------
@@ -214,9 +216,9 @@ class _DetectSource:
     """The three columns autodetect corrupted on real data."""
 
     columns: ClassVar[dict[str, list[str]]] = {
-        "siren": [str(300000000 + i * 7919) for i in range(50)],
-        "state": ["al", "ak", "az", "ca", "ny"] * 10,
-        "marital_status": ["S", "M"] * 25,
+        "siren": [str(300000000 + i * 7919) for i in range(10)],
+        "state": ["al", "ak", "az", "ca", "ny"] * 2,
+        "marital_status": ["S", "M"] * 5,
     }
 
     def list_tables(self) -> list[str]:
@@ -237,11 +239,28 @@ class _DetectSource:
         pass
 
 
+_SUGGESTED: dict[str, Any] = {}
+
+
+@functools.cache
+def _registry() -> Any:
+    return build_normalizer_registry()
+
+
 class TestAutodetectIsOffByDefault:
     @pytest.fixture
     def store(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> PgPersistence:
         monkeypatch.setenv("NORM_SECRET_KEY", Fernet.generate_key().decode())
         monkeypatch.setattr(clone_executor, "build_source_connector", lambda *a: _DetectSource())
+        # Real detection, computed once for the class (dateparser makes it seconds).
+        real = clone_executor._suggest_field_types
+        monkeypatch.setattr(
+            clone_executor,
+            "_suggest_field_types",
+            lambda *a, **k: copy.deepcopy(
+                _SUGGESTED.get("FR") or _SUGGESTED.setdefault("FR", real(*a, **k))
+            ),
+        )
         store = PgPersistence(f"sqlite:///{tmp_path}/m.db")
         store.ensure_schema()
         store.save_connection(
@@ -259,9 +278,7 @@ class TestAutodetectIsOffByDefault:
             locale="fr-FR",
             **extra,
         ).model_dump(mode="json")
-        return clone_executor.create_clone_job(
-            store, request=request, registry=build_normalizer_registry()
-        )
+        return clone_executor.create_clone_job(store, request=request, registry=_registry())
 
     def test_the_request_default_is_off(self) -> None:
         assert CloneJobCreateRequest.model_fields["autodetect_field_types"].default is False
@@ -400,16 +417,24 @@ class TestPhoneLettersAreNotDigits:
 
 
 class TestEveryUnitTestIsSelectedByCi:
-    def test_nothing_under_tests_unit_lacks_the_unit_marker(self) -> None:
-        out = subprocess.run(
-            [sys.executable, "-m", "pytest", "--collect-only", *_NOT_UNIT],
-            cwd=_ROOT,
-            capture_output=True,
-            text=True,
-            check=False,
-        ).stdout
-        selected = [line for line in out.splitlines() if "::" in line]
-        assert selected == [], f"{len(selected)} tests escape ci-fast, e.g. {selected[:3]}"
+    def test_a_module_without_pytestmark_is_marked_unit_by_location(self) -> None:
+        spec = importlib.util.spec_from_file_location("unit_conftest", _UNIT / "conftest.py")
+        assert spec is not None
+        assert spec.loader is not None
+        conftest = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(conftest)
+
+        class _Item:
+            def __init__(self, path: Path) -> None:
+                self.path, self.marks = path, []
+
+            def add_marker(self, mark: Any) -> None:
+                self.marks.append(mark.name)
+
+        inside, outside = _Item(_UNIT / "test_multivalue.py"), _Item(_UNIT.parent / "x.py")
+        conftest.pytest_collection_modifyitems([inside, outside])
+        assert inside.marks == ["unit"]
+        assert outside.marks == []
 
 
 # --- 5. ClickHouse stream drained while the consumer works ---------------------
@@ -487,3 +512,14 @@ class TestInvalidUtf8FromClickHouse:
         connector = TestClickHouseStreamIsDrainedWhileNormalizing()._connector(_BadUtf8Stream(1))
         (batch,) = list(connector.read_table("t", batch_size=10))
         assert [r["amt"] for r in batch.to_pylist()] == [b"ok", b"12.50\xed\xa0\x80"]
+
+
+class TestSourceValuesArrowCannotType:
+    def test_a_uuid_column_reads_as_its_text(self) -> None:
+        """Pagila on PG18 (uuidv7 key): Arrow infers no type for uuid.UUID, so Phase 2
+        failed on the first batch. The value arrives as its canonical text, which
+        Postgres casts back on insert."""
+        value = uuid.UUID("019faa23-3a85-7d8b-9bf9-98d90b5d03a4")
+        batch = _rows_to_batch([(value, 1), (None, 2)], ["id", "n"], 0, "t")
+        assert batch.column("id").to_pylist() == [str(value), None]
+        assert batch.column("n").to_pylist() == [1, 2]

@@ -204,9 +204,22 @@ a saved connection (decision #13) — it's picked fresh on the next screen.
 
 ## 3a. Read the plan before anything is built
 
-`GET /clone-jobs/{id}/plan` (`PATCH` the same path to change it). This is
-worth doing every time, because detection is the part of a clone nobody
-could see. On the real 7-table source this was measured against:
+`GET /clone-jobs/{id}/plan` (`PATCH` the same path to change it).
+
+**Detection only suggests (since fix/robustness, 2026-10-13).** A column is
+normalized only when it has an explicit type. Applied to whole columns by
+default, detection rewrote real data with no error row and no original kept:
+French SIRENs became phone numbers (499,985 of 500,000), US state `al` became
+`Albania`, marital status `S`/`M` became the currencies `SOS`/`LSL`. Detection
+still runs at job creation, and every unconfigured column in the plan carries
+a `suggestion`: the suggested type, the detector's `confidence`,
+`validated_share` (the share of the sampled values that type's own validator
+accepts under the job's country/locale) and `sampled`. To use one, copy the
+type into `field_configs` (per column, via `PATCH` below). To apply every
+confident suggestion, create the job with `"autodetect_field_types": true`;
+the rest of this section describes that opt-in mode.
+
+On the real 7-table source detection was measured against:
 
 ```
 8 of 45 columns will be normalized, across 7 tables
