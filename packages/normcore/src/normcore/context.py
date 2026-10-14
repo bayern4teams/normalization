@@ -10,12 +10,15 @@ from __future__ import annotations
 
 import json
 from functools import cached_property
-from typing import Any
+from typing import TYPE_CHECKING, Any, Self
 
 import blake3
 from pydantic import BaseModel, ConfigDict
 
 from normcore.enums import ErrorPolicy, FieldSemanticType
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 
 class NormalizationContext(BaseModel):
@@ -49,6 +52,15 @@ class NormalizationContext(BaseModel):
     # pii_visibility): a traceless result is a different result, and must
     # never be served from cache to a caller that asked for a traced one.
     include_trace: bool = True
+
+    def model_copy(self, *, update: Mapping[str, Any] | None = None, deep: bool = False) -> Self:
+        """A copy hashes its own fields. pydantic copies the instance
+        `__dict__`, where `context_hash` below is cached, so a copy with a
+        different country kept its parent's hash: the clone executor's
+        no-country retry was served the country result it was retrying."""
+        copy = super().model_copy(update=update, deep=deep)
+        copy.__dict__.pop("context_hash", None)
+        return copy
 
     @cached_property
     def context_hash(self) -> str:

@@ -527,7 +527,7 @@ _NORMALIZER_CONFIDENCE_SITES = {
     "company.py": 2,
     "country.py": 3,
     "currency.py": 3,
-    "date.py": 8,
+    "date.py": 9,  # fix/followups: the unread-letter refusal (0.0), not a tuning
     "email.py": 3,
     "generic_text.py": 2,
     "identifier.py": 4,
@@ -636,7 +636,7 @@ class TestMeasuringComesBeforeTuning:
             for ln in _git("grep", "-c", "confidence=", "--", "packages/normalizers").splitlines()
         }
         assert counts == _NORMALIZER_CONFIDENCE_SITES
-        assert sum(counts.values()) == 61  # the report's "Verified state"
+        assert sum(counts.values()) == 62  # the report's "Verified state" (61), plus the above
 
     def test_calibration_is_not_wired_into_dispatch(self) -> None:
         for pkg in ("normcore", "normapi", "normexec", "normio", "normalizers"):

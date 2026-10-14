@@ -126,7 +126,13 @@ def _job(field_configs: dict[str, str], **extra: Any) -> dict[str, Any]:
         "source_connection_id": "src-1",
         "destination_database": "dest",
         "field_configs": {TABLE: field_configs},
-        "progress": {"checkpoints": {}, "rows_done": 0, "current_table": None},
+        # One checkpointed block per source batch, as the resume tests assume.
+        "progress": {
+            "checkpoints": {},
+            "rows_done": 0,
+            "current_table": None,
+            "insert_block_rows": {TABLE: TestResumeNeverCountsTwice.N},
+        },
         "country": None,
         "locale": None,
         **extra,
@@ -179,7 +185,9 @@ class _Env:
             job_id=job_id,
             source=_Source(source_tables or {table: batches}),
             dest=dest,
-            source_engine="clickhouse",
+            # Postgres: a resume skips committed blocks there. A ClickHouse
+            # table starts over instead (clone_executor._resume_point).
+            source_engine="postgres",
             persistence=persistence or store,
             planner=DistinctValuePlanner(build_dispatcher(env_id=env_id), None),
             pool=None,

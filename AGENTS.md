@@ -112,11 +112,12 @@ uv run ruff check . && uv run ruff format --check . && uv run mypy packages
 
 ## Active implementation plan
 
-D1-D12 (`docs/improvement-report.md` Part 1) are merged to main; their record is
-[`docs/plans/defects/FINAL_REPORT.md`](docs/plans/defects/FINAL_REPORT.md).
-The bugs the public-data benchmarks then found (`docs/benchmarks/REPORT.md` §7)
-are fixed on branch `fix/robustness`, proven in REPORT.md §9; not merged until
-the user says so. Reproducers: `tests/unit/test_robustness.py` and
-`tests/integration/test_robustness_live.py` (point TEST_PG_PORT etc. at an
-isolated stack, never at a database you care about).
+D1-D12 (`docs/improvement-report.md` Part 1) and `fix/robustness` are merged to
+main; their records are [`docs/plans/defects/FINAL_REPORT.md`](docs/plans/defects/FINAL_REPORT.md)
+and `docs/benchmarks/REPORT.md` §9. The follow-ups §9 left (ClickHouse insert
+size, resuming a FAILED job, spool free space, silent letter drops, the drift
+workflow, OnTime throughput) are fixed on branch `fix/followups`, proven in
+REPORT.md §10; not merged until the user says so. Reproducers:
+`tests/unit/test_followups.py` and `tests/integration/test_followups_live.py`
+(point TEST_PG_PORT etc. at an isolated stack, never at a database you care about).
 `scripts/refresh_graphs.py` is the loud graph refresh (exits non-zero if a graph tool is missing).

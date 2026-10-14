@@ -43,7 +43,7 @@ from normio.connectors import (
     PostgresConnector,
     PostgresDestination,
 )
-from normio.connectors._sql_base import SOURCE_READ_BATCH_ROWS
+from normio.connectors._sql_base import DESTINATION_INSERT_CHUNK_ROWS, SOURCE_READ_BATCH_ROWS
 
 from normapi import lineage, secrets
 from normapi.adjudication import Adjudication
@@ -60,7 +60,7 @@ from normcore import (
 from normio import storage_types
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Collection, Mapping
+    from collections.abc import Callable, Collection, Iterator, Mapping
 
     from normcore.dispatch import NormalizerRegistry
     from normexec.cache import NormalizationCache
@@ -1007,7 +1007,7 @@ def start_phase2(
     cache: NormalizationCache | None,
     job_id: str,
 ) -> bool:
-    """Claims the job (SCHEMA_READY|RUNNING -> RUNNING) and starts Phase 2
+    """Claims the job (SCHEMA_READY|RUNNING|FAILED -> RUNNING) and starts Phase 2
     on a daemon thread. Returns False without starting a new thread if
     either the claim fails (wrong state — 409 at the route level) or a
     thread for this job is already alive in this process."""
@@ -1127,10 +1127,48 @@ def _normalize_distinct(
     context: NormalizationContext,
     profile: Any,
 ) -> dict[str, Any]:
-    """Distinct-value normalization, fanned across the pool when there is
-    enough work to pay for the IPC. Falls back to the in-process planner
-    for a missing pool, a small batch, or ANY worker failure — a pool
-    problem must degrade this job to "slower", never to "failed"."""
+    """Distinct-value normalization, remembered across the job's chunks and
+    fanned across the pool when there is enough work to pay for the IPC.
+
+    The planner dedups within a chunk only, so a column with few distinct
+    values paid for each of them again in every chunk: OnTime's WheelsOn
+    has 1,441 distinct values in 1.6M rows, ~937 per 2,000-row chunk, each
+    ~0.16 s in dateparser (cProfile), about 800 times over. Results are
+    kept per (type, context, profile) up to one read batch of distinct
+    values, the size one chunk already holds; past that the memo starts
+    over, so a high-cardinality column costs what it did before and memory
+    stays bounded."""
+    memo = planner.memo.setdefault((semantic_type, context.context_hash, profile.version), {})
+    hits = {v: memo[v] for v in distinct_values if v in memo}
+    computed = _compute_distinct(
+        pool,
+        planner,
+        [v for v in distinct_values if v not in memo],
+        semantic_type=semantic_type,
+        context=context,
+        profile=profile,
+    )
+    if len(memo) + len(computed) > SOURCE_READ_BATCH_ROWS:
+        memo.clear()
+    if len(computed) <= SOURCE_READ_BATCH_ROWS:
+        memo.update(computed)
+    return {**hits, **computed}
+
+
+def _compute_distinct(
+    pool: ProcessPoolExecutor | None,
+    planner: DistinctValuePlanner,
+    distinct_values: list[str],
+    *,
+    semantic_type: FieldSemanticType,
+    context: NormalizationContext,
+    profile: Any,
+) -> dict[str, Any]:
+    """Falls back to the in-process planner for a missing pool, a small
+    batch, or ANY worker failure — a pool problem must degrade this job to
+    "slower", never to "failed"."""
+    if not distinct_values:
+        return {}
     if pool is None or len(distinct_values) < _PARALLEL_MIN_VALUES:
         return planner.distinct_value_results(distinct_values, semantic_type, context, profile)
 
@@ -1604,11 +1642,16 @@ def _drop_rejected_country(
             # "the inferred country does not fit" about those would be a
             # misleading report row for a decision that changed nothing.
             continue
-        result.errors.append(
-            f"country {country} inferred from a sibling table does not fit this value; "
-            "normalized without it"
+        # A copy: results are shared across chunks (`_normalize_distinct`).
+        by_value[value] = result.model_copy(
+            update={
+                "errors": [
+                    *result.errors,
+                    f"country {country} inferred from a sibling table does not fit this "
+                    "value; normalized without it",
+                ]
+            }
         )
-        by_value[value] = result
 
 
 # A cross-table entity map is held in memory for the whole of Phase 2, one
@@ -2059,6 +2102,58 @@ def _seed_from_entity_map(
     return seeded
 
 
+def _block_pieces(
+    pending: list[tuple[int, dict[str, Any]]], block_rows: int
+) -> Iterator[list[tuple[int, dict[str, Any]]]]:
+    """`pending` cut wherever an offset starts a new block of `block_rows`,
+    so a block is flushed with exactly its own rows, errors and queue
+    entries."""
+    start = 0
+    for i in range(1, len(pending)):
+        if pending[i][0] % block_rows == 0:
+            yield pending[start:i]
+            start = i
+    if pending:
+        yield pending[start:]
+
+
+def _resume_point(
+    table: str,
+    *,
+    source_engine: str,
+    progress: dict[str, Any],
+    dest: Any,
+    job: dict[str, Any],
+    write_target: str,
+    persistence: PgPersistence,
+    job_id: str,
+) -> int:
+    """The last committed offset to resume `table` after; -1 to start it.
+
+    A resume skips offsets, so it is exact only if the source arrives in the
+    same order twice. SQL sources do (ordered by primary key or ctid). A
+    ClickHouse source does not: parts are read in parallel, and ORDER BY is
+    not a total order (no key, or ties); OnTime resumed with 17,953 rows
+    written twice and 17,953 never, and a total ORDER BY ran it out of
+    memory (MergeSortingTransform). So an unfinished ClickHouse table
+    starts over, emptied first, and its error rows go with it (their
+    row_index named the earlier order's rows); finished tables are still
+    skipped.
+
+    ponytail: the adjudication queue counted the restarted table's rows
+    once already, so their occurrences are counted twice. Subtract them,
+    or resume per part, if ClickHouse resume counts must be exact.
+    """
+    checkpoint: int = progress["checkpoints"].get(table, -1)
+    if checkpoint < 0 or source_engine != "clickhouse":
+        return checkpoint
+    dest.truncate_table(job["destination_database"], write_target)
+    persistence.delete_clone_job_errors(job_id, table)
+    progress["rows_done"] -= checkpoint + 1
+    progress["checkpoints"][table] = -1
+    return -1
+
+
 def _normalize_table(
     table: str,
     *,
@@ -2099,8 +2194,17 @@ def _normalize_table(
     # per-row filter param on read_table today) — correct, but
     # re-reads already-processed rows on resume. Add pushdown
     # filtering if resumed jobs on very large tables get costly.
-    checkpoint = progress["checkpoints"].get(table, -1)
     write_target = staging_name(table) if in_place else table
+    checkpoint = _resume_point(
+        table,
+        source_engine=source_engine,
+        progress=progress,
+        dest=dest,
+        job=job,
+        write_target=write_target,
+        persistence=persistence,
+        job_id=job_id,
+    )
     table_plan = job.get("destination_plan", {}).get(table, {})
     typed_columns: dict[str, str] = table_plan.get("typed_columns", {})
     currency_columns: dict[str, str] = table_plan.get("currency_columns", {})
@@ -2116,54 +2220,67 @@ def _normalize_table(
         else ""
     )
 
-    for batch in source.read_table(table, batch_size=SOURCE_READ_BATCH_ROWS):
-        rows = batch.to_pylist()
-        pending: list[tuple[int, dict[str, Any]]] = []
-        for row in rows:
-            offset = int(row["source_row_key"].rsplit(":", 1)[1])
-            if offset > checkpoint:
-                pending.append((offset, row))
-        if not pending:
-            continue
+    # Rows go to the destination in blocks cut at offset multiples rather
+    # than at source batch ends, so a checkpoint is always a block boundary
+    # whatever block sizes the source streams (a ClickHouse source does not
+    # keep them aligned). The size is kept on the job so a changed setting
+    # cannot move the cuts mid-table.
+    block_rows: int = progress.setdefault("insert_block_rows", {}).setdefault(
+        table, DESTINATION_INSERT_CHUNK_ROWS
+    )
+    block: list[dict[str, Any]] = []
+    block_errors: list[dict[str, Any]] = []
+    block_last = checkpoint
 
-        errors_buffer: list[dict[str, Any]] = []
-        seeded = _seed_from_entity_map(pending, key_column, entity_countries)
-        _normalize_chunk(
-            pending,
-            table=table,
-            job=job,
-            configured_columns=configured_columns,
-            typed_columns=typed_columns,
-            currency_columns=currency_columns,
-            code_columns=code_columns,
-            pool=pool,
-            planner=planner,
-            seeded=seeded,
-            stats=stats,
-            errors_buffer=errors_buffer,
-            adjudication=adjudication,
-            # Phase 1 refuses a clone across engines, so this is the destination too.
-            engine=source_engine,
-        )
-
-        dest_rows = []
-        for _, row in pending:
-            row.pop("source_row_key", None)
-            dest_rows.append(row)
-
-        dest.bulk_insert(
-            job["destination_database"], write_target, dest_rows, primary_key=primary_key
-        )
-        if errors_buffer:
-            persistence.save_clone_job_errors(job_id, errors_buffer)
-
-        checkpoint = max(offset for offset, _ in pending)
+    def flush() -> None:
+        nonlocal checkpoint
+        if not block:
+            return
+        # The same block gets the same token on a resume, so a block that
+        # committed just before a crash is not written twice (ClickHouse).
+        dest.bulk_insert(job["destination_database"], write_target, block, primary_key=primary_key)
+        if block_errors:
+            persistence.save_clone_job_errors(job_id, block_errors)
+        checkpoint = block_last
         progress["checkpoints"][table] = checkpoint
-        progress["rows_done"] += len(pending)
+        progress["rows_done"] += len(block)
         job["progress"] = progress
         _save_progress(
             persistence, job_id, job, adjudication.drain() if adjudication is not None else None
         )
+        block.clear()
+        block_errors.clear()
+
+    for batch in source.read_table(table, batch_size=SOURCE_READ_BATCH_ROWS):
+        offsets = ((int(r["source_row_key"].rsplit(":", 1)[1]), r) for r in batch.to_pylist())
+        pending_all = [(offset, row) for offset, row in offsets if offset > checkpoint]
+
+        for pending in _block_pieces(pending_all, block_rows):
+            seeded = _seed_from_entity_map(pending, key_column, entity_countries)
+            _normalize_chunk(
+                pending,
+                table=table,
+                job=job,
+                configured_columns=configured_columns,
+                typed_columns=typed_columns,
+                currency_columns=currency_columns,
+                code_columns=code_columns,
+                pool=pool,
+                planner=planner,
+                seeded=seeded,
+                stats=stats,
+                errors_buffer=block_errors,
+                adjudication=adjudication,
+                # Phase 1 refuses a clone across engines, so this is the destination too.
+                engine=source_engine,
+            )
+            for _, row in pending:
+                row.pop("source_row_key", None)
+                block.append(row)
+            block_last = pending[-1][0]
+            if (block_last + 1) % block_rows == 0:
+                flush()
+    flush()
 
     # Before the swap, deliberately: a job that trips its own
     # max_new_null_rate ceiling in in-place mode must leave the ORIGINAL
@@ -2197,6 +2314,23 @@ def _normalize_table(
     _save_progress(persistence, job_id, job)
 
 
+def _entity_country_context(
+    source: Any, job: dict[str, Any], planner: DistinctValuePlanner, persistence: Any, job_id: str
+) -> dict[str, str]:
+    """The cross-table entity -> country map, or {} when the job has no key.
+
+    Rebuilt on resume rather than persisted: it is one bounded extra read of
+    two columns per country-bearing table (617 distinct country strings
+    behind 1.76M rows on a real source), and it is advisory context, not
+    state a resumed job must agree with byte for byte."""
+    key_column = job.get("cross_table_entity_key") or None
+    if not key_column:
+        return {}
+    entity_countries, counts = _build_entity_country_map(source, job, planner, key_column)
+    _report_entity_map(persistence, job_id, key_column, counts)
+    return entity_countries
+
+
 def _run_phase2(
     persistence: PgPersistence,
     dispatcher: Dispatcher,
@@ -2211,6 +2345,7 @@ def _run_phase2(
     job = persistence.get_clone_job(job_id)
     if job is None:
         raise CloneJobNotFoundError(job_id)
+    job.pop("error", None)  # a resumed FAILED job is no longer failing
     source_conn = _require_connection(persistence, job["source_connection_id"])
     dest_conn = _require_connection(persistence, job["destination_connection_id"])
     source = build_source_connector(source_conn, job["source_database"], job.get("source_schema"))
@@ -2226,29 +2361,21 @@ def _run_phase2(
     # cardinality. The planner already treats None as "no cache tiers"
     # (normexec/planner.py), and the per-chunk `set()` of distinct values
     # below still dedups within a chunk, which is where the cheap win is.
-    # ponytail: unconditional None, not a cardinality-adaptive switch —
-    # genuinely low-cardinality columns (COUNTRY, BOOLEAN) now re-dispatch
-    # once per chunk instead of once per job. Add the adaptive version
-    # (sample the first chunk, keep the cache below ~50% uniqueness) only
-    # if that re-dispatch volume shows up in a real run's timings.
+    # Low-cardinality columns are remembered across chunks in memory instead
+    # (the planner's memo, bounded per column in `_normalize_distinct`): the
+    # re-dispatch this used to cost showed up in OnTime's timings.
     planner = DistinctValuePlanner(dispatcher, None)
     pool = _make_pool(dispatcher.env_id)
     progress = job["progress"]
     tables_completed = set(progress["tables_completed"])
     in_place = job.get("in_place", False)
-    entity_countries: dict[str, str] = {}
     adjudication = Adjudication(persistence, SCAFFOLD_PROFILE)
 
     try:
-        key_column = job.get("cross_table_entity_key") or None
-        if key_column:
-            # Rebuilt on resume rather than persisted: it is one bounded
-            # extra read of two columns per country-bearing table (617
-            # distinct country strings behind 1.76M rows on a real source),
-            # and it is advisory context, not state a resumed job must
-            # agree with byte for byte.
-            entity_countries, counts = _build_entity_country_map(source, job, planner, key_column)
-            _report_entity_map(persistence, job_id, key_column, counts)
+        if isinstance(source, ClickHouseConnector):
+            # Before any row is read: OnTime's spool needed 169 MB on a 149 MB /tmp.
+            source.check_spool_space([t for t in job["tables"] if t not in tables_completed])
+        entity_countries = _entity_country_context(source, job, planner, persistence, job_id)
         lineage.complete_open_runs(persistence, job_id, tables_completed)
         for table in job["tables"]:
             if table in tables_completed:

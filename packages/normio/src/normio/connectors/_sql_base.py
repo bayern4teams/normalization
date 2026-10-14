@@ -104,7 +104,13 @@ class SqlConnectorBase:
             select_columns = list(sql_table.columns)
 
         column_names = [c.name for c in select_columns]
-        query = sa.select(*select_columns)
+        # `source_row_key` is the arrival offset, and a resume skips every
+        # offset up to its checkpoint, so arrival order must not change
+        # between two reads (the ClickHouse connector orders for the same
+        # reason). An unordered Postgres scan can join a scan already in
+        # flight and start mid-table (synchronize_seqscans): a resumed UK
+        # Price Paid clone wrote 406,000 rows twice and 406,000 never.
+        query = sa.select(*select_columns).order_by(*self._row_order(sql_table))
 
         with self._engine.connect() as raw_conn:
             # execution_options(readonly=True) is honored by dialects that
@@ -121,6 +127,10 @@ class SqlConnectorBase:
                     break
                 yield _rows_to_batch(rows, column_names, row_offset, table)
                 row_offset += len(rows)
+
+    def _row_order(self, sql_table: sa.Table) -> list[Any]:
+        """A total order for `read_table`: the primary key."""
+        return list(sql_table.primary_key.columns)
 
     def close(self) -> None:
         self._engine.dispose()

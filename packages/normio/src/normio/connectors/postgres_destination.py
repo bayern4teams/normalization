@@ -166,7 +166,8 @@ class PostgresDestination:
         key (decision #11) makes re-inserting an already-committed chunk on
         resume a no-op instead of a duplicate row.
         # ponytail: tables with no primary key get no such guard — a crash
-        # inside the in-flight chunk could double-insert on resume. Add a
+        # after a chunk commits and before its checkpoint commits replays it
+        # on resume, so those rows are written twice. Add a
         # synthetic dedup key (e.g. persisting source_row_key) if resumed
         # jobs on PK-less tables become a real requirement.
         """

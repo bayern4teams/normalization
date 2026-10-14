@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import unicodedata
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import TYPE_CHECKING
 
 import anyascii as anyascii_lib
@@ -313,6 +314,19 @@ def _get_spoof_checker() -> icu.SpoofChecker:
         )
         _spoof_checker = checker
     return _spoof_checker
+
+
+@lru_cache(maxsize=1)
+def _digit_skeletons() -> frozenset[str]:
+    checker = _get_spoof_checker()
+    return frozenset(checker.getSkeleton(0, str(d)) for d in range(10))
+
+
+def is_digit_lookalike(text: str) -> bool:
+    """Every character of `text` reads as a digit under Unicode TR39
+    (`O`, `I`, `l` among ASCII letters): what a damaged digit looks like."""
+    checker = _get_spoof_checker()
+    return bool(text) and all(checker.getSkeleton(0, ch) in _digit_skeletons() for ch in text)
 
 
 def analyze_confusables(value: str) -> ConfusableReport:

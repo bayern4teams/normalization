@@ -43,6 +43,9 @@ class DistinctValuePlanner:
     def __init__(self, dispatcher: Dispatcher, cache: NormalizationCache | None = None) -> None:
         self._dispatcher = dispatcher
         self._cache = cache
+        # Results a caller keeps across calls for as long as this planner
+        # lives (the clone executor: one job). Keyed and bounded by the caller.
+        self.memo: dict[tuple[object, ...], dict[str, NormalizedValue]] = {}
 
     def distinct_value_results(
         self,

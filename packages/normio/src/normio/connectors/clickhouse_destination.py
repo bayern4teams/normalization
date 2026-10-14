@@ -9,8 +9,6 @@ from typing import TYPE_CHECKING, Any
 
 import clickhouse_connect
 
-from normio.connectors._sql_base import DESTINATION_INSERT_CHUNK_ROWS
-
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
@@ -150,6 +148,17 @@ class ClickHouseDestination:
             f"CREATE TABLE {quote_identifier(database)}.{quote_identifier(table)} ({column_defs}) "
             f"ENGINE = {engine} ORDER BY ({order_clause})"
         )
+        if "MergeTree" in engine:
+            # vertical_merge_algorithm_min_rows_to_activate = 0: every merge of
+            # a wide table (>= vertical_merge_algorithm_min_columns_to_activate
+            # columns) runs one column at a time. By default a merge of small
+            # parts runs horizontally, holding every column's buffers for
+            # every part at once: measured on 262 OnTime parts of 2,000 rows
+            # (110 columns), 44 horizontal merges peaked at 562 MiB each (497
+            # average), the same parts merged vertically at 14 MiB. That is
+            # what took a 4 GB server to its cap after four hours. Bigger
+            # inserts were not the fix: one 131,072-row INSERT used 611 MiB.
+            ddl += " SETTINGS vertical_merge_algorithm_min_rows_to_activate = 0"
         self._client_for(database).command(ddl)
 
     @staticmethod
@@ -181,16 +190,9 @@ class ClickHouseDestination:
         *,
         primary_key: Sequence[str] = (),
     ) -> None:
-        """Chunked native batch insert via `clickhouse_connect` — same
-        `DESTINATION_INSERT_CHUNK_ROWS` chunk-commit boundary as the Postgres destination,
-        doubling as the checkpoint-commit boundary (decision #10).
-        # ponytail: no insert-dedup guard on resume (ClickHouse has no
-        # `ON CONFLICT`) — a crash inside the in-flight chunk could
-        # double-insert on resume. Acceptable for now since the
-        # checkpoint only advances on a chunk that has already committed;
-        # add a dedup key (e.g. a ReplacingMergeTree on source_row_key) if
-        # resumed jobs on ClickHouse become a real requirement.
-        """
+        """One INSERT, so one part: the caller sizes the block and
+        checkpoints after it. Nothing is replayed on a resume: an unfinished
+        table starts over (`clone_executor._resume_point`)."""
         if not rows:
             return
         columns = list(rows[0].keys())
@@ -201,10 +203,8 @@ class ClickHouseDestination:
         # quote character as already quoted (a column literally named `"x"`);
         # pass column_type_names with pre-quoted names if one turns up.
         full_table = f"{quote_identifier(database)}.{quote_identifier(table)}"
-        for start in range(0, len(rows), DESTINATION_INSERT_CHUNK_ROWS):
-            chunk = rows[start : start + DESTINATION_INSERT_CHUNK_ROWS]
-            data = [[row[c] for c in columns] for row in chunk]
-            client.insert(full_table, data, column_names=columns)
+        data = [[row[c] for c in columns] for row in rows]
+        client.insert(full_table, data, column_names=columns)
 
     def swap_table(self, database: str, table: str, staging: str) -> None:
         """Replace `table` with `staging`, then drop the original.
@@ -225,6 +225,12 @@ class ClickHouseDestination:
             f"EXCHANGE TABLES {db}.{quote_identifier(table)} AND {db}.{quote_identifier(staging)}"
         )
         client.command(f"DROP TABLE {db}.{quote_identifier(staging)}")
+
+    def truncate_table(self, database: str, table: str) -> None:
+        """Empty a table a resumed job writes again from its first row."""
+        self._client_for(database).command(
+            f"TRUNCATE TABLE IF EXISTS {quote_identifier(database)}.{quote_identifier(table)}"
+        )
 
     def drop_table(self, database: str, table: str) -> None:
         self._client_for(database).command(

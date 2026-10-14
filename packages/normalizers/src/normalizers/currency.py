@@ -243,7 +243,7 @@ def _resolve_iso_code(cleaned: str) -> str | None:
     return None
 
 
-def _resolve_name(lowered: str) -> str | None:
+def resolve_name(lowered: str) -> str | None:
     """A currency NAME is only ever matched against the WHOLE value.
 
     CLDR names include short real words ("yen", "kip", "lek", "sol",
@@ -277,7 +277,7 @@ def _resolve_currency(cleaned: str, ctx: NormalizationContext) -> tuple[str | No
     if iso_code is not None:
         return iso_code, 1.0
 
-    name = _resolve_name(cleaned.casefold())
+    name = resolve_name(cleaned.casefold())
     if name is not None:
         return name, 1.0
 

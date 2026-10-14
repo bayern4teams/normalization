@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import sqlalchemy as sa
 
@@ -106,6 +106,13 @@ class PostgresConnector(SqlConnectorBase):
         with self._engine.connect() as conn:
             rows = conn.execute(_COLUMNS_SQL, {"rel": relation}).all()
         return [ColumnInfo(name=name, native_type=native_type) for name, native_type in rows]
+
+    def _row_order(self, sql_table: sa.Table) -> list[Any]:
+        """The primary key, or for a table without one its physical order
+        (`ctid`): stable while the table is unchanged, which a resume of an
+        unchanged source is all it needs. Costs a sort the unordered scan
+        did not."""
+        return list(sql_table.primary_key.columns) or [sa.literal_column("ctid")]
 
     def get_primary_key(self, table: str) -> Sequence[str]:
         """Primary-key column names, for clone-job DDL replication

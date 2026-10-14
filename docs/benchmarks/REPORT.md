@@ -489,3 +489,260 @@ ruff, ruff format and mypy are clean; pytest gives 2,961 passed, 22 skipped and
 4 xfailed in 131 s (before: 2,852 passed). On GitHub, run 38399297104 is green
 (3m09s). Integration (Postgres/ClickHouse files only; Mongo/MySQL are not in
 normbench): `test_clone_pipeline.py` + `test_robustness_live.py` give 17 passed.
+
+## 10. fix/followups: what §9 left, fixed and re-measured (2026-10-13/14)
+
+Branch `fix/followups` from main at 152d685. ci-fast was green on main (run
+38406488647); the normbench stack was up; `/tmp` had 149 MB free, so every
+spool went to `.tmp/spool` on `/home` (50 GB free). Each item got a reproducer
+first (`tests/unit/test_followups.py`, run on main's code:
+24 of 41 failed, the other 17 are guards that must keep passing; live ones in
+`tests/integration/test_followups_live.py`), then one root-cause fix, then the
+benchmark that exposed it, rerun with §6's arguments as a check (held out: no
+normalizer, dictionary or threshold was tuned to it). Every verdict below is
+from direct SQL on source, destination and metadata database. Two decisions
+were asked and taken: resume from the last committed block (item 2), and
+disable the drift schedule rather than build it (item 5). Two of my own first
+fixes were wrong and are corrected below (items 1 and 2), each found by a
+rerun, not by a test.
+
+### Results
+
+| item | before | after | commits |
+|---|---|---|---|
+| 1 ClickHouse insert memory | OnTime FAILED after 4 h, server at its 4 GB cap | OnTime COMPLETED (A3): every merge vertical, peak 16 MiB; each INSERT ≤ 4.8 MiB | 130dc96 (supersedes afb36f4) |
+| 2 resume a FAILED job | `/start` refused FAILED; 4 h of rows lost | FAILED and killed jobs resume through the API; exact on both engines (counts below) | b4de4bb, 4e10264, e22b8eb |
+| 3 spool free space | the spool could fill `/tmp` silently | refused before any row is read: OnTime with TMPDIR unset is FAILED after 1.03 s, naming table, bytes, directory and TMPDIR | a564afc |
+| 4 `33429381O23` | the O dropped: confident `+1 334-293-8123` | AMBIGUOUS, original kept; PHONE, DATE/DATETIME and MONEY checked by a property test | 2188d95 |
+| 5 drift workflow | red daily since at least 2026-10-09 | no schedule; header says what is missing; a test checks every self-triggered workflow | 14e852b |
+| 6 OnTime throughput | ~95 rows/s | 13,114 rows/s end to end (A3), cause profiled first | e6e5b0a |
+| 7 OnTime end to end | FAILED | COMPLETED, row-for-row equal (below) | – |
+
+### 1. ClickHouse insert memory: the merge algorithm, not the insert size
+- **First fix, wrong.** I sized inserts at the server's
+  `vertical_merge_algorithm_min_rows_to_activate` (131,072 rows), on the theory
+  that merges of tiny parts were the cost. OnTime then FAILED after 74 s, not
+  4 h: `query_log` shows one 131,072-row INSERT of 110 columns using 611 MiB.
+- **Measured.** 262 parts of 2,000 OnTime rows into two tables. ClickHouse
+  defaults: 44 horizontal merges, peak 562 MiB, average 497 MiB. With
+  `vertical_merge_algorithm_min_rows_to_activate = 0`: 48 vertical merges, peak
+  14 MiB. A 2,000-row INSERT uses about 5 MB.
+- **Fix (decision asked).** Phase 1 creates MergeTree destination tables with
+  that setting; inserts stay at 2,000 rows, as on Postgres. In A3: 800 INSERTs,
+  max 4.80 MiB each; 139 vertical merges, peak 16.16 MiB; 13 horizontal, peak
+  23.07 MiB; at most 11 active parts.
+
+### 2. Resume: exact only where the source order is
+- **The claim.** FAILED is now claimable like a crashed RUNNING job, and the
+  stale error is cleared.
+- **First fix, wrong.** I relied on a ClickHouse dedup token per block (b4de4bb).
+  Two real kill-and-resume runs then found that the problem is the read order,
+  not replays:
+  - **Postgres (UK Price Paid, no PK).** The resumed clone had 931,453 rows but
+    only 525,453 distinct: 406,000 rows twice and 406,000 never, exactly the
+    rows committed before the kill. The SQL read had no ORDER BY, and Postgres
+    let the new sequential scan join the killed job's scan, still running
+    mid-table (`synchronize_seqscans`; the table is 164 MB, over a quarter of
+    `shared_buffers`). Tables with a PK could lose rows the same way:
+    ON CONFLICT stops duplicates, not gaps.
+    - Fix 4e10264: order by the PK, else `ctid`.
+    - Reproducer: with a second connection holding a scan half-way, the read
+      returned row 167,536 first; now row 0.
+  - **ClickHouse (OnTime, no sorting key, 2 parts).** The resumed clone had
+    1,598,468 rows, 1,580,515 distinct: 17,953 twice and 17,953 never.
+    - The same `LIMIT 1000 OFFSET 700000` read three times returned three
+      different row sets.
+    - A non-unique sorting key has the same ties.
+    - `max_threads = 1` would make the order stable, but a `readonly = 1`
+      profile (ours, and the usual read-only account) cannot set it.
+    - A total `ORDER BY _part, _part_offset` ran the server out of memory in a
+      full sort.
+    - Fix e22b8eb: an unfinished ClickHouse table starts over on resume. It is
+      truncated, its error rows are deleted (their `row_index` named the old
+      order's rows) and its checkpoint is reset; finished tables are skipped.
+      The token and window were removed: nothing is replayed, and a token
+      reused after a TRUNCATE could have made ClickHouse drop the new blocks.
+- **Proofs (direct SQL).**
+
+  | run | kill | result |
+  |---|---|---|
+  | live test, ClickHouse, 3-part no-key source | child dies right after block 2 commits | 30,000 rows, 30,000 distinct, 10,000 error rows (before e22b8eb: 20,000 distinct) |
+  | live test, Postgres with PK | same | 30,000 / 30,000 / 10,000 |
+  | C2: UK Price Paid, PG→PG, no PK | SIGKILL of the cgroup at 418,000 rows (69 s) | resume COMPLETED in 58.96 s; 931,453 rows, 931,453 distinct `transaction_id`, as the source |
+  | B4: OnTime, CH→CH | FAILED by itself at 374,000 rows (ClickHouse memory, below) | resumed through the API: COMPLETED in 120.31 s; 1,598,468 rows; multiset hash over the 107 passthrough columns equal to the source's; 0 error rows |
+  | B5: OnTime, CH→CH | meant to SIGKILL at ≥ 500,000 rows | did not get there: FAILED by itself at 280,000 rows, 2 min after a fresh ClickHouse restart (server memory, below); not repeated. The no-cleanup kill on ClickHouse is the live test above |
+
+- **Ceilings (noted in code).**
+  - A Postgres table without a PK, killed in the moment between a block's
+    commit and its checkpoint commit, writes that block twice.
+  - A restarted ClickHouse table's rows are counted a second time in the
+    adjudication queue's occurrences.
+
+### 3. Spool free space
+The estimate is the largest pending table's compressed size on the server
+(`system.tables.total_bytes`); the spool holds one table at a time. The spool
+was measured by writing it exactly as `_spooled` does:
+
+| table | total_bytes | spool (zstd Arrow) | spool / total_bytes |
+|---|---|---|---|
+| ontime.ontime_2022 | 172,978,631 | 169,021,728 | 0.977 |
+| nyc_taxi.yellow_2024_01 | 104,424,190 | 74,325,246 | 0.712 |
+| tpch_sf1.lineitem | 304,638,300 | 242,800,662 | 0.797 |
+| tpch_sf1.orders | 64,620,870 | 53,740,274 | 0.832 |
+
+No factor is applied. On the live run the estimate (172,978,631 bytes) exceeded
+the 170,592,256 bytes free, while the real spool (169.0 MB) would just have
+fit: 2% conservative on OnTime.
+
+### 4. Silent letter drops: one cause, three places
+The shared cause: each normalizer trusted a lenient parser that drops what it
+cannot place. A sweep inserting characters into good values found letter drops
+in exactly three types.
+
+| type | what dropped the letter | guard |
+|---|---|---|
+| PHONE | libphonenumber drops fewer than three letters | a letter run whose deletion leaves the parse unchanged was not read: AMBIGUOUS |
+| DATE/DATETIME | dateparser's all-locale detection: `1O/15/2024` → 2024-01-15 (Polish skip word `o`); `l2:34:56` → 02:34:56 (Estonian `L`, Saturday) | a letter run glued to a digit that reads as digits under Unicode TR39 (O, I, l), or only filler words in the detected language with one glued to a digit |
+| MONEY | CURRENCY scans for a code anywhere (`1234.56O USD` → USD) | several words must be a whole currency name |
+
+- **Property test.** For every digit-bearing type, a TR39 digit look-alike
+  inserted anywhere in a good value never gives back the same confident answer.
+  The letters are derived from ICU, not listed.
+- **Held-out check.** main (152d685) against this branch on real distinct values:
+  - DATE: 11,483 values, 0 changed;
+  - DATETIME: 789, 0 changed;
+  - MONEY: 308, 0 changed;
+  - PHONE: 197,629 values, 12 changed, all x-damaged Raha hospital phones
+    (`2058x8x122`), INVALID → AMBIGUOUS. None was a confident answer before.
+- **Also closed.** The D10 strict-xfail residual: with two extension markers
+  the first was merged into the number; it is now refused, for the same reason.
+- **Two D10/D2 tests updated, each with a comment.**
+  - The byte-identical PHONE corpus now allows exactly the moves toward
+    AMBIGUOUS-with-original for inputs with letters: two of 1,014.
+  - The D2 confidence-literal count goes 61 → 62: the new refusal's `0.0`.
+
+### 5. drift and the other workflows
+- **drift.yml.** It could never pass. Three pieces were never built:
+  - the pytest option `--golden-report`;
+  - `normcli drift-diff`;
+  - `tests/golden/expectations/`.
+
+  The cron trigger is removed (manual dispatch kept).
+- **The other workflows.** A new test checks every workflow that runs on its own
+  (schedule, push, pull request): each normcli command it calls and pytest
+  option it passes must exist. That found five more missing commands, held in
+  the test as a ratchet: `gate.yml` (milestone pushes; `bench-compare`, `run`,
+  `diff`, `sbom`, `gate`) and `release.yml` (milestone tags; `sbom`).
+
+### 6. OnTime throughput: profiled first
+- **Profile.** cProfile, in one process, on the first 4,000 OnTime rows, with
+  the job's own configs (WheelsOn DATETIME, ArrivalDelayGroups MONEY,
+  US/en-US):
+  - 299 s in total, all of it in dateparser;
+  - 1,873 DATETIME normalize calls caused 385,838 per-locale parse attempts
+    (about 103 locales per value, 0.16 s per value);
+  - inside dateparser, `regex._compile` was called 20.9M times (131 s
+    cumulative) and `strptime` 4.6M times (213 s).
+- **Cause.** WheelsOn has 1,441 distinct values in 1.6M rows, but the planner
+  dedups only within a 2,000-row chunk (about 937 distinct), so each value was
+  paid for about 800 times. The executor's own ponytail note named this upgrade.
+- **Fix.** Results are remembered across the job's chunks, per (type, context,
+  profile), up to one read batch of distinct values per key.
+- **Measured.**
+  - 40,000 rows in 213 s in one process (188 rows/s, from 13).
+  - End to end, OnTime phase 2 took 121.89 s for 1,598,468 rows, which is
+    13,114 rows/s.
+- **The "2× slower" claim in §9 does not hold.** The pre-fix run with the same
+  configs committed 73,728 rows in 710 s, which is 104 rows/s.
+- **Latent bug the memo exposed (fixed).** `NormalizationContext.context_hash`
+  is a cached property, and pydantic's `model_copy` copied the cache. So a copy
+  with another country kept its parent's hash, and the no-country retry of a
+  cross-table country was served the country's result.
+- **Remaining candidates (not done).**
+  - Restrict dateparser to the job's locale language when one is given. That
+    is a semantic change, for you to decide.
+  - Build `DateDataParser` once per settings: `dateparser.parse` builds one per
+    call.
+  - `regex`'s compile cache thrashing inside dateparser is upstream.
+
+### 7. OnTime end to end (A3; caps as in §1: job 6 GB cgroup, ClickHouse 4 GB)
+
+| measure | value |
+|---|---|
+| status | COMPLETED |
+| rows (direct SQL) | source 1,598,468; destination 1,598,468 |
+| identity | sum and uniqExact of cityHash64 over the 107 passthrough columns: equal, all distinct |
+| normalized columns | NULL exactly where the source has `''` (64,255 / 67,083); 0 error rows |
+| phase 2 / wall | 121.89 s / 186 s |
+| throughput | 13,114 rows/s (§9: ~95) |
+| peak RSS | 531 MB API process, 475 MB workers |
+| ClickHouse | 800 INSERTs ≤ 4.80 MiB; merges vertical ≤ 16.16 MiB; ≤ 11 active parts; container cgroup peak 2.61 GiB |
+
+The full run took 3 minutes, so it was run in full (no slice). TPC-H SF10 was
+not rerun.
+
+### The ClickHouse server itself (environment, not fixed)
+These failures were the server's, not the job's.
+- **What happened.**
+  - A2 FAILED: its source SELECT (324 MiB) was killed by the total limit,
+    which ClickHouse wrote into the HTTP stream mid-body. The Arrow reader then
+    parsed `Code` as a length: "Expected to read 1701080899 metadata bytes"
+    (1701080899 = 0x65646F43).
+  - B2 resume and B4 FAILED on 5 MB inserts.
+- **ClickHouse 24.9 counts its container's page cache against its own
+  limit.** The idle cgroup was at 3.35 GiB:
+
+  | part of the cgroup | size |
+  |---|---|
+  | anonymous memory (the server's own) | 1.30 GiB |
+  | page cache | 1.00 GiB |
+  | kernel | 0.14 GiB |
+
+  The server refuses allocations at 3.6 GiB, so the kernel never gets the
+  pressure that would reclaim the cache.
+- **Its own tracker drifts upward.** `MemoryTracking` read 4.6-6.9 GiB, and
+  earlier 99-278 GB, while resident memory was 1.5-1.8 GiB. One failure said
+  "would use 3.60 GiB, current RSS 1.53 GiB".
+- **Workaround used (asked, approved).** `docker restart` of the normbench
+  ClickHouse, keeping volumes and the 4 GB cap. A3 and the B4 resume each ran
+  right after a restart.
+- **Flaky test.** `test_robustness_live.py` failed once on this tracker while
+  generating test data; it passed on rerun.
+
+### Remaining failures (minimal reproducers)
+New, found here, and fixed afterwards on your request (each one's reproducer
+is in `tests/unit/test_followups.py`; on real values neither changed anything
+against main: DATE 11,483 and QUANTITY 32 distinct values × 2 contexts):
+- **QUANTITY crashes** (d10169d). pint's unit parser raised `AssertionError`
+  (41 fuzzed inputs, e.g. `12# kg`, `12 kg*`) and `tokenize.TokenError` on any
+  quote (125, e.g. `12" kg`) out of the normalizer, failing the job. Both are
+  now caught and the value is INVALID. The reproducer fuzzes every printable
+  character at every position.
+- **Precision invented** (a4d079f). `15 Z 2024` gave 2024-<today's month>-15:
+  any word counted as the month, so dateparser's time-zone `Z` did. Now only
+  the parsed month's name in the detected language counts (dateparser's locale
+  data); `15 Z 2024` is INVALID, while `15 März 2024` and `March 2024` are
+  unchanged.
+
+New, found here, not fixed:
+- **Time dropped.** DATETIME `3pm March 15 2024` → `2024-03-15`.
+- **Times read as years.** OnTime WheelsOn (HHMM) typed DATETIME, as opted in
+  in §9: `2220` normalizes as the year 2220. Precision is kept, the meaning is
+  not.
+- **Missing commands.** gate.yml and release.yml call five normcli commands
+  that do not exist (item 5).
+
+### Logged, not fixed (as asked)
+- **F-VERDICT-SCOPE.** A verdict key includes the connection id. Unchanged.
+- **Norway tax IDs never VALID.** The module is not `no.orgnr`. Unchanged.
+- **TPC-H SF10.** Not rerun (about 20 min, 86M rows); needs your go-ahead.
+
+### CI and memory
+The four ci-fast commands, run exactly as CI runs them under `ulimit -v 16 GB`:
+- **Static checks.** ruff, ruff format and mypy are clean.
+- **pytest.** 3,005 passed, 22 skipped and 3 xfailed in 118 s (§9: 2,961 passed).
+  - One test changed engine: the ADR-018 "a resume never counts twice"
+    harness now runs as Postgres, where blocks are skipped.
+- **Integration.** Postgres/ClickHouse files only; Mongo/MySQL are not in
+  normbench. `test_followups_live.py`, `test_robustness_live.py` and
+  `test_clone_pipeline.py`: 21 passed.
