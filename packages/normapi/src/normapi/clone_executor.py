@@ -2380,6 +2380,15 @@ def _run_phase2(
         for table in job["tables"]:
             if table in tables_completed:
                 continue
+            source_columns = source.get_columns(table)
+            source_types = {c.name: c.native_type for c in source_columns}
+            # The destination's column types exactly as Phase 1 wrote them.
+            overrides, extras, _ = _destination_plan(
+                {c: t for c, t in job["field_configs"].get(table, {}).items() if t},
+                dest_conn["engine"],
+                _key_columns(source, table),
+                typed=job.get("typed_destination_columns", True),
+            )
             run = lineage.table_run(
                 persistence,
                 job=job,
@@ -2387,7 +2396,9 @@ def _run_phase2(
                 table=table,
                 source_connection=source_conn,
                 destination_connection=dest_conn,
-                source_columns=[c.name for c in source.get_columns(table)],
+                source_columns=[c.name for c in source_columns],
+                source_types=source_types,
+                destination_types={**source_types, **overrides, **extras},
                 semantic_types={
                     c: FieldSemanticType(t)
                     for c, t in job["field_configs"].get(table, {}).items()
