@@ -710,10 +710,21 @@ These failures were the server's, not the job's.
   generating test data; it passed on rerun.
 
 ### Remaining failures (minimal reproducers)
+New, found here, and fixed afterwards on your request (each one's reproducer
+is in `tests/unit/test_followups.py`; on real values neither changed anything
+against main: DATE 11,483 and QUANTITY 32 distinct values × 2 contexts):
+- **QUANTITY crashes** (d10169d). pint's unit parser raised `AssertionError`
+  (41 fuzzed inputs, e.g. `12# kg`, `12 kg*`) and `tokenize.TokenError` on any
+  quote (125, e.g. `12" kg`) out of the normalizer, failing the job. Both are
+  now caught and the value is INVALID. The reproducer fuzzes every printable
+  character at every position.
+- **Precision invented** (a4d079f). `15 Z 2024` gave 2024-<today's month>-15:
+  any word counted as the month, so dateparser's time-zone `Z` did. Now only
+  the parsed month's name in the detected language counts (dateparser's locale
+  data); `15 Z 2024` is INVALID, while `15 März 2024` and `March 2024` are
+  unchanged.
+
 New, found here, not fixed:
-- **QUANTITY crashes.** `12# kg` (and `#` anywhere near the unit) raises pint's
-  `AssertionError` out of the normalizer.
-- **Precision invented.** DATE `15 Z 2024` → 2024-10-15: the month is today's.
 - **Time dropped.** DATETIME `3pm March 15 2024` → `2024-03-15`.
 - **Times read as years.** OnTime WheelsOn (HHMM) typed DATETIME, as opted in
   in §9: `2220` normalizes as the year 2220. Precision is kept, the meaning is
