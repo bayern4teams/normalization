@@ -90,9 +90,14 @@ class PhoneNormalizer:
             # whether the text states its own country (a `tel:+<cc>...` URI
             # does, so it parses above with no region). When it cannot parse
             # without one, the country is missing: AMBIGUOUS, never a guess.
+            # NOT_A_NUMBER does not depend on the region (`TBD`, `N/A`): no
+            # country would make it a phone number, so it is INVALID and a
+            # sentinel in a phone column is visible (PART1 N7).
             return (
                 _ambiguous_no_region(value, ctx)
-                if region is None and not has_explicit_plus
+                if region is None
+                and not has_explicit_plus
+                and exc.error_type != phonenumbers.NumberParseException.NOT_A_NUMBER
                 else _invalid(value, ctx, reason=str(exc))
             )
 

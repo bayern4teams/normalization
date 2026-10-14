@@ -44,7 +44,8 @@ def norm(value: str, country: str | None = None, default_region: str | None = No
 )
 def test_regionless_without_plus_never_reaches_a_confident_verdict(value: str) -> None:
     r = norm(value)
-    assert r.normalization_status is NormalizationStatus.AMBIGUOUS
+    # INVALID is no verdict either: `tel:` holds no number in any region (PART1 N7).
+    assert r.normalization_status in (NormalizationStatus.AMBIGUOUS, NormalizationStatus.INVALID)
     assert r.comparison is None
 
 

@@ -193,6 +193,15 @@ class TestNoExtensionOutputUnchanged:
                 and got["display"] == row["value"]
             ):
                 continue
+            # fix/confident-wrong (PART1 N7): text libphonenumber says is no
+            # number in any region moves AMBIGUOUS -> INVALID, original kept.
+            if (
+                got != row["out"]
+                and row["out"]["status"] == "AMBIGUOUS"
+                and got["status"] == "INVALID"
+                and got["display"] == row["value"]
+            ):
+                continue
             if got != row["out"]:
                 moved.append((row["value"], row["country"], row["default_region"]))
         assert moved == [], f"{len(moved)} extension-free outputs changed, e.g. {moved[:5]}"

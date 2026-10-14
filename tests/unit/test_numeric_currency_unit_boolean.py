@@ -315,15 +315,16 @@ class TestCurrencyCodeRecognition:
         value whose sole alphabetic token is the code may match.
         """
         result = CurrencyNormalizer().normalize("cup of tea", _ctx(FieldSemanticType.CURRENCY))
-        assert result.normalization_status is NormalizationStatus.AMBIGUOUS
+        # INVALID, not AMBIGUOUS: it names no currency (PART1 N7)
+        assert result.normalization_status is NormalizationStatus.INVALID
 
     def test_bare_amount_is_not_read_as_a_numeric_code(self) -> None:
         result = CurrencyNormalizer().normalize("123", _ctx(FieldSemanticType.CURRENCY))
-        assert result.normalization_status is NormalizationStatus.AMBIGUOUS
+        assert result.normalization_status is NormalizationStatus.INVALID  # PART1 N7
 
-    def test_unreal_three_letter_token_still_ambiguous(self) -> None:
+    def test_unreal_three_letter_token_is_invalid(self) -> None:
         result = CurrencyNormalizer().normalize("XYZ", _ctx(FieldSemanticType.CURRENCY))
-        assert result.normalization_status is NormalizationStatus.AMBIGUOUS
+        assert result.normalization_status is NormalizationStatus.INVALID  # PART1 N7
 
 
 @pytest.mark.unit
@@ -397,7 +398,12 @@ class TestCurrencyCldrNamesAndSymbols:
         would report a successful normalization for exactly the input that
         has none."""
         result = currency_normalizer.normalize(value, _ctx(FieldSemanticType.CURRENCY))
-        assert result.normalization_status is NormalizationStatus.AMBIGUOUS
+        # A shared symbol is AMBIGUOUS, text naming no currency INVALID (PART1 N7).
+        assert result.normalization_status in (
+            NormalizationStatus.AMBIGUOUS,
+            NormalizationStatus.INVALID,
+        )
+        assert result.structured["canonical_currency"] is None
         assert result.structured["canonical_currency"] is None
 
     def test_metals_and_special_drawing_rights_do_resolve(
@@ -411,15 +417,15 @@ class TestCurrencyCldrNamesAndSymbols:
             result = currency_normalizer.normalize(value, _ctx(FieldSemanticType.CURRENCY))
             assert result.structured["canonical_currency"] == expected, value
 
-    def test_hand_curated_symbols_still_win_over_cldr(
-        self, currency_normalizer: CurrencyNormalizer
-    ) -> None:
-        """CLDR drops "¥" (JPY in ja, CNY in zh) and has no unambiguous
-        entry for "£", but in real data both overwhelmingly mean JPY and
-        GBP — so the three hand-curated symbols are consulted first."""
-        for value, expected in (("¥", "JPY"), ("£", "GBP"), ("€", "EUR")):
+    def test_shared_symbols_need_context(self, currency_normalizer: CurrencyNormalizer) -> None:
+        """The hand list read `¥` as JPY and `£` as GBP, though CLDR gives `¥`
+        to CNY in zh and `£` to five currencies: a guess (PART1 N7). Without a
+        country they are AMBIGUOUS; `€` is EUR in every locale."""
+        for value in ("¥", "£"):
             result = currency_normalizer.normalize(value, _ctx(FieldSemanticType.CURRENCY))
-            assert result.structured["canonical_currency"] == expected
+            assert result.normalization_status is NormalizationStatus.AMBIGUOUS
+        result = currency_normalizer.normalize("€", _ctx(FieldSemanticType.CURRENCY))
+        assert result.structured["canonical_currency"] == "EUR"
 
     def test_plural_names_still_resolve(self, currency_normalizer: CurrencyNormalizer) -> None:
         """CLDR ships singular display names only, so the plurals real
