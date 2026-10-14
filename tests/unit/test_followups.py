@@ -506,3 +506,25 @@ class TestTriggeredWorkflowsCanRun:
                     missing.append((name, option))
         assert seen > 0  # the check is not vacuous
         assert missing == []
+
+
+# --- found here: QUANTITY crashes ---------------------------------------------
+
+
+class TestQuantityNeverRaises:
+    @pytest.mark.parametrize("base", ["12 kg", "3.5 m", "5 °C", "10 km/h", "2 ft"])
+    def test_any_printable_character_anywhere_gives_a_result(self, base: str) -> None:
+        """pint's unit parser raised AssertionError (`12# kg`, `12 kg*`) and
+        tokenize.TokenError (`12" kg`) out of the normalizer, failing the job."""
+        from normalizers.unit import UnitNormalizer  # noqa: PLC0415
+
+        normalizer, ctx = UnitNormalizer(), _ctx(FieldSemanticType.QUANTITY, None)
+        raised = []
+        for ch in string.printable.strip() + " ":
+            for i in range(len(base) + 1):
+                value = base[:i] + ch + base[i:]
+                try:
+                    normalizer.normalize(value, ctx)
+                except Exception as exc:
+                    raised.append((value, type(exc).__name__))
+        assert raised == []

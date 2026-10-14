@@ -11,6 +11,7 @@ specific error into a false "converted" result.
 from __future__ import annotations
 
 import re
+import tokenize
 from typing import TYPE_CHECKING
 
 import blake3
@@ -33,6 +34,22 @@ _VERSION = "0.1.0"
 # One leading number, then everything else is the unit. Only "." is accepted
 # as the decimal mark: "1,5 kg" is genuinely ambiguous against thousands
 # grouping, so it is refused rather than guessed at.
+# Everything building or converting a Quantity is known to raise on bad
+# input. pint.PintError is the base of pint's own errors; ArithmeticError and
+# MemoryError cover a pathological magnitude or exponent. pint's unit parser
+# also raises AssertionError (`12# kg`, `12 kg*`) and, since it tokenizes the
+# unit text as Python, tokenize.TokenError on a quote (`12" kg`): both escaped
+# the normalizer and failed the whole job (found by fuzzing every printable
+# character at every position, tests/unit/test_followups.py).
+_PINT_FAILURES = (
+    pint.PintError,
+    ArithmeticError,
+    MemoryError,
+    ValueError,
+    TypeError,
+    AssertionError,
+    tokenize.TokenError,
+)
 _MAGNITUDE_RE = re.compile(r"^([+-]?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)\s*(.*)$")
 _PARSE_PARAMS_HASH = blake3.blake3(b"{}").hexdigest()
 
@@ -106,15 +123,12 @@ class UnitNormalizer:
         )
         try:
             quantity = _UREG.Quantity(magnitude, unit_text or "dimensionless")
-        # pint.PintError is the base of every pint failure; the old tuple
-        # enumerated three and missed the rest. ArithmeticError/MemoryError
-        # cover a pathological magnitude or exponent.
-        except (pint.PintError, ArithmeticError, MemoryError, ValueError, TypeError) as exc:
+        except _PINT_FAILURES as exc:
             return _invalid(value, ctx, reason=str(exc) or type(exc).__name__)
 
         try:
             base = quantity.to_base_units()
-        except (pint.PintError, ArithmeticError, MemoryError, ValueError, TypeError) as exc:
+        except _PINT_FAILURES as exc:
             return _invalid(value, ctx, reason=str(exc) or type(exc).__name__)
 
         structured = {
