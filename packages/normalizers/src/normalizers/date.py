@@ -119,18 +119,37 @@ _UNKNOWN_TAIL_RE = re.compile(r"^[-/.\s*?#xXnN_]*$")
 
 _TIME_OF_DAY_RE = re.compile(r"\d{1,2}:\d{2}(?::\d{2}(?:[.,]\d+)?)?")
 _DIGITS_RE = re.compile(r"\d+")
-_LETTER_RE = re.compile(r"[^\W\d_]")
 _PRECISIONS = ("day", "month", "year")
 
 
-def _stated_precision(text: str, parsed: datetime, claimed: str) -> str | None:
+_MONTH_KEYS = (
+    "january", "february", "march", "april", "may", "june",
+    "july", "august", "september", "october", "november", "december",
+)  # fmt: skip
+
+
+@cache
+def _month_names(locale: str, month: int) -> frozenset[str]:
+    """`month`'s names in dateparser's data for `locale`, e.g. de 3: märz."""
+    names = default_loader.get_locale(locale).info.get(_MONTH_KEYS[month - 1], [])
+    return frozenset(n.casefold().rstrip(".") for n in names)
+
+
+def _names_month(text: str, month: int, locale: str | None) -> bool:
+    names = _month_names(locale, month) if locale else frozenset()
+    return any(m.group().casefold() in names for m in _LETTER_RUN_RE.finditer(text))
+
+
+def _stated_precision(text: str, parsed: datetime, claimed: str, locale: str | None) -> str | None:
     """The finest precision, at most `claimed`, whose components `text`
     states: the year and the day each as a number of their own, the month
-    as a number or a word. Parsers reuse one number twice (`03/2024` ->
-    2024-03-03) or fill gaps from today's date; neither is stated. None
-    when a number in the text is no component at all (`13/2024`). An
-    all-zero number may be the year (`12/31/00`); one no component claims
-    is a placeholder (`00/2024`)."""
+    as a number or as its name in the detected `locale`. Parsers reuse one
+    number twice (`03/2024` -> 2024-03-03) or fill gaps from today's date;
+    neither is stated. None when a number in the text is no component at
+    all (`13/2024`). An all-zero number may be the year (`12/31/00`); one no
+    component claims is a placeholder (`00/2024`). Any word used to count
+    as the month: `15 Z 2024` (`Z` a time zone to dateparser) came back with
+    today's month."""
     date_part = _TIME_OF_DAY_RE.sub(" ", text)
     found = _DIGITS_RE.findall(date_part)
     numbers = [n for n in found if n.strip("0")]
@@ -139,7 +158,7 @@ def _stated_precision(text: str, parsed: datetime, claimed: str) -> str | None:
         # ponytail: compact digits (`03032024`) are not split into components,
         # the parser is trusted; split by length if one is found inventing.
         return claimed
-    has_word = _LETTER_RE.search(date_part) is not None
+    has_word = _names_month(date_part, parsed.month, locale)
 
     def year(n: str) -> bool:
         return int(n) == parsed.year or (len(n) == 2 and int(n) == parsed.year % 100)
@@ -287,7 +306,7 @@ def _parse_partial(candidate: str, date_order: str | None) -> tuple[str, str] | 
     ):
         return None
     # Non-strict parsing fills what the text lacks from today's date.
-    period = _stated_precision(candidate, parsed, period)
+    period = _stated_precision(candidate, parsed, period, data.locale)
     if period is None:
         return None
     if period == "year":
@@ -516,7 +535,7 @@ class DateNormalizer:
         if (
             parsed is None
             or not _year_is_supported(parsed.year, cleaned)
-            or _stated_precision(cleaned, parsed, "day") != "day"
+            or _stated_precision(cleaned, parsed, "day", data.locale) != "day"
         ):
             return _normalize_partial(value, cleaned, ctx, date_order) or _invalid(value, ctx)
 

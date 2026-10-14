@@ -508,7 +508,7 @@ class TestTriggeredWorkflowsCanRun:
         assert missing == []
 
 
-# --- found here: QUANTITY crashes ---------------------------------------------
+# --- found here: QUANTITY crashes, a date month taken from today ---------------
 
 
 class TestQuantityNeverRaises:
@@ -528,3 +528,28 @@ class TestQuantityNeverRaises:
                 except Exception as exc:
                     raised.append((value, type(exc).__name__))
         assert raised == []
+
+
+class TestDateMonthIsStated:
+    def test_a_letter_that_is_no_month_name_does_not_state_a_month(self) -> None:
+        """`15 Z 2024` came back as 2024-<this month>-15: `Z` (a time zone to
+        dateparser) counted as a month word, and the month came from today."""
+        dispatcher = build_dispatcher(env_id="e")
+        ctx = _ctx(FieldSemanticType.DATE, "US")
+        r = dispatcher.normalize("15 Z 2024", FieldSemanticType.DATE, ctx, SCAFFOLD_PROFILE)
+        assert r.normalization_status in _REFUSED or "-" not in (r.comparison or "")
+
+    @pytest.mark.parametrize(
+        ("value", "expected"),
+        [
+            ("15 March 2024", "2024-03-15"),
+            ("Mar. 15th, 2024", "2024-03-15"),
+            ("15 März 2024", "2024-03-15"),
+            ("March 2024", "2024-03"),
+        ],
+    )
+    def test_a_month_name_still_states_its_month(self, value: str, expected: str) -> None:
+        dispatcher = build_dispatcher(env_id="e")
+        ctx = _ctx(FieldSemanticType.DATE, "US")
+        r = dispatcher.normalize(value, FieldSemanticType.DATE, ctx, SCAFFOLD_PROFILE)
+        assert r.comparison == expected
