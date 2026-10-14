@@ -36,6 +36,7 @@ from normalizers.url import URLNormalizer
 from normexec.cache import NormalizationCache
 from normexec.env_fingerprint import current_env_id
 
+from normapi.adjudication import migrate_sources
 from normapi.pg_persistence import PgPersistence
 from normapi.routes import router
 from normapi.scaffold_profile import SCAFFOLD_PROFILE
@@ -241,6 +242,9 @@ def create_app(
     if resolved_pg_dsn:
         persistence = PgPersistence(resolved_pg_dsn)
         persistence.ensure_schema()
+        migrated = migrate_sources(persistence)
+        if any(migrated.values()):
+            logger.info("adjudication sources re-keyed: %s", migrated)
 
     app.state.store = InMemoryStore(
         cache, persistence, max_run_rows=max_run_rows or _DEFAULT_MAX_RUN_ROWS

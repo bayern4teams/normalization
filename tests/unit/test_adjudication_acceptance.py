@@ -124,6 +124,7 @@ def _rows(values: list[dict[str, Any]], start: int = 0) -> list[dict[str, Any]]:
 def _job(field_configs: dict[str, str], **extra: Any) -> dict[str, Any]:
     return {
         "source_connection_id": "src-1",
+        "source_identity": "postgres://src:5432/db",
         "destination_database": "dest",
         "field_configs": {TABLE: field_configs},
         # One checkpointed block per source batch, as the resume tests assume.
