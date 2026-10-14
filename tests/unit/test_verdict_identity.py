@@ -145,6 +145,49 @@ class TestMigration:
         assert migrate_sources(env.persistence) == {"migrated": 0, "unmigrated": 0}
         assert env.queue() == before
 
+    def test_two_connection_ids_for_one_server_merge(self, env: _Env) -> None:
+        """Found live: two legacy rows, one per connection id of the same
+        server, re-key to the same key. One row stays, both verdicts apply."""
+        self._legacy(env)
+        store = env.persistence
+        store.save_connection(
+            "conn-again",
+            engine="postgres",
+            host="db.example",
+            port=5432,
+            username="u2",
+            password="q",
+        )
+        job2 = {"source_connection_id": "conn-again", "source_database": "sales"}
+        store.create_clone_job("old-job-2", job2)
+        ctx = NormalizationContext(
+            field_name="d",
+            semantic_type=FieldSemanticType.DATE,
+            table=TABLE,
+            source="conn-again",
+            include_trace=False,
+        )
+        key = verdict_key(FieldSemanticType.DATE, RAW_DATE, ctx, SCAFFOLD_PROFILE.version)
+        store.save_clone_job_and_enqueue(
+            "old-job-2",
+            job2,
+            [
+                {
+                    "key": key,
+                    "semantic_type": "DATE",
+                    "context_hash": ctx.context_hash,
+                    "profile_version": SCAFFOLD_PROFILE.version,
+                    "context": ctx.model_dump_json(),
+                    "original": RAW_DATE,
+                    "detail": "{}",
+                    "occurrences": 2,
+                }
+            ],
+        )
+        assert migrate_sources(store) == {"migrated": 2, "unmigrated": 0}
+        (row,) = env.queue()
+        assert json.loads(row["context"])["source"] == _IDENTITY
+
     def test_a_row_whose_connection_is_gone_is_left_and_counted(self, env: _Env) -> None:
         conn_id, old_key = self._legacy(env)
         env.persistence.delete_connection(conn_id)

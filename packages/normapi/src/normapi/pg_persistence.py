@@ -909,12 +909,21 @@ class PgPersistence:
         self, old_key: str, *, new_key: str, context: str, context_hash: str
     ) -> None:
         """Move one queue row to a new key and copy its verdicts there, in
-        one transaction. The old verdict rows stay (append-only history)."""
+        one transaction. The old verdict rows stay (append-only history).
+        Two connection ids for one server (the re-added case itself) land on
+        the same new key: the row already there is kept, the other merged
+        into it (its verdicts copied, its row dropped)."""
         columns = _VERDICT_COLUMNS.split(", ")
         with self._engine.begin() as conn:
+            taken = conn.execute(
+                sa.text("SELECT 1 FROM normalization_adjudication_queue WHERE key = :new"),
+                {"new": new_key},
+            ).first()
             conn.execute(
                 sa.text(
-                    "UPDATE normalization_adjudication_queue "
+                    "DELETE FROM normalization_adjudication_queue WHERE key = :old"
+                    if taken
+                    else "UPDATE normalization_adjudication_queue "
                     "SET key = :new, context = :context, context_hash = :ch WHERE key = :old"
                 ),
                 {"new": new_key, "context": context, "ch": context_hash, "old": old_key},
