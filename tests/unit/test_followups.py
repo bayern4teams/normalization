@@ -74,30 +74,24 @@ class _Source:
         return []
 
 
-class _DedupDest:
-    """Keeps what was inserted; drops a re-sent block by its token, the way
-    ClickHouse does with `insert_deduplication_token`."""
+class _Dest:
+    """Keeps what was inserted. `primary_key` on: a re-sent row is dropped,
+    as Postgres' ON CONFLICT on the primary key does."""
 
-    def __init__(self) -> None:
-        self.inserts: list[tuple[int, str | None]] = []
+    def __init__(self, *, primary_key: bool = False) -> None:
+        self.inserts: list[int] = []
         self.rows: list[dict[str, Any]] = []
-        self._tokens: set[str] = set()
+        self.truncated = 0
+        self._primary_key = primary_key
 
-    def bulk_insert(
-        self,
-        database: str,
-        table: str,
-        rows: list[Any],
-        *,
-        dedup_token: str | None = None,
-        **kw: Any,
-    ) -> None:
-        self.inserts.append((len(rows), dedup_token))
-        if dedup_token is not None and dedup_token in self._tokens:
-            return
-        if dedup_token is not None:
-            self._tokens.add(dedup_token)
-        self.rows.extend(rows)
+    def bulk_insert(self, database: str, table: str, rows: list[Any], **kw: Any) -> None:
+        self.inserts.append(len(rows))
+        seen = {r["id"] for r in self.rows} if self._primary_key else set()
+        self.rows.extend(r for r in rows if r["id"] not in seen)
+
+    def truncate_table(self, database: str, table: str) -> None:
+        self.truncated += 1
+        self.rows.clear()
 
 
 def _store(tmp_path: Path) -> PgPersistence:
@@ -123,14 +117,16 @@ def _job(block_rows: int = 2000) -> dict[str, Any]:
     }
 
 
-def _run(store: Any, job: dict[str, Any], source: _Source, dest: _DedupDest) -> None:
+def _run(
+    store: Any, job: dict[str, Any], source: _Source, dest: _Dest, engine: str = "clickhouse"
+) -> None:
     _normalize_table(
         "t",
         job=job,
         job_id="j",
         source=source,
         dest=dest,
-        source_engine="clickhouse",
+        source_engine=engine,
         persistence=store,
         planner=DistinctValuePlanner(build_dispatcher(env_id="e"), None),
         pool=None,
@@ -165,9 +161,9 @@ def _ch_dest() -> tuple[ClickHouseDestination, _RecordingClient]:
 
 class TestClickHouseInsertBlocks:
     def test_rows_are_inserted_in_blocks_cut_at_offsets(self, tmp_path: Path) -> None:
-        dest = _DedupDest()
+        dest = _Dest()
         _run(_store(tmp_path), _job(8000), _Source(_batches(20000, 2000, ["1.00"])), dest)
-        assert [n for n, _ in dest.inserts] == [8000, 8000, 4000]
+        assert dest.inserts == [8000, 8000, 4000]
 
     def test_merge_tree_tables_merge_vertically(self) -> None:
         """A horizontal merge of small parts of a 110-column table peaked at
@@ -198,7 +194,7 @@ class TestDistinctValuesAreRememberedAcrossChunks:
             job=job,
             job_id="j",
             source=_Source(_batches(rows, 2000, values)),
-            dest=_DedupDest(),
+            dest=_Dest(),
             source_engine="clickhouse",
             persistence=_store(tmp_path),
             planner=DistinctValuePlanner(dispatcher, None),
@@ -261,31 +257,44 @@ class _CrashOnSave:
 
 
 class TestResumeAfterFailure:
-    def test_one_insert_per_block_carrying_its_dedup_token(self) -> None:
-        dest, client = _ch_dest()
-        dest.bulk_insert("d", "t", [{"a": i} for i in range(5000)], dedup_token="j:t:0-4999")
-        assert client.inserts == [(5000, {"insert_deduplication_token": "j:t:0-4999"})]
-
-    def test_merge_tree_tables_keep_a_dedup_window(self) -> None:
-        dest, client = _ch_dest()
-        dest.create_table("d", "t", [], order_by=())
-        assert "non_replicated_deduplication_window" in client.commands[0]
-
-    def test_a_crash_after_an_insert_resumes_without_duplicate_rows_or_errors(
-        self, tmp_path: Path
-    ) -> None:
+    def _crash_then_resume(self, tmp_path: Path, engine: str, dest: _Dest) -> PgPersistence:
         store = _store(tmp_path)
         store.create_clone_job("j", _job())
         # every 3rd value is not money: an error row each, 2,000 of 6,000
         source = _Source(_batches(6000, 2000, ["1.00", "2.00", "not money"]))
-        dest = _DedupDest()
         with pytest.raises(RuntimeError, match="killed"):
-            _run(_CrashOnSave(store, crash_on=2), store.get_clone_job("j") or {}, source, dest)
-        _run(store, store.get_clone_job("j") or {}, source, dest)
-
+            _run(
+                _CrashOnSave(store, crash_on=2),
+                store.get_clone_job("j") or {},
+                source,
+                dest,
+                engine,
+            )
+        _run(store, store.get_clone_job("j") or {}, source, dest, engine)
         assert sorted(int(r["id"]) for r in dest.rows) == list(range(6000))
         errors = store.load_clone_job_errors_page("j", limit=10_000, offset=0)
         assert sorted(e["row_index"] for e in errors) == list(range(2, 6000, 3))
+        return store
+
+    def test_postgres_resumes_after_its_last_committed_block(self, tmp_path: Path) -> None:
+        """Crash after block 2's insert, before its checkpoint: block 2 is
+        sent again and the primary key drops it; block 1 is not re-sent."""
+        dest = _Dest(primary_key=True)
+        self._crash_then_resume(tmp_path, "postgres", dest)
+        assert dest.inserts == [2000, 2000, 2000, 2000] and dest.truncated == 0
+
+    def test_clickhouse_starts_an_unfinished_table_over(self, tmp_path: Path) -> None:
+        """A ClickHouse source does not arrive in the same order twice, so a
+        skip by offset would skip the wrong rows: the table starts over."""
+        dest = _Dest()
+        store = self._crash_then_resume(tmp_path, "clickhouse", dest)
+        assert dest.truncated == 1
+        assert (store.get_clone_job("j") or {})["progress"]["rows_done"] == 6000
+
+    def test_the_destination_can_empty_a_table(self) -> None:
+        dest, client = _ch_dest()
+        dest.truncate_table("d", "t")
+        assert client.commands == ["TRUNCATE TABLE IF EXISTS `d`.`t`"]
 
 
 # --- 3. Spool free space ------------------------------------------------------

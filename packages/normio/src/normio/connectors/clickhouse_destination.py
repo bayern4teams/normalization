@@ -158,15 +158,7 @@ class ClickHouseDestination:
             # average), the same parts merged vertically at 14 MiB. That is
             # what took a 4 GB server to its cap after four hours. Bigger
             # inserts were not the fix: one 131,072-row INSERT used 611 MiB.
-            #
-            # non_replicated_deduplication_window = 1 remembers the last
-            # block's dedup token, so a resume that replays it is dropped
-            # (`bulk_insert`). One: a job has one block in flight per table,
-            # and the DDL has no PARTITION BY, so one INSERT is one block.
-            ddl += (
-                " SETTINGS vertical_merge_algorithm_min_rows_to_activate = 0,"
-                " non_replicated_deduplication_window = 1"
-            )
+            ddl += " SETTINGS vertical_merge_algorithm_min_rows_to_activate = 0"
         self._client_for(database).command(ddl)
 
     @staticmethod
@@ -197,12 +189,10 @@ class ClickHouseDestination:
         rows: Sequence[Mapping[str, object]],
         *,
         primary_key: Sequence[str] = (),
-        dedup_token: str | None = None,
     ) -> None:
         """One INSERT, so one part: the caller sizes the block and
-        checkpoints after it. `dedup_token` makes
-        a resumed job's replay of a block that had already committed a
-        no-op (ClickHouse has no ON CONFLICT); see `create_table`."""
+        checkpoints after it. Nothing is replayed on a resume: an unfinished
+        table starts over (`clone_executor._resume_point`)."""
         if not rows:
             return
         columns = list(rows[0].keys())
@@ -214,8 +204,7 @@ class ClickHouseDestination:
         # pass column_type_names with pre-quoted names if one turns up.
         full_table = f"{quote_identifier(database)}.{quote_identifier(table)}"
         data = [[row[c] for c in columns] for row in rows]
-        settings = {"insert_deduplication_token": dedup_token} if dedup_token else None
-        client.insert(full_table, data, column_names=columns, settings=settings)
+        client.insert(full_table, data, column_names=columns)
 
     def swap_table(self, database: str, table: str, staging: str) -> None:
         """Replace `table` with `staging`, then drop the original.
@@ -236,6 +225,12 @@ class ClickHouseDestination:
             f"EXCHANGE TABLES {db}.{quote_identifier(table)} AND {db}.{quote_identifier(staging)}"
         )
         client.command(f"DROP TABLE {db}.{quote_identifier(staging)}")
+
+    def truncate_table(self, database: str, table: str) -> None:
+        """Empty a table a resumed job writes again from its first row."""
+        self._client_for(database).command(
+            f"TRUNCATE TABLE IF EXISTS {quote_identifier(database)}.{quote_identifier(table)}"
+        )
 
     def drop_table(self, database: str, table: str) -> None:
         self._client_for(database).command(

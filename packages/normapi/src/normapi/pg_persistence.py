@@ -762,6 +762,18 @@ class PgPersistence:
                     rows,
                 )
 
+    def delete_clone_job_errors(self, job_id: str, table: str) -> None:
+        """One table's report rows, for a table that is written again from
+        its first row: their `row_index` named rows of the earlier attempt."""
+        with self._engine.begin() as conn:
+            conn.execute(
+                sa.text(
+                    "DELETE FROM normalization_clone_job_errors "
+                    "WHERE job_id = :jid AND table_name = :table"
+                ),
+                {"jid": job_id, "table": table},
+            )
+
     def count_clone_job_errors(self, job_id: str) -> int:
         """How many report rows belong to THIS job.
 

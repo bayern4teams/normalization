@@ -2117,6 +2117,43 @@ def _block_pieces(
         yield pending[start:]
 
 
+def _resume_point(
+    table: str,
+    *,
+    source_engine: str,
+    progress: dict[str, Any],
+    dest: Any,
+    job: dict[str, Any],
+    write_target: str,
+    persistence: PgPersistence,
+    job_id: str,
+) -> int:
+    """The last committed offset to resume `table` after; -1 to start it.
+
+    A resume skips offsets, so it is exact only if the source arrives in the
+    same order twice. SQL sources do (ordered by primary key or ctid). A
+    ClickHouse source does not: parts are read in parallel, and ORDER BY is
+    not a total order (no key, or ties); OnTime resumed with 17,953 rows
+    written twice and 17,953 never, and a total ORDER BY ran it out of
+    memory (MergeSortingTransform). So an unfinished ClickHouse table
+    starts over, emptied first, and its error rows go with it (their
+    row_index named the earlier order's rows); finished tables are still
+    skipped.
+
+    ponytail: the adjudication queue counted the restarted table's rows
+    once already, so their occurrences are counted twice. Subtract them,
+    or resume per part, if ClickHouse resume counts must be exact.
+    """
+    checkpoint: int = progress["checkpoints"].get(table, -1)
+    if checkpoint < 0 or source_engine != "clickhouse":
+        return checkpoint
+    dest.truncate_table(job["destination_database"], write_target)
+    persistence.delete_clone_job_errors(job_id, table)
+    progress["rows_done"] -= checkpoint + 1
+    progress["checkpoints"][table] = -1
+    return -1
+
+
 def _normalize_table(
     table: str,
     *,
@@ -2157,8 +2194,17 @@ def _normalize_table(
     # per-row filter param on read_table today) — correct, but
     # re-reads already-processed rows on resume. Add pushdown
     # filtering if resumed jobs on very large tables get costly.
-    checkpoint = progress["checkpoints"].get(table, -1)
     write_target = staging_name(table) if in_place else table
+    checkpoint = _resume_point(
+        table,
+        source_engine=source_engine,
+        progress=progress,
+        dest=dest,
+        job=job,
+        write_target=write_target,
+        persistence=persistence,
+        job_id=job_id,
+    )
     table_plan = job.get("destination_plan", {}).get(table, {})
     typed_columns: dict[str, str] = table_plan.get("typed_columns", {})
     currency_columns: dict[str, str] = table_plan.get("currency_columns", {})
@@ -2175,10 +2221,10 @@ def _normalize_table(
     )
 
     # Rows go to the destination in blocks cut at offset multiples rather
-    # than at source batch ends: a resume then cuts the same blocks (and
-    # sends the same dedup tokens) whatever block sizes the source streams,
-    # which a ClickHouse source does not keep aligned. The size is kept on
-    # the job so a changed setting cannot move the cuts mid-table.
+    # than at source batch ends, so a checkpoint is always a block boundary
+    # whatever block sizes the source streams (a ClickHouse source does not
+    # keep them aligned). The size is kept on the job so a changed setting
+    # cannot move the cuts mid-table.
     block_rows: int = progress.setdefault("insert_block_rows", {}).setdefault(
         table, DESTINATION_INSERT_CHUNK_ROWS
     )
@@ -2192,13 +2238,7 @@ def _normalize_table(
             return
         # The same block gets the same token on a resume, so a block that
         # committed just before a crash is not written twice (ClickHouse).
-        dest.bulk_insert(
-            job["destination_database"],
-            write_target,
-            block,
-            primary_key=primary_key,
-            dedup_token=f"{job_id}:{table}:{checkpoint + 1}-{block_last}",
-        )
+        dest.bulk_insert(job["destination_database"], write_target, block, primary_key=primary_key)
         if block_errors:
             persistence.save_clone_job_errors(job_id, block_errors)
         checkpoint = block_last

@@ -152,13 +152,16 @@ class TestKilledMidRunResumesExactly:
         src = f"{ch_db}_src"
         ch.command(f"CREATE DATABASE {ch_q(src)}")
         try:
-            ch.command(f"CREATE TABLE {ch_q(src)}.t (id UInt64, amt String) ORDER BY id")
-            ch.command(
-                f"INSERT INTO {ch_q(src)}.t SELECT number, "
-                f"if(number % 3 = 2, 'not money', concat(toString(number), '.00')) "
-                f"FROM numbers({ROWS})"
-            )
-            # Phase 1's DDL for this table, so the dedup window is what Phase 1 sets.
+            # No sorting key and several parts: the shape whose arrival order
+            # changes between two reads (OnTime), so a resume must not rely on it.
+            ch.command(f"CREATE TABLE {ch_q(src)}.t (id UInt64, amt String) ORDER BY tuple()")
+            for part in range(3):
+                ch.command(
+                    f"INSERT INTO {ch_q(src)}.t SELECT number, "
+                    f"if(number % 3 = 2, 'not money', concat(toString(number), '.00')) "
+                    f"FROM numbers({part * ROWS // 3}, {ROWS // 3})"
+                )
+            # Phase 1's DDL for this table (its MergeTree settings).
             from normio.connector import ColumnInfo  # noqa: PLC0415
             from normio.connectors.clickhouse_destination import (  # noqa: PLC0415
                 ClickHouseDestination,

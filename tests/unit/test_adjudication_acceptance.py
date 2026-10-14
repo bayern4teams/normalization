@@ -185,7 +185,9 @@ class _Env:
             job_id=job_id,
             source=_Source(source_tables or {table: batches}),
             dest=dest,
-            source_engine="clickhouse",
+            # Postgres: a resume skips committed blocks there. A ClickHouse
+            # table starts over instead (clone_executor._resume_point).
+            source_engine="postgres",
             persistence=persistence or store,
             planner=DistinctValuePlanner(build_dispatcher(env_id=env_id), None),
             pool=None,

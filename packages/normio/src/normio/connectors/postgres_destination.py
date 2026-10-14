@@ -158,7 +158,6 @@ class PostgresDestination:
         rows: Sequence[Mapping[str, object]],
         *,
         primary_key: Sequence[str] = (),
-        dedup_token: str | None = None,  # unused: ON CONFLICT on the primary key dedups here
     ) -> None:
         """Chunked insert — same chunk loop as `PgPersistence.save_execution`
         (`DESTINATION_INSERT_CHUNK_ROWS`, one transaction per chunk); chunk-commit
