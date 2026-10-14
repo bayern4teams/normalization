@@ -77,8 +77,8 @@ _RUN = textwrap.dedent(
     from normio.connectors.clickhouse_destination import ClickHouseDestination
     from normio.connectors.postgres_destination import PostgresDestination
 
-    engine, src_db, dst_db, meta, host, port, block, die_after = sys.argv[1:9]
-    port, block, die_after = int(port), int(block), int(die_after)
+    engine, src_db, dst_db, meta, host, port, die_after = sys.argv[1:8]
+    port, die_after = int(port), int(die_after)
     w = {"username": "writable_user", "password": "writable_pass"}
     if engine == "clickhouse":
         source = ClickHouseConnector("s", host, port=port, database=src_db, **w)
@@ -87,7 +87,6 @@ _RUN = textwrap.dedent(
         dsn = f"postgresql://writable_user:writable_pass@{host}:{port}/{src_db}"
         source = PostgresConnector("s", dsn)
         dest = PostgresDestination(host, port, **w)
-    dest.insert_block_rows = lambda *a: block
     inserted = 0
     real_insert = dest.bulk_insert
 
@@ -117,7 +116,12 @@ def _job_with_error_rows() -> dict[str, Any]:
         "destination_database": "",
         "field_configs": {"t": {"amt": "MONEY"}},
         "destination_plan": {"t": {"typed_columns": {}}},
-        "progress": {"checkpoints": {}, "rows_done": 0, "current_table": None},
+        "progress": {
+            "checkpoints": {},
+            "rows_done": 0,
+            "current_table": None,
+            "insert_block_rows": {"t": BLOCK},
+        },
         "country": "US",
         "locale": "en-US",
         "status": "FAILED",
@@ -135,7 +139,6 @@ def _kill_then_resume(engine: str, src_db: str, dst_db: str, meta: str, port: in
         meta,
         PG_HOST if engine == "postgres" else CH_HOST,
         str(port),
-        str(BLOCK),
     ]
     killed = subprocess.run([sys.executable, "-c", _RUN, *args, "2"], check=False)
     assert killed.returncode == 137

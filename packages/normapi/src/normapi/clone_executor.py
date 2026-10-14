@@ -43,7 +43,7 @@ from normio.connectors import (
     PostgresConnector,
     PostgresDestination,
 )
-from normio.connectors._sql_base import SOURCE_READ_BATCH_ROWS
+from normio.connectors._sql_base import DESTINATION_INSERT_CHUNK_ROWS, SOURCE_READ_BATCH_ROWS
 
 from normapi import lineage, secrets
 from normapi.adjudication import Adjudication
@@ -2174,13 +2174,14 @@ def _normalize_table(
         else ""
     )
 
-    # Rows go to the destination in blocks of `block_rows`, cut at offset
-    # multiples rather than at source batch ends: the destination decides
-    # the size (ClickHouse needs far bigger inserts than a read batch), and
-    # offset-aligned cuts are the same on a resume whatever block sizes the
-    # source happens to stream. Kept on the job so a resume cuts identically.
-    block_sizes = progress.setdefault("insert_block_rows", {})
-    block_rows: int | None = block_sizes.get(table)
+    # Rows go to the destination in blocks cut at offset multiples rather
+    # than at source batch ends: a resume then cuts the same blocks (and
+    # sends the same dedup tokens) whatever block sizes the source streams,
+    # which a ClickHouse source does not keep aligned. The size is kept on
+    # the job so a changed setting cannot move the cuts mid-table.
+    block_rows: int = progress.setdefault("insert_block_rows", {}).setdefault(
+        table, DESTINATION_INSERT_CHUNK_ROWS
+    )
     block: list[dict[str, Any]] = []
     block_errors: list[dict[str, Any]] = []
     block_last = checkpoint
@@ -2211,10 +2212,6 @@ def _normalize_table(
         block_errors.clear()
 
     for batch in source.read_table(table, batch_size=SOURCE_READ_BATCH_ROWS):
-        if block_rows is None:
-            block_rows = block_sizes[table] = dest.insert_block_rows(
-                job["destination_database"], batch
-            )
         offsets = ((int(r["source_row_key"].rsplit(":", 1)[1]), r) for r in batch.to_pylist())
         pending_all = [(offset, row) for offset, row in offsets if offset > checkpoint]
 

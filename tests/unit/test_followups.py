@@ -78,14 +78,10 @@ class _DedupDest:
     """Keeps what was inserted; drops a re-sent block by its token, the way
     ClickHouse does with `insert_deduplication_token`."""
 
-    def __init__(self, block_rows: int) -> None:
-        self.block_rows = block_rows
+    def __init__(self) -> None:
         self.inserts: list[tuple[int, str | None]] = []
         self.rows: list[dict[str, Any]] = []
         self._tokens: set[str] = set()
-
-    def insert_block_rows(self, database: str, sample: pa.RecordBatch) -> int:
-        return self.block_rows
 
     def bulk_insert(
         self,
@@ -110,13 +106,18 @@ def _store(tmp_path: Path) -> PgPersistence:
     return store
 
 
-def _job() -> dict[str, Any]:
+def _job(block_rows: int = 2000) -> dict[str, Any]:
     return {
         "source_connection_id": "s",
         "destination_database": "d",
         "field_configs": {"t": {"amt": "MONEY"}},
         "destination_plan": {"t": {"typed_columns": {}}},
-        "progress": {"checkpoints": {}, "rows_done": 0, "current_table": None},
+        "progress": {
+            "checkpoints": {},
+            "rows_done": 0,
+            "current_table": None,
+            "insert_block_rows": {"t": block_rows},
+        },
         "country": "US",
         "locale": "en-US",
     }
@@ -143,19 +144,10 @@ def _run(store: Any, job: dict[str, Any], source: _Source, dest: _DedupDest) -> 
 # --- 1. ClickHouse insert blocks ---------------------------------------------
 
 
-class _SettingsClient:
-    """Answers the two settings reads `insert_block_rows` makes."""
-
+class _RecordingClient:
     def __init__(self) -> None:
         self.inserts: list[tuple[int, dict[str, Any]]] = []
         self.commands: list[str] = []
-
-    def query(self, sql: str, parameters: Any = None) -> Any:
-        rows = {
-            "vertical_merge_algorithm_min_rows_to_activate": "131072",
-            "min_insert_block_size_bytes": "268402944",
-        }
-        return namedtuple("R", "result_rows")([(k, v) for k, v in rows.items() if k in sql])
 
     def insert(self, table: str, data: list[Any], **kw: Any) -> None:
         self.inserts.append((len(data), kw.get("settings") or {}))
@@ -164,31 +156,25 @@ class _SettingsClient:
         self.commands.append(sql)
 
 
-def _ch_dest() -> tuple[ClickHouseDestination, _SettingsClient]:
+def _ch_dest() -> tuple[ClickHouseDestination, _RecordingClient]:
     dest = ClickHouseDestination("h", 1, "u", "p")
-    client = _SettingsClient()
+    client = _RecordingClient()
     dest._clients["d"] = client
     return dest, client
 
 
 class TestClickHouseInsertBlocks:
-    def test_rows_are_inserted_in_destination_sized_blocks_cut_at_offsets(
-        self, tmp_path: Path
-    ) -> None:
-        dest = _DedupDest(block_rows=8000)
-        _run(_store(tmp_path), _job(), _Source(_batches(20000, 2000, ["1.00"])), dest)
+    def test_rows_are_inserted_in_blocks_cut_at_offsets(self, tmp_path: Path) -> None:
+        dest = _DedupDest()
+        _run(_store(tmp_path), _job(8000), _Source(_batches(20000, 2000, ["1.00"])), dest)
         assert [n for n, _ in dest.inserts] == [8000, 8000, 4000]
 
-    def test_the_block_reaches_the_vertical_merge_threshold_for_narrow_rows(self) -> None:
-        dest, _ = _ch_dest()
-        narrow = pa.RecordBatch.from_pydict({"a": list(range(2000))})
-        assert dest.insert_block_rows("d", narrow) == 131072
-
-    def test_the_block_stops_at_the_server_insert_block_bytes_for_wide_rows(self) -> None:
-        dest, _ = _ch_dest()
-        wide = pa.RecordBatch.from_pydict({"a": ["x" * 10_000] * 100})
-        row_bytes = wide.nbytes // wide.num_rows
-        assert dest.insert_block_rows("d", wide) == 268402944 // row_bytes
+    def test_merge_tree_tables_merge_vertically(self) -> None:
+        """A horizontal merge of small parts of a 110-column table peaked at
+        562 MiB on ClickHouse 24.9; vertical, 14 MiB (REPORT.md §10)."""
+        dest, client = _ch_dest()
+        dest.create_table("d", "t", [], order_by=())
+        assert "vertical_merge_algorithm_min_rows_to_activate = 0" in client.commands[0]
 
 
 # --- 6. Low-cardinality columns are normalized once per job ------------------
@@ -212,7 +198,7 @@ class TestDistinctValuesAreRememberedAcrossChunks:
             job=job,
             job_id="j",
             source=_Source(_batches(rows, 2000, values)),
-            dest=_DedupDest(block_rows=2000),
+            dest=_DedupDest(),
             source_engine="clickhouse",
             persistence=_store(tmp_path),
             planner=DistinctValuePlanner(dispatcher, None),
@@ -292,7 +278,7 @@ class TestResumeAfterFailure:
         store.create_clone_job("j", _job())
         # every 3rd value is not money: an error row each, 2,000 of 6,000
         source = _Source(_batches(6000, 2000, ["1.00", "2.00", "not money"]))
-        dest = _DedupDest(block_rows=2000)
+        dest = _DedupDest()
         with pytest.raises(RuntimeError, match="killed"):
             _run(_CrashOnSave(store, crash_on=2), store.get_clone_job("j") or {}, source, dest)
         _run(store, store.get_clone_job("j") or {}, source, dest)

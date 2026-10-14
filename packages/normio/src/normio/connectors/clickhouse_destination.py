@@ -12,8 +12,6 @@ import clickhouse_connect
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
-    import pyarrow as pa
-
     from normio.connector import ColumnInfo
 
 # FieldSemanticType -> ClickHouse column type when the column is NOT typed
@@ -151,11 +149,24 @@ class ClickHouseDestination:
             f"ENGINE = {engine} ORDER BY ({order_clause})"
         )
         if "MergeTree" in engine:
-            # Remember the last block's dedup token, so a resume that replays
-            # it is dropped (`bulk_insert`). One: a job has one block in
-            # flight per table, and the DDL has no PARTITION BY, so one
-            # INSERT is one block.
-            ddl += " SETTINGS non_replicated_deduplication_window = 1"
+            # vertical_merge_algorithm_min_rows_to_activate = 0: every merge of
+            # a wide table (>= vertical_merge_algorithm_min_columns_to_activate
+            # columns) runs one column at a time. By default a merge of small
+            # parts runs horizontally, holding every column's buffers for
+            # every part at once: measured on 262 OnTime parts of 2,000 rows
+            # (110 columns), 44 horizontal merges peaked at 562 MiB each (497
+            # average), the same parts merged vertically at 14 MiB. That is
+            # what took a 4 GB server to its cap after four hours. Bigger
+            # inserts were not the fix: one 131,072-row INSERT used 611 MiB.
+            #
+            # non_replicated_deduplication_window = 1 remembers the last
+            # block's dedup token, so a resume that replays it is dropped
+            # (`bulk_insert`). One: a job has one block in flight per table,
+            # and the DDL has no PARTITION BY, so one INSERT is one block.
+            ddl += (
+                " SETTINGS vertical_merge_algorithm_min_rows_to_activate = 0,"
+                " non_replicated_deduplication_window = 1"
+            )
         self._client_for(database).command(ddl)
 
     @staticmethod
@@ -179,38 +190,6 @@ class ClickHouseDestination:
             return base[len("Nullable(") : -1] if base.startswith("Nullable(") else base
         return base if base.startswith("Nullable(") else f"Nullable({base})"
 
-    def insert_block_rows(self, database: str, sample: pa.RecordBatch) -> int:
-        """Rows per INSERT, from the server's own settings.
-
-        Every INSERT is a new part. OnTime (109 columns) was written 2,000
-        rows at a time: 859 parts, and each merge of parts that small runs
-        ClickHouse's horizontal algorithm, which holds a buffer for every
-        column of every part at once (~600 MB per merge), until the server
-        hit its memory cap. A merge runs vertically, one column at a time,
-        once it covers `vertical_merge_algorithm_min_rows_to_activate` rows;
-        a part that size makes every merge it is in vertical, and is ~65x
-        fewer parts. The block stops earlier for wide rows, at
-        `min_insert_block_size_bytes`: the size the server itself squashes
-        one INSERT's blocks up to, so neither side holds more than that.
-        Row width comes from the first source batch's Arrow size.
-
-        ponytail: the caller buffers a block as row dicts, measured at 5.7 KB
-        per OnTime row (6.7x its Arrow size): ~710 MB for 131,072 rows, and
-        at most ~1.7 GB at the bytes ceiling. Buffer tuples or Arrow instead
-        if a wider table brings that near a memory cap.
-        """
-        client = self._client_for(database)
-        rows_setting = "vertical_merge_algorithm_min_rows_to_activate"
-        bytes_setting = "min_insert_block_size_bytes"
-        values = dict(
-            client.query(
-                f"SELECT name, value FROM system.merge_tree_settings WHERE name = '{rows_setting}' "
-                f"UNION ALL SELECT name, value FROM system.settings WHERE name = '{bytes_setting}'"
-            ).result_rows
-        )
-        row_bytes = max(1, int(sample.nbytes) // max(1, int(sample.num_rows)))
-        return max(1, min(int(values[rows_setting]), int(values[bytes_setting]) // row_bytes))
-
     def bulk_insert(
         self,
         database: str,
@@ -220,8 +199,8 @@ class ClickHouseDestination:
         primary_key: Sequence[str] = (),
         dedup_token: str | None = None,
     ) -> None:
-        """One INSERT, so one part: the caller sizes the block
-        (`insert_block_rows`) and checkpoints after it. `dedup_token` makes
+        """One INSERT, so one part: the caller sizes the block and
+        checkpoints after it. `dedup_token` makes
         a resumed job's replay of a block that had already committed a
         no-op (ClickHouse has no ON CONFLICT); see `create_table`."""
         if not rows:

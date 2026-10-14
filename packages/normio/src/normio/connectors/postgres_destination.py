@@ -16,8 +16,6 @@ from normio.connectors._sql_base import DESTINATION_INSERT_CHUNK_ROWS
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
-    import pyarrow as pa
-
     from normio.connector import ColumnInfo
 
 # FieldSemanticType -> Postgres column type when the column is NOT typed
@@ -152,10 +150,6 @@ class PostgresDestination:
         ddl = f"CREATE TABLE {quote_identifier(table)} ({', '.join(column_defs)})"
         with self._engine_for(database).begin() as conn:
             conn.execute(sa.text(ddl))
-
-    def insert_block_rows(self, database: str, sample: pa.RecordBatch) -> int:
-        """Rows per checkpointed block: the insert transaction size, unchanged."""
-        return DESTINATION_INSERT_CHUNK_ROWS
 
     def bulk_insert(
         self,

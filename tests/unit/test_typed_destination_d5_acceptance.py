@@ -849,9 +849,6 @@ class TestEngineReachesTheCastEndToEnd:
         class _Dst:
             rows: ClassVar[list[Any]] = []
 
-            def insert_block_rows(self, *a: Any) -> int:
-                return 2000
-
             def bulk_insert(self, database: str, table: str, rows: list[Any], **kw: Any) -> None:
                 self.rows.extend(rows)
 
