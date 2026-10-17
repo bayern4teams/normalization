@@ -924,3 +924,16 @@ Rerun on the fixed branches: 147.5 s, postnummer passthrough, 1,177,617 rows bot
   pytest on the merge 3,184+ passed, 22 skipped, 1 xfailed. GitHub ci-fast green on every pushed
   head (run ids in PART1_COMPLETE.md).
 - The workflow ratchet is at zero missing commands; a test path a workflow names must exist.
+
+### 11.12 D6.3: the corpus's own ambiguity rate (two people, 2026-10-17)
+`kappa_sample.py` drew 60 real values (Raha, Brreg): 30 the engine refuses, 30 it answers; two
+people labelled independently; `kappa_score.py`:
+- Cohen's kappa 0.830, Krippendorff's alpha 0.831.
+- 12 of 60 (20%) read differently or marked "can't tell": all 12 among the values the engine
+  refused; 0 of the 30 the engine answered were disputed.
+- The 12: seven `m/1/yy`-shaped dates (one person read month first throughout, the other day
+  first), `NA` (Namibia or can't tell), a two-token name, a bare host's scheme. Each person was
+  consistent with their own reading of a column: a column states its date order through values
+  like `6/21/10`. On rayyan.article_jcreated_at 38 values prove M/D/Y, 0 prove D/M/Y, 320 are
+  refused today. That is the next change (user decision: column evidence, default on), after
+  Part 1.

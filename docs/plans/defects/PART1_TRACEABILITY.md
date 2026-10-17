@@ -70,7 +70,7 @@ on B3), `fix/ci-gates` (B5, on B4).
 |---|---|---|---|---|
 | D6.1 | BART injects errors | BART 354f503 built and run (H2: its Postgres driver predates PG 12) | §11.8: 201 injected cells on raha.hospital; scored and used held out | done-live |
 | D6.2 | Raha's six datasets | loader, scripts | REPORT §4; §11.8 | done-live |
-| D6.3 | the corpus's own ambiguity rate (kappa / alpha) | functions; `kappa_sample.py` writes a 60-value sheet (30 refused, 30 answered by the engine), `kappa_score.py` scores two people's copies | user decision 2026-10-17: two people label a CSV | pending the user's labels |
+| D6.3 | the corpus's own ambiguity rate (kappa / alpha) | `kappa_sample.py`, `kappa_score.py` | §11.12: kappa 0.830, alpha 0.831; 12/60 disputed, all among values the engine refused; 0 disputed answers | done-live |
 | D6.4 | AMBIGUOUS is a correct gold label | 5-class scorer | §11.2: seeded 149/31/0/0/0 (was 142/21/11/6/0) | done-live |
 | D6.5 | the CSV loader can score context-needing types | `country` / `locale` columns or `--country` / `--locale` (B4) | §11.8 | done-live |
 
