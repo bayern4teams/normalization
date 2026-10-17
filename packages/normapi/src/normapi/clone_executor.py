@@ -534,6 +534,18 @@ _CURRENCY_SUFFIX = "_currency"
 # holds would break every existing consumer of a clone); the companion
 # gets the key.
 _CODE_SUFFIX = "_code"
+# ADR-020: typed first/last day of a DATE or DATETIME value's stated period.
+_BOUND_SUFFIXES = ("__from", "__to")
+# Only an answer has bounds: AMBIGUOUS or INVALID text states no period.
+_BOUNDED_STATUSES = frozenset(
+    {
+        NormalizationStatus.NORMALIZED,
+        NormalizationStatus.PARSED,
+        NormalizationStatus.REPAIRED,
+        NormalizationStatus.UNCHANGED,
+    }
+)
+_BOUNDED_TYPES = frozenset({FieldSemanticType.DATE.value, FieldSemanticType.DATETIME.value})
 _CODE_TYPES = frozenset(
     {
         FieldSemanticType.COUNTRY.value,
@@ -686,6 +698,10 @@ def _destination_plan(
             extras[f"{column}{_CODE_SUFFIX}"] = text_type
         if not typed or column in key_columns:
             continue
+        bound_type = storage_types.bound_type(engine)
+        if semantic_type in _BOUNDED_TYPES and bound_type is not None:
+            for suffix in _BOUND_SUFFIXES:
+                extras[f"{column}{suffix}"] = bound_type
         sql_type = storage_types.sql_type(semantic_type, engine)
         if sql_type is not None:
             overrides[column] = sql_type
@@ -753,6 +769,11 @@ def plan_one_table(
             column: f"{column}{_CODE_SUFFIX}"
             for column, st in semantic_types.items()
             if st in _CODE_TYPES
+        },
+        "bounds_columns": {
+            column: [f"{column}{suffix}" for suffix in _BOUND_SUFFIXES]
+            for column in semantic_types
+            if f"{column}{_BOUND_SUFFIXES[0]}" in extras
         },
     }
 
@@ -978,6 +999,7 @@ def verify_and_create_schema(persistence: PgPersistence, job_id: str) -> dict[st
                     "typed_columns": plan["typed_columns"],
                     "currency_columns": plan["currency_columns"],
                     "code_columns": plan["code_columns"],
+                    "bounds_columns": plan["bounds_columns"],
                 }
         finally:
             source.close()
@@ -1215,6 +1237,7 @@ def _apply_column(
     companion: str | None,
     code_column: str | None,
     country: str | None,
+    bounds: list[str] | None = None,
     locale: str | None,
     signals: dict[int, tuple[str, str]] | None,
     country_is_derived: bool,
@@ -1324,6 +1347,7 @@ def _apply_column(
             typed_as=typed_as,
             companion=companion,
             code_column=code_column,
+            bounds=bounds,
             engine=engine,
         )
         # After the cast, not before it: a value that normalized fine and
@@ -1405,6 +1429,7 @@ def _apply_value(
     companion: str | None,
     code_column: str | None,
     engine: str,
+    bounds: list[str] | None = None,
 ) -> list[str]:
     """One row, one column: write every projection the destination has a
     home for, and hand back whatever needs reporting."""
@@ -1416,6 +1441,13 @@ def _apply_value(
         row[companion] = result.structured.get("currency")
     if code_column is not None:
         row[code_column] = result.comparison
+    if bounds is not None and result.normalization_status in _BOUNDED_STATUSES:
+        for column_name, value in zip(
+            bounds, storage_types.date_bounds(result.structured), strict=True
+        ):
+            row[column_name], bound_error = storage_types.coerce_bound(value, engine)
+            if bound_error is not None:
+                errors.append(bound_error)
 
     # A non-empty source value the normalizer read as MISSING lands as
     # NULL with nothing anywhere to say so. `display` is None for
@@ -1853,6 +1885,7 @@ def _normalize_chunk(
     typed_columns: dict[str, str],
     currency_columns: dict[str, str],
     code_columns: dict[str, str],
+    bounds_columns: dict[str, list[str]],
     pool: Any,
     planner: DistinctValuePlanner,
     seeded: Mapping[int, str],
@@ -1882,7 +1915,11 @@ def _normalize_chunk(
     # with a non-null amount would build an INSERT that is wrong for
     # every other row.
     for _, row in pending:
-        for extra in (*currency_columns.values(), *code_columns.values()):
+        for extra in (
+            *currency_columns.values(),
+            *code_columns.values(),
+            *(bound for pair in bounds_columns.values() for bound in pair),
+        ):
             row[extra] = None
 
     job_country = job.get("country")
@@ -1920,6 +1957,7 @@ def _normalize_chunk(
                 typed_as=typed_columns.get(column),
                 companion=currency_columns.get(column),
                 code_column=code_columns.get(column),
+                bounds=bounds_columns.get(column),
                 country=country,
                 locale=job.get("locale"),
                 signals=signals if provides_country else None,
@@ -2209,6 +2247,7 @@ def _normalize_table(
     typed_columns: dict[str, str] = table_plan.get("typed_columns", {})
     currency_columns: dict[str, str] = table_plan.get("currency_columns", {})
     code_columns: dict[str, str] = table_plan.get("code_columns", {})
+    bounds_columns: dict[str, list[str]] = table_plan.get("bounds_columns", {})
     stats = {column: _ColumnStats() for column in configured_columns}
     # Only this table's own key column matters: a table that does not carry
     # it gets no cross-table country, which is the behaviour without the
@@ -2265,6 +2304,7 @@ def _normalize_table(
                 typed_columns=typed_columns,
                 currency_columns=currency_columns,
                 code_columns=code_columns,
+                bounds_columns=bounds_columns,
                 pool=pool,
                 planner=planner,
                 seeded=seeded,

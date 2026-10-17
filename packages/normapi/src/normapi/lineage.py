@@ -140,6 +140,10 @@ def table_run(
         for base, companion in plan.get(key, {}).items():
             if base in fields:  # never claim a source column the source lacks
                 fields[companion] = entry(base)
+    for base, bounds in plan.get("bounds_columns", {}).items():
+        if base in fields:
+            for bound in bounds:
+                fields[bound] = entry(base)
     # Marquez builds a dataset's fields from its `schema` facet, and its
     # column-lineage graph links only fields it knows: without this facet the
     # lineage was stored and the graph stayed empty (PART1 D3.3). Every field

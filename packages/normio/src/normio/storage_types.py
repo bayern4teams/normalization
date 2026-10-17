@@ -31,6 +31,8 @@ date normalizer exists to prevent.
 
 from __future__ import annotations
 
+import calendar
+import datetime as dt
 import decimal
 import re
 from typing import TYPE_CHECKING
@@ -88,6 +90,58 @@ _PG_UNBOUNDED_INTEGER_DIGITS = 131072
 _PG_MAX_FRACTION_DIGITS = 16383
 _TRUE = "true"
 _FALSE = "false"
+
+
+# DATE/DATETIME bounds (ADR-020): the first and last day of the stated period.
+_BOUND_TYPES: Mapping[str, str] = {"postgres": "DATE", "clickhouse": "Date32"}
+# ponytail: ClickHouse Date32's documented range ("1900-01-01 to 2299-12-31");
+# Postgres DATE spans 4713 BC to 5874897 AD, wider than any Python date.
+_BOUND_RANGES: Mapping[str, tuple[dt.date, dt.date]] = {
+    "clickhouse": (dt.date(1900, 1, 1), dt.date(2299, 12, 31)),
+}
+
+
+def bound_type(engine: str) -> str | None:
+    return _BOUND_TYPES.get(engine)
+
+
+def date_bounds(structured: Mapping[str, object]) -> tuple[str | None, str | None]:
+    """First and last day of the period a normalized date states, from its
+    `structured` view: an EDTF range's own bounds (`earliest`/`latest`), or
+    the `precision` of `parsed_date` (`1990` is 1990-01-01..1990-12-31).
+    (None, None) for anything else: a bound is never guessed."""
+    if "earliest" in structured or "latest" in structured:
+        lo, hi = structured.get("earliest"), structured.get("latest")
+        return (lo if isinstance(lo, str) else None, hi if isinstance(hi, str) else None)
+    parsed, precision = structured.get("parsed_date"), structured.get("precision")
+    if not isinstance(parsed, str):
+        return None, None
+    if precision == "year":
+        return f"{parsed[:4]}-01-01", f"{parsed[:4]}-12-31"
+    if precision == "month":
+        year, month = int(parsed[:4]), int(parsed[5:7])
+        last = calendar.monthrange(year, month)[1]
+        return f"{year:04d}-{month:02d}-01", f"{year:04d}-{month:02d}-{last:02d}"
+    if precision in ("day", "time"):
+        day = parsed.split("T")[0]
+        return day, day
+    return None, None
+
+
+def coerce_bound(value: str | None, engine: str) -> tuple[dt.date | None, str | None]:
+    """A bound for the engine's date column, or (None, error) when the date
+    is outside what the column can hold: NULL plus an error row, never an
+    aborted chunk."""
+    if value is None:
+        return None, None
+    try:
+        day = dt.date.fromisoformat(value)
+    except ValueError:
+        return None, f"date bound {value!r} is not a calendar date; stored as NULL"
+    lowest, highest = _BOUND_RANGES.get(engine, (dt.date.min, dt.date.max))
+    if not lowest <= day <= highest:
+        return None, f"date bound {value} is outside {lowest}..{highest}; stored as NULL"
+    return day, None
 
 
 def sql_type(semantic_type: str, engine: str) -> str | None:
