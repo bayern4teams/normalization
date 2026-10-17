@@ -729,9 +729,12 @@ class TestAttackShapes:
     def test_a_country_inferred_from_a_sibling_table_gets_its_own_answerable_row(
         self, env: _Env
     ) -> None:
-        """CH rejects "1,234" (INVALID), `_drop_rejected_country` falls back to the
+        """LI rejects "1,234" (INVALID), `_drop_rejected_country` falls back to the
         no-country result (AMBIGUOUS). The queue row carries the context the value
-        was keyed in, and a verdict on it must be accepted and applied."""
+        was keyed in, and a verdict on it must be accepted and applied. (Was CH:
+        that held only while CH meant its first language, de_CH; fr_CH reads
+        1,234 as 1.234 and no CH locale reads it otherwise. LI is the one
+        country whose every CLDR locale rejects it, PART1 N11.)"""
         rows = [_rows([{"k": "e1", "m": RAW_MONEY}] * 2 + [{"k": "e2", "m": RAW_MONEY}])]
 
         def run(job_id: str) -> list[dict[str, Any]]:
@@ -750,7 +753,7 @@ class TestAttackShapes:
                 pool=None,
                 progress=job["progress"],
                 in_place=False,
-                entity_countries={"e1": "CH"},
+                entity_countries={"e1": "LI"},
                 adjudication=env.adjudication(),
             )
             return dest.inserted
