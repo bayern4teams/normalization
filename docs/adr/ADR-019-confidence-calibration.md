@@ -74,8 +74,8 @@ threshold", so both are built, and neither changes a value unless a job asks:
   cells and BART's injected cells. Unchanged real cells are left out: their truth would be the
   engine's own answer.
 - *Clones report it, and refuse only when asked.* Every clone reports per column how many of its
-  answers fall below the type's threshold and the expected number wrong (the bins' observed
-  accuracy). With `calibrated_abstention: true` on the job, such an answer becomes AMBIGUOUS,
+  answers fall below the type's threshold (no "expected wrong": the bins come from erroneous
+  cells, and their accuracy says nothing about an ordinary column; found live). With `calibrated_abstention: true` on the job, such an answer becomes AMBIGUOUS,
   original kept, and goes to the review queue (ADR-018). Default off: on today's corpora several
   types have no passing threshold, and switching every job to "abstain on everything" for them
   is the user's call per job, not a default.

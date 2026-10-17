@@ -40,7 +40,6 @@ def test_every_clone_reports_the_answers_below_the_threshold(env: _Env) -> None:
     _, rows, job = env.run([_rows([{"n": "12"}, {"n": "13"}])], {"n": "NUMERIC"})
     report = job["quality"][TABLE]["n"]["calibration"]
     assert report["below_threshold"] == 2
-    assert report["expected_wrong"] == pytest.approx(0.5)
     assert [r["n"] for r in rows] == ["12", "13"]  # reported, not applied
     assert env.queue() == []
 

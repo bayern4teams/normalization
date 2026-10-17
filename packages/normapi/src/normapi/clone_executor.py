@@ -1361,7 +1361,6 @@ def _apply_column(
             stats.record_invalid(original)
         if original in below:
             stats.below_threshold += 1
-            stats.expected_wrong += 1 - below[original]
         # An empty string arriving as NULL is the same absence in a better
         # representation, not a value normalization destroyed — counting it
         # would inflate every text column's rate and could fail a job on
@@ -1473,16 +1472,16 @@ def _calibrate(
     stats: _ColumnStats,
     *,
     abstain: bool,
-) -> dict[str, float]:
-    """The answers below the type's risk-controlled threshold, each with its bin's observed
-    accuracy (what the report counts). Opted in, each becomes AMBIGUOUS with the original kept,
-    so it goes to the review queue; otherwise nothing changes (ADR-019)."""
+) -> set[str]:
+    """The answers below the type's risk-controlled threshold (what the report counts). Opted
+    in, each becomes AMBIGUOUS with the original kept, so it goes to the review queue; otherwise
+    nothing changes (ADR-019)."""
     entry = _calibration_table().get(semantic_type.value)
     if entry is None:
-        return {}
+        return set()
     stats.calibration = {k: entry[k] for k in ("threshold", "abstain_on_everything", "n")}
     threshold = entry["threshold"]
-    below: dict[str, float] = {}
+    below: set[str] = set()
     for value, result in by_value.items():
         conf = result.confidence
         if (
@@ -1492,11 +1491,7 @@ def _calibrate(
             or (threshold is not None and conf >= threshold)
         ):
             continue
-        accuracy = next(
-            (b["accuracy"] for b in entry["bins"] if b["lo"] <= conf <= b["hi"] and b["count"]),
-            None,
-        )
-        below[value] = accuracy if accuracy is not None else 0.0
+        below.add(value)
         if abstain:
             by_value[value] = result.model_copy(
                 update={
@@ -1669,7 +1664,6 @@ class _ColumnStats:
     failing: Counter[str] = dataclasses.field(default_factory=Counter)
     conforming: int = 0
     below_threshold: int = 0
-    expected_wrong: float = 0.0
     calibration: dict[str, Any] | None = None
     unstable_samples: list[str] = dataclasses.field(default_factory=list)
 
@@ -1709,14 +1703,14 @@ class _ColumnStats:
             "emptied": self.nulled,
             "checked_idempotent": self.checked_stable,
             "not_idempotent": self.unstable,
-            # ADR-019: the type's calibrated threshold, how many answers fall below
-            # it and how many of those the bins expect to be wrong.
+            # ADR-019: the type's calibrated threshold and how many answers fall
+            # below it. No "expected wrong": the bins come from erroneous cells,
+            # and their accuracy says nothing about an ordinary column.
             "calibration": None
             if self.calibration is None
             else {
                 **self.calibration,
                 "below_threshold": self.below_threshold,
-                "expected_wrong": round(self.expected_wrong, 3),
             },
             # D4: which values are disguised nulls, with exact counts; a
             # candidate to confirm (`confirmed_missing`), never applied here.
