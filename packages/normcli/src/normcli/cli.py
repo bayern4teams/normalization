@@ -69,6 +69,11 @@ def _build_parser() -> argparse.ArgumentParser:
     _context_arguments(calibrate_parser)
     calibrate_parser.add_argument("--out-json", type=Path)
     calibrate_parser.add_argument("--out-md", type=Path)
+    calibrate_parser.add_argument(
+        "--out-table",
+        type=Path,
+        help="per-type risk-controlled thresholds and bins, the data a clone uses (ADR-019)",
+    )
 
     return parser
 
@@ -84,7 +89,7 @@ def _context(args: argparse.Namespace) -> dict[str, str]:
 
 
 def _run_calibrate(args: argparse.Namespace) -> int:
-    from normanalysis.calibration import report  # noqa: PLC0415
+    from normanalysis.calibration import _DELTA, calibration_table, report  # noqa: PLC0415
     from normanalysis.gold import default_engine, load_cases, score  # noqa: PLC0415
 
     if not 0 < args.cost_ratio < float("inf"):  # NaN fails too
@@ -105,6 +110,17 @@ def _run_calibrate(args: argparse.Namespace) -> int:
             args.out_json.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
         if args.out_md:
             args.out_md.write_text(md, encoding="utf-8")
+        if args.out_table:
+            table = {
+                "cost_ratio": args.cost_ratio,
+                "delta": _DELTA,
+                "corpus": str(args.path),
+                "cases": len(cases),
+                "types": calibration_table(
+                    scored.pairs, scored.pair_types, cost_ratio=args.cost_ratio
+                ),
+            }
+            args.out_table.write_text(json.dumps(table, indent=1) + "\n", encoding="utf-8")
     except OSError as exc:
         print(f"calibrate: cannot write the report: {exc!r}", file=sys.stderr)
         return 2

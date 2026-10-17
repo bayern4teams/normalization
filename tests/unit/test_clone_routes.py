@@ -308,6 +308,7 @@ def test_every_request_field_reaches_the_stored_job(
         "cross_table_entity_key": "companyID",
         "field_configs": {"Company": {"revenue": "MONEY"}},
         "confirmed_missing": {"Company": {"revenue": ["tbd"]}},
+        "calibrated_abstention": True,
     }
     resp = client.post("/normalization/clone-jobs", json=sent)
     assert resp.status_code == 201, resp.text

@@ -26,12 +26,15 @@ from __future__ import annotations
 
 import dataclasses
 import datetime as dt
+import functools
+import json
 import multiprocessing
 import os
 import threading
 import uuid
 from collections import Counter
 from concurrent.futures import ProcessPoolExecutor
+from importlib import resources
 from typing import TYPE_CHECKING, Any
 
 from normalizers.postcode_validation import country_from_postcode_format
@@ -506,6 +509,7 @@ def create_clone_job(
         "locale": request.get("locale"),
         "max_new_null_rate": request.get("max_new_null_rate"),
         "confirmed_missing": request.get("confirmed_missing") or {},
+        "calibrated_abstention": bool(request.get("calibrated_abstention")),
         "cross_table_entity_key": request.get("cross_table_entity_key"),
         "in_place": in_place,
         "progress": {
@@ -914,6 +918,7 @@ _AMENDABLE_FIELDS = (
     "max_new_null_rate",
     "cross_table_entity_key",
     "confirmed_missing",
+    "calibrated_abstention",
 )
 
 
@@ -1242,6 +1247,7 @@ def _apply_column(
     country: str | None,
     bounds: list[str] | None = None,
     confirmed_missing: Collection[str] = (),
+    calibrated_abstention: bool = False,
     locale: str | None,
     signals: dict[int, tuple[str, str]] | None,
     country_is_derived: bool,
@@ -1317,6 +1323,7 @@ def _apply_column(
             country=country,
         )
     _check_idempotent(by_value, pool=pool, planner=planner, ctx=ctx, stats=stats)
+    below = _calibrate(by_value, semantic_type, stats, abstain=calibrated_abstention)
     if adjudication is not None:
         ambiguous = Counter(
             row[column]
@@ -1337,6 +1344,9 @@ def _apply_column(
         result = by_value[original]
         if result.normalization_status is NormalizationStatus.INVALID:
             stats.record_invalid(original)
+        if original in below:
+            stats.below_threshold += 1
+            stats.expected_wrong += 1 - below[original]
         # An empty string arriving as NULL is the same absence in a better
         # representation, not a value normalization destroyed — counting it
         # would inflate every text column's rate and could fail a job on
@@ -1429,6 +1439,64 @@ def _restore_undecodable(
                 "error": f"value is not valid UTF-8; {kept}",
             }
         )
+
+
+@functools.cache
+def _calibration_table() -> dict[str, dict[str, Any]]:
+    """The committed per-type table (ADR-019, `normcli calibrate --out-table`): {} if absent."""
+    path = resources.files("normapi") / "data" / "calibration.json"
+    if not path.is_file():
+        return {}
+    types: dict[str, dict[str, Any]] = json.loads(path.read_text(encoding="utf-8"))["types"]
+    return types
+
+
+def _calibrate(
+    by_value: dict[str, NormalizedValue],
+    semantic_type: FieldSemanticType,
+    stats: _ColumnStats,
+    *,
+    abstain: bool,
+) -> dict[str, float]:
+    """The answers below the type's risk-controlled threshold, each with its bin's observed
+    accuracy (what the report counts). Opted in, each becomes AMBIGUOUS with the original kept,
+    so it goes to the review queue; otherwise nothing changes (ADR-019)."""
+    entry = _calibration_table().get(semantic_type.value)
+    if entry is None:
+        return {}
+    stats.calibration = {k: entry[k] for k in ("threshold", "abstain_on_everything", "n")}
+    threshold = entry["threshold"]
+    below: dict[str, float] = {}
+    for value, result in by_value.items():
+        conf = result.confidence
+        if (
+            conf is None
+            or result.original_kind is not None
+            or result.normalization_status.value not in _CONFORMING
+            or (threshold is not None and conf >= threshold)
+        ):
+            continue
+        accuracy = next(
+            (b["accuracy"] for b in entry["bins"] if b["lo"] <= conf <= b["hi"] and b["count"]),
+            None,
+        )
+        below[value] = accuracy if accuracy is not None else 0.0
+        if abstain:
+            by_value[value] = result.model_copy(
+                update={
+                    "display": result.original,
+                    "comparison": None,
+                    "search": None,
+                    "normalization_status": NormalizationStatus.AMBIGUOUS,
+                    "validation_status": "AMBIGUOUS",
+                    "errors": [
+                        *result.errors,
+                        f"stated confidence {conf} is below the calibrated threshold for "
+                        f"{semantic_type.value}; kept for review",
+                    ],
+                }
+            )
+    return below
 
 
 def _confirmed_missing(value: str, ctx: NormalizationContext) -> NormalizedValue:
@@ -1577,6 +1645,9 @@ class _ColumnStats:
     samples: list[str] = dataclasses.field(default_factory=list)
     failing: Counter[str] = dataclasses.field(default_factory=Counter)
     conforming: int = 0
+    below_threshold: int = 0
+    expected_wrong: float = 0.0
+    calibration: dict[str, Any] | None = None
     unstable_samples: list[str] = dataclasses.field(default_factory=list)
 
     def record_invalid(self, value: str) -> None:
@@ -1615,6 +1686,15 @@ class _ColumnStats:
             "emptied": self.nulled,
             "checked_idempotent": self.checked_stable,
             "not_idempotent": self.unstable,
+            # ADR-019: the type's calibrated threshold, how many answers fall below
+            # it and how many of those the bins expect to be wrong.
+            "calibration": None
+            if self.calibration is None
+            else {
+                **self.calibration,
+                "below_threshold": self.below_threshold,
+                "expected_wrong": round(self.expected_wrong, 3),
+            },
             # D4: which values are disguised nulls, with exact counts; a
             # candidate to confirm (`confirmed_missing`), never applied here.
             "disguised_missing": [
@@ -2011,6 +2091,7 @@ def _normalize_chunk(
                 code_column=code_columns.get(column),
                 bounds=bounds_columns.get(column),
                 confirmed_missing=job.get("confirmed_missing", {}).get(table, {}).get(column, ()),
+                calibrated_abstention=bool(job.get("calibrated_abstention")),
                 country=country,
                 locale=job.get("locale"),
                 signals=signals if provides_country else None,
