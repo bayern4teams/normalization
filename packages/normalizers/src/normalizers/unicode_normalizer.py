@@ -20,7 +20,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import blake3
-from normcore.enums import Reversibility
+from normcore.enums import NormalizationStatus, QualityFlag, Reversibility
+from normcore.models import NormalizedValue
 from normcore.pii import character_class_mask, content_hash
 from normcore.rules import ComponentVersionInfo
 from normcore.trace import TraceStep
@@ -246,3 +247,31 @@ def build_unicode_trace(
         )
         current_input = step.output
     return trace
+
+
+def disclose_repair(result: NormalizedValue, unicode: UnicodeProcessingResult) -> NormalizedValue:
+    """`result` marked as repaired when the text repair step (ftfy) changed
+    the input: REPAIRED, the repaired text, the same flags FREE_TEXT sets.
+    Names and companies applied the repair silently, at NORMALIZED and
+    LOSSLESS: `CafÃ©` -> `Café`, and `ß\x85` -> an NKo digit (PART1 N8)."""
+    step = next((s for s in unicode.steps if s.operation == "text_repair"), None)
+    if step is None or not step.changed or result.normalization_status in _NOT_ANSWERS:
+        return result
+    return result.model_copy(
+        update={
+            "repaired": step.output,
+            "normalization_status": NormalizationStatus.REPAIRED,
+            "flags": [*result.flags, QualityFlag.MOJIBAKE_FIXED, QualityFlag.ENCODING_REPAIRED],
+            "lossiness": Reversibility.LOSSY,
+        }
+    )
+
+
+_NOT_ANSWERS = frozenset(
+    {
+        NormalizationStatus.AMBIGUOUS,
+        NormalizationStatus.INVALID,
+        NormalizationStatus.FAILED,
+        NormalizationStatus.NEEDS_REVIEW,
+    }
+)

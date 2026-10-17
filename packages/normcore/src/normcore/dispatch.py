@@ -10,6 +10,7 @@ re-implemented per normalizer.
 
 from __future__ import annotations
 
+import unicodedata
 from collections.abc import Iterable, Mapping
 
 from normcore import multivalue
@@ -89,6 +90,7 @@ class Dispatcher:
         # because normcore deliberately has no dependencies and the
         # dictionary lives in normdict.
         self._missing_sentinels = dict(missing_sentinels or {})
+        self._discriminates: dict[tuple[str, str], bool] = {}
 
     @property
     def env_id(self) -> str:
@@ -162,6 +164,26 @@ class Dispatcher:
             profile=profile,
         )
 
+    def _reads_as_a_value(
+        self, value: str, normalizer: Normalizer, context: NormalizationContext
+    ) -> NormalizedValue | None:
+        """`value`'s clean reading as a real value of the type, or None. Only
+        a normalizer that rejects NEGATIVE_CONTROL counts: one that accepts
+        any text (a name, an identifier) proves nothing by accepting `N/A`.
+        `NA` is Namibia to COUNTRY and Nauru to LANGUAGE (PART1 N5)."""
+        try:
+            result = normalizer.normalize(value, context)
+            if not _clean(result):
+                return None
+            key = (normalizer.name, context.context_hash)
+            if key not in self._discriminates:
+                self._discriminates[key] = not _clean(
+                    normalizer.normalize(NEGATIVE_CONTROL, context)
+                )
+        except NormalizerFailure:
+            return None
+        return result if self._discriminates[key] else None
+
     def _normalize_elements(
         self,
         value: str,
@@ -230,8 +252,36 @@ class Dispatcher:
         profile: NormalizationProfile,
     ) -> NormalizedValue:
         if value is not None:
-            sentinel_kind = self._missing_sentinels.get(value.strip().casefold())
+            # Looked up on the visible text: normalizers drop control and
+            # format characters, so `-\x00` came out as `-`, which is a token
+            # here, and the second pass disagreed with the first (PART1 N8).
+            visible = _visible(value)
+            sentinel_kind = self._missing_sentinels.get(visible.casefold())
+            if not visible and value.strip():
+                sentinel_kind = MissingKind.EMPTY_STRING.value
             if sentinel_kind is not None:
+                as_value = self._reads_as_a_value(value, normalizer, context)
+                if as_value is not None:
+                    return NormalizedValue(
+                        original=value,
+                        display=value,
+                        structured={
+                            "candidates": [
+                                {"interpretation": "missing", "kind": sentinel_kind},
+                                {"interpretation": "value", "display": as_value.display},
+                            ]
+                        },
+                        validation_status="AMBIGUOUS",
+                        normalization_status=NormalizationStatus.AMBIGUOUS,
+                        confidence=0.0,
+                        errors=[
+                            f"a missing-value token that is also a valid {semantic_type.value}"
+                        ],
+                        profile_version=profile.version,
+                        env_id=self._env_id,
+                        semantic_type=semantic_type,
+                        context_hash=context.context_hash,
+                    )
                 return NormalizedValue(
                     original=value,
                     original_kind=MissingKind(sentinel_kind),
@@ -295,6 +345,34 @@ class Dispatcher:
         return result.model_copy(
             update={"profile_version": profile.version, "env_id": self._env_id}
         )
+
+
+# A string no real value of any type is: a normalizer that accepts it can say
+# no to nothing, so its acceptance is no evidence. The same control as
+# normanalysis.type_detection._NEGATIVE_CONTROL (a test keeps them equal).
+NEGATIVE_CONTROL = "zz~not~a~value~zz"
+
+_CLEAN_STATUSES = frozenset(
+    {
+        NormalizationStatus.NORMALIZED,
+        NormalizationStatus.PARSED,
+        NormalizationStatus.UNCHANGED,
+        NormalizationStatus.REPAIRED,
+    }
+)
+
+
+def _visible(value: str) -> str:
+    """`value` without control or format characters (Cc, Cf), stripped."""
+    return "".join(ch for ch in value if unicodedata.category(ch) not in ("Cc", "Cf")).strip()
+
+
+def _clean(result: NormalizedValue) -> bool:
+    return (
+        result.normalization_status in _CLEAN_STATUSES
+        and result.display is not None
+        and result.original_kind is None
+    )
 
 
 # Aggregating a list-shaped cell: the cell is only as good as its worst

@@ -149,22 +149,28 @@ class TestBareHostnameRepair:
     an absolute URL" because they were written `www.example.com`. The
     repair must fix those without turning arbitrary text into a URL."""
 
-    def test_bare_hostname_gets_the_assumed_scheme(self, normalizer: URLNormalizer) -> None:
+    def test_bare_hostname_is_a_url_with_both_schemes(self, normalizer: URLNormalizer) -> None:
+        # It used to become https://... at 0.8: a guess (PART1 N3).
         result = normalizer.normalize("www.boutrosfonts.com", _ctx())
-        assert result.normalization_status is NormalizationStatus.NORMALIZED
-        assert result.display == "https://www.boutrosfonts.com"
+        assert result.normalization_status is NormalizationStatus.AMBIGUOUS
+        assert result.display == "www.boutrosfonts.com"
+        assert [c["url"] for c in result.structured["candidates"]] == [
+            "http://www.boutrosfonts.com",
+            "https://www.boutrosfonts.com",
+        ]
+        assert normalizer.validate("www.boutrosfonts.com", _ctx()).is_valid
 
     def test_bare_hostname_with_path_and_query(self, normalizer: URLNormalizer) -> None:
         result = normalizer.normalize("example.com/path?a=1", _ctx())
-        assert result.display == "https://example.com/path?a=1"
+        assert result.structured["candidates"][1]["url"] == "https://example.com/path?a=1"
 
     def test_assumption_is_disclosed_not_silent(self, normalizer: URLNormalizer) -> None:
         result = normalizer.normalize("www.example.com", _ctx())
         assert result.structured["scheme_assumed"] is True
-        assert result.repaired == "https://www.example.com"
+        assert result.structured["scheme"] is None
         assert QualityFlag.PARSER_FALLBACK in result.flags
         assert result.warnings
-        assert result.confidence < 1.0
+        assert result.comparison is None
 
     def test_explicit_scheme_is_untouched_and_unflagged(self, normalizer: URLNormalizer) -> None:
         result = normalizer.normalize("http://example.com", _ctx())
