@@ -45,6 +45,7 @@ from normio.connectors import (
 )
 from normio.connectors._sql_base import DESTINATION_INSERT_CHUNK_ROWS, SOURCE_READ_BATCH_ROWS
 
+from normanalysis import disguised_missing
 from normapi import lineage, secrets
 from normapi.adjudication import Adjudication, source_identity
 from normapi.scaffold_profile import SCAFFOLD_PROFILE
@@ -509,6 +510,7 @@ def create_clone_job(
         "country": request.get("country"),
         "locale": request.get("locale"),
         "max_new_null_rate": request.get("max_new_null_rate"),
+        "confirmed_missing": request.get("confirmed_missing") or {},
         "cross_table_entity_key": request.get("cross_table_entity_key"),
         "in_place": in_place,
         "progress": {
@@ -539,6 +541,18 @@ _CURRENCY_SUFFIX = "_currency"
 # holds would break every existing consumer of a clone); the companion
 # gets the key.
 _CODE_SUFFIX = "_code"
+# ADR-020: typed first/last day of a DATE or DATETIME value's stated period.
+_BOUND_SUFFIXES = ("__from", "__to")
+# Only an answer has bounds: AMBIGUOUS or INVALID text states no period.
+_BOUNDED_STATUSES = frozenset(
+    {
+        NormalizationStatus.NORMALIZED,
+        NormalizationStatus.PARSED,
+        NormalizationStatus.REPAIRED,
+        NormalizationStatus.UNCHANGED,
+    }
+)
+_BOUNDED_TYPES = frozenset({FieldSemanticType.DATE.value, FieldSemanticType.DATETIME.value})
 _CODE_TYPES = frozenset(
     {
         FieldSemanticType.COUNTRY.value,
@@ -691,6 +705,10 @@ def _destination_plan(
             extras[f"{column}{_CODE_SUFFIX}"] = text_type
         if not typed or column in key_columns:
             continue
+        bound_type = storage_types.bound_type(engine)
+        if semantic_type in _BOUNDED_TYPES and bound_type is not None:
+            for suffix in _BOUND_SUFFIXES:
+                extras[f"{column}{suffix}"] = bound_type
         sql_type = storage_types.sql_type(semantic_type, engine)
         if sql_type is not None:
             overrides[column] = sql_type
@@ -758,6 +776,11 @@ def plan_one_table(
             column: f"{column}{_CODE_SUFFIX}"
             for column, st in semantic_types.items()
             if st in _CODE_TYPES
+        },
+        "bounds_columns": {
+            column: [f"{column}{suffix}" for suffix in _BOUND_SUFFIXES]
+            for column in semantic_types
+            if f"{column}{_BOUND_SUFFIXES[0]}" in extras
         },
     }
 
@@ -895,6 +918,7 @@ _AMENDABLE_FIELDS = (
     "typed_destination_columns",
     "max_new_null_rate",
     "cross_table_entity_key",
+    "confirmed_missing",
 )
 
 
@@ -983,6 +1007,7 @@ def verify_and_create_schema(persistence: PgPersistence, job_id: str) -> dict[st
                     "typed_columns": plan["typed_columns"],
                     "currency_columns": plan["currency_columns"],
                     "code_columns": plan["code_columns"],
+                    "bounds_columns": plan["bounds_columns"],
                 }
         finally:
             source.close()
@@ -1220,6 +1245,8 @@ def _apply_column(
     companion: str | None,
     code_column: str | None,
     country: str | None,
+    bounds: list[str] | None = None,
+    confirmed_missing: Collection[str] = (),
     locale: str | None,
     signals: dict[int, tuple[str, str]] | None,
     country_is_derived: bool,
@@ -1255,6 +1282,10 @@ def _apply_column(
     )
     undecodable = _decode_column(pending, column)
     distinct_values = list({row[column] for _, row in pending if row[column] is not None})
+    # D4: values a person confirmed are disguised nulls in this column are
+    # MISSING, never dispatched (the original stays in the error row).
+    confirmed = {v: _confirmed_missing(v, ctx) for v in distinct_values if v in confirmed_missing}
+    distinct_values = [v for v in distinct_values if v not in confirmed]
     # ADR-018 resolve stage: a value someone already decided is answered
     # from its verdict and never dispatched.
     adjudicated = (
@@ -1303,6 +1334,7 @@ def _apply_column(
             {v: by_value[v] for v in ambiguous}, ambiguous, semantic_type=semantic_type, context=ctx
         )
     by_value.update(adjudicated)
+    by_value.update(confirmed)
     for offset, row in pending:
         original = row[column]
         if original is None:
@@ -1322,6 +1354,8 @@ def _apply_column(
             # while counting `total` for only some produced a report whose
             # own categories exceeded its own denominator.
             stats.record_status(result.normalization_status)
+            if result.original_kind is None and result.normalization_status.value in _CONFORMING:
+                stats.conforming += 1
         errors = _apply_value(
             row,
             result,
@@ -1329,6 +1363,7 @@ def _apply_column(
             typed_as=typed_as,
             companion=companion,
             code_column=code_column,
+            bounds=bounds,
             engine=engine,
         )
         # After the cast, not before it: a value that normalized fine and
@@ -1401,6 +1436,21 @@ def _restore_undecodable(
         )
 
 
+def _confirmed_missing(value: str, ctx: NormalizationContext) -> NormalizedValue:
+    return NormalizedValue(
+        original=value,
+        original_kind=MissingKind.UNKNOWN_VALUE,
+        normalization_status=NormalizationStatus.NORMALIZED,
+        validation_status="MISSING",
+        confidence=1.0,
+        warnings=["confirmed as a disguised missing value for this column"],
+        profile_version=SCAFFOLD_PROFILE.version,
+        env_id="",
+        semantic_type=ctx.semantic_type,
+        context_hash=ctx.context_hash,
+    )
+
+
 def _apply_value(
     row: dict[str, Any],
     result: NormalizedValue,
@@ -1410,6 +1460,7 @@ def _apply_value(
     companion: str | None,
     code_column: str | None,
     engine: str,
+    bounds: list[str] | None = None,
 ) -> list[str]:
     """One row, one column: write every projection the destination has a
     home for, and hand back whatever needs reporting."""
@@ -1421,6 +1472,13 @@ def _apply_value(
         row[companion] = result.structured.get("currency")
     if code_column is not None:
         row[code_column] = result.comparison
+    if bounds is not None and result.normalization_status in _BOUNDED_STATUSES:
+        for column_name, value in zip(
+            bounds, storage_types.date_bounds(result.structured), strict=True
+        ):
+            row[column_name], bound_error = storage_types.coerce_bound(value, engine)
+            if bound_error is not None and bound_error not in errors:
+                errors.append(bound_error)
 
     # A non-empty source value the normalizer read as MISSING lands as
     # NULL with nothing anywhere to say so. `display` is None for
@@ -1478,6 +1536,17 @@ def _record_country_signal(
 
 
 _SAMPLE_VALUES_PER_COLUMN = 3
+_FAILING_VALUES_KEPT = 10_000
+# What counts as a conforming cell for D4's minority rule.
+_CONFORMING = frozenset(
+    s.value
+    for s in (
+        NormalizationStatus.NORMALIZED,
+        NormalizationStatus.PARSED,
+        NormalizationStatus.REPAIRED,
+        NormalizationStatus.UNCHANGED,
+    )
+)
 
 
 @dataclasses.dataclass
@@ -1511,10 +1580,19 @@ class _ColumnStats:
     # later.
     statuses: Counter[str] = dataclasses.field(default_factory=Counter)
     samples: list[str] = dataclasses.field(default_factory=list)
+    failing: Counter[str] = dataclasses.field(default_factory=Counter)
+    conforming: int = 0
     unstable_samples: list[str] = dataclasses.field(default_factory=list)
 
     def record_invalid(self, value: str) -> None:
         self.invalid += 1
+        # Exact per-value counts for the D4 report; a column with more
+        # distinct failing values than this is dirty data, not disguised
+        # nulls, and the detector reports only table-named ones from it.
+        # ponytail: a fixed bound on distinct values kept; a spillable
+        # counter if a column's report must cover more.
+        if value in self.failing or len(self.failing) < _FAILING_VALUES_KEPT:
+            self.failing[value] += 1
         # A handful of real examples is what makes the finding actionable —
         # "99.2% of this column is not a COUNTRY" is a number, but
         # "Country located primarily in North America" is the answer.
@@ -1542,6 +1620,12 @@ class _ColumnStats:
             "emptied": self.nulled,
             "checked_idempotent": self.checked_stable,
             "not_idempotent": self.unstable,
+            # D4: which values are disguised nulls, with exact counts; a
+            # candidate to confirm (`confirmed_missing`), never applied here.
+            "disguised_missing": [
+                {"value": c.value, "count": c.count, "hint": c.hint.value if c.hint else None}
+                for c in disguised_missing.candidates(self.failing, self.conforming)
+            ],
         }
 
 
@@ -1858,6 +1942,7 @@ def _normalize_chunk(
     typed_columns: dict[str, str],
     currency_columns: dict[str, str],
     code_columns: dict[str, str],
+    bounds_columns: dict[str, list[str]],
     pool: Any,
     planner: DistinctValuePlanner,
     seeded: Mapping[int, str],
@@ -1887,7 +1972,11 @@ def _normalize_chunk(
     # with a non-null amount would build an INSERT that is wrong for
     # every other row.
     for _, row in pending:
-        for extra in (*currency_columns.values(), *code_columns.values()):
+        for extra in (
+            *currency_columns.values(),
+            *code_columns.values(),
+            *(bound for pair in bounds_columns.values() for bound in pair),
+        ):
             row[extra] = None
 
     job_country = job.get("country")
@@ -1925,6 +2014,8 @@ def _normalize_chunk(
                 typed_as=typed_columns.get(column),
                 companion=currency_columns.get(column),
                 code_column=code_columns.get(column),
+                bounds=bounds_columns.get(column),
+                confirmed_missing=job.get("confirmed_missing", {}).get(table, {}).get(column, ()),
                 country=country,
                 locale=job.get("locale"),
                 signals=signals if provides_country else None,
@@ -2214,6 +2305,7 @@ def _normalize_table(
     typed_columns: dict[str, str] = table_plan.get("typed_columns", {})
     currency_columns: dict[str, str] = table_plan.get("currency_columns", {})
     code_columns: dict[str, str] = table_plan.get("code_columns", {})
+    bounds_columns: dict[str, list[str]] = table_plan.get("bounds_columns", {})
     stats = {column: _ColumnStats() for column in configured_columns}
     # Only this table's own key column matters: a table that does not carry
     # it gets no cross-table country, which is the behaviour without the
@@ -2270,6 +2362,7 @@ def _normalize_table(
                 typed_columns=typed_columns,
                 currency_columns=currency_columns,
                 code_columns=code_columns,
+                bounds_columns=bounds_columns,
                 pool=pool,
                 planner=planner,
                 seeded=seeded,
@@ -2317,6 +2410,19 @@ def _normalize_table(
 
     job["progress"] = progress
     _save_progress(persistence, job_id, job)
+
+
+def _destination_types(
+    source: Any, table: str, job: Mapping[str, Any], engine: str, source_types: dict[str, str]
+) -> dict[str, str]:
+    """The destination's column types exactly as Phase 1 wrote them."""
+    overrides, extras, _ = _destination_plan(
+        {c: t for c, t in job["field_configs"].get(table, {}).items() if t},
+        engine,
+        _key_columns(source, table),
+        typed=job.get("typed_destination_columns", True),
+    )
+    return {**source_types, **overrides, **extras}
 
 
 def _entity_country_context(
@@ -2390,6 +2496,8 @@ def _run_phase2(
         for table in job["tables"]:
             if table in tables_completed:
                 continue
+            source_columns = source.get_columns(table)
+            source_types = {c.name: c.native_type for c in source_columns}
             run = lineage.table_run(
                 persistence,
                 job=job,
@@ -2397,7 +2505,11 @@ def _run_phase2(
                 table=table,
                 source_connection=source_conn,
                 destination_connection=dest_conn,
-                source_columns=[c.name for c in source.get_columns(table)],
+                source_columns=[c.name for c in source_columns],
+                source_types=source_types,
+                destination_types=_destination_types(
+                    source, table, job, dest_conn["engine"], source_types
+                ),
                 semantic_types={
                     c: FieldSemanticType(t)
                     for c, t in job["field_configs"].get(table, {}).items()
