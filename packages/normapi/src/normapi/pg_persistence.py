@@ -882,6 +882,69 @@ class PgPersistence:
                 {"jid": job_id, "data": json.dumps(data)},
             )
 
+    def reset_queue_counts(self, job_id: str, table: str) -> None:
+        """This job's queue counts for one table back to 0: the table starts
+        over (a ClickHouse resume) and its rows are counted again. A row
+        this job touched holds only this job's count (the upsert restarts a
+        count per job), so nothing earlier is lost."""
+        with self._engine.begin() as conn:
+            rows = conn.execute(
+                sa.text(
+                    "SELECT key, context FROM normalization_adjudication_queue "
+                    "WHERE last_job_id = :jid"
+                ),
+                {"jid": job_id},
+            ).all()
+            keys = [key for key, context in rows if json.loads(context).get("table") == table]
+            if keys:
+                conn.execute(
+                    sa.text(
+                        "UPDATE normalization_adjudication_queue SET occurrences = 0 "
+                        "WHERE key = :key"
+                    ),
+                    [{"key": key} for key in keys],
+                )
+
+    def rekey_adjudication(
+        self, old_key: str, *, new_key: str, context: str, context_hash: str
+    ) -> None:
+        """Move one queue row to a new key and copy its verdicts there, in
+        one transaction. The old verdict rows stay (append-only history).
+        Two connection ids for one server (the re-added case itself) land on
+        the same new key: the row already there is kept, the other merged
+        into it (its verdicts copied, its row dropped)."""
+        columns = _VERDICT_COLUMNS.split(", ")
+        with self._engine.begin() as conn:
+            taken = conn.execute(
+                sa.text("SELECT 1 FROM normalization_adjudication_queue WHERE key = :new"),
+                {"new": new_key},
+            ).first()
+            conn.execute(
+                sa.text(
+                    "DELETE FROM normalization_adjudication_queue WHERE key = :old"
+                    if taken
+                    else "UPDATE normalization_adjudication_queue "
+                    "SET key = :new, context = :context, context_hash = :ch WHERE key = :old"
+                ),
+                {"new": new_key, "context": context, "ch": context_hash, "old": old_key},
+            )
+            verdicts = conn.execute(
+                sa.text(
+                    f"SELECT {_VERDICT_COLUMNS} FROM normalization_adjudication_verdicts "
+                    "WHERE key = :old"
+                ),
+                {"old": old_key},
+            ).mappings()
+            copies = [{**row, "key": new_key, "context_hash": context_hash} for row in verdicts]
+            if copies:
+                conn.execute(
+                    sa.text(
+                        f"INSERT INTO normalization_adjudication_verdicts ({_VERDICT_COLUMNS}) "
+                        f"VALUES ({', '.join(':' + c for c in columns)})"
+                    ),
+                    copies,
+                )
+
     def load_verdicts(
         self, *, semantic_type: str, context_hash: str, profile_version: str
     ) -> dict[str, dict[str, Any]]:
