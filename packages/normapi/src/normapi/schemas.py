@@ -266,6 +266,11 @@ class CloneJobCreateRequest(BaseModel):
     # They are written as NULL with an error row keeping the original.
     # Exact values only: nothing is matched loosely, nothing is guessed.
     confirmed_missing: dict[str, dict[str, list[str]]] | None = None
+    # ADR-019: an answer below its type's calibrated threshold (the committed
+    # table, risk-controlled at cost ratio 20) becomes AMBIGUOUS, original
+    # kept, and goes to the review queue. Off by default: every clone reports
+    # those answers in its quality report either way.
+    calibrated_abstention: bool = False
     # Normalize the source database in place instead of cloning it into a
     # second one. Each table is built beside its original under a staging
     # name and swapped in, so peak extra storage is the largest SINGLE
@@ -313,6 +318,7 @@ class CloneJobAmendRequest(BaseModel):
     max_new_null_rate: float | None = Field(default=None, ge=0.0, le=1.0)
     cross_table_entity_key: str | None = None
     confirmed_missing: dict[str, dict[str, list[str]]] | None = None
+    calibrated_abstention: bool | None = None
 
 
 class CloneJobCreateResponse(BaseModel):

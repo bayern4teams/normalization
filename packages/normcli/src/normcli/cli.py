@@ -52,6 +52,7 @@ def _build_parser() -> argparse.ArgumentParser:
     score_parser = gold_sub.add_parser("score", help="Score the real engine on a JSONL/CSV corpus")
     score_parser.add_argument("path", type=Path)
     score_parser.add_argument("--semantic-type", help="for a dirty/clean CSV without a type column")
+    _context_arguments(score_parser)
 
     calibrate_parser = subparsers.add_parser(
         "calibrate",
@@ -65,14 +66,30 @@ def _build_parser() -> argparse.ArgumentParser:
         help="cost of a wrong emitted value over the cost of an abstention (no default: state it)",
     )
     calibrate_parser.add_argument("--semantic-type", help="for a dirty/clean CSV without a type")
+    _context_arguments(calibrate_parser)
     calibrate_parser.add_argument("--out-json", type=Path)
     calibrate_parser.add_argument("--out-md", type=Path)
+    calibrate_parser.add_argument(
+        "--out-table",
+        type=Path,
+        help="per-type risk-controlled thresholds and bins, the data a clone uses (ADR-019)",
+    )
 
     return parser
 
 
+def _context_arguments(parser: argparse.ArgumentParser) -> None:
+    help_ = "context for CSV rows without their own column (never inferred)"
+    parser.add_argument("--country", help=help_)
+    parser.add_argument("--locale", help=help_)
+
+
+def _context(args: argparse.Namespace) -> dict[str, str]:
+    return {k: v for k in ("country", "locale") if (v := getattr(args, k, None))}
+
+
 def _run_calibrate(args: argparse.Namespace) -> int:
-    from normanalysis.calibration import report  # noqa: PLC0415
+    from normanalysis.calibration import _DELTA, calibration_table, report  # noqa: PLC0415
     from normanalysis.gold import default_engine, load_cases, score  # noqa: PLC0415
 
     if not 0 < args.cost_ratio < float("inf"):  # NaN fails too
@@ -82,7 +99,7 @@ def _run_calibrate(args: argparse.Namespace) -> int:
         )
         return 2
     try:
-        cases = load_cases(args.path, semantic_type=args.semantic_type)
+        cases = load_cases(args.path, semantic_type=args.semantic_type, context=_context(args))
     except (OSError, ValueError, TypeError, KeyError) as exc:
         print(f"calibrate: cannot read {args.path}: {exc!r}", file=sys.stderr)
         return 2
@@ -93,6 +110,17 @@ def _run_calibrate(args: argparse.Namespace) -> int:
             args.out_json.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
         if args.out_md:
             args.out_md.write_text(md, encoding="utf-8")
+        if args.out_table:
+            table = {
+                "cost_ratio": args.cost_ratio,
+                "delta": _DELTA,
+                "corpus": str(args.path),
+                "cases": len(cases),
+                "types": calibration_table(
+                    scored.pairs, scored.pair_types, cost_ratio=args.cost_ratio
+                ),
+            }
+            args.out_table.write_text(json.dumps(table, indent=1) + "\n", encoding="utf-8")
     except OSError as exc:
         print(f"calibrate: cannot write the report: {exc!r}", file=sys.stderr)
         return 2
@@ -120,7 +148,7 @@ def _run_gold(args: argparse.Namespace) -> int:
             return 2
         return 0
     try:
-        cases = load_cases(args.path, semantic_type=args.semantic_type)
+        cases = load_cases(args.path, semantic_type=args.semantic_type, context=_context(args))
     except (OSError, ValueError, TypeError, KeyError) as exc:
         print(f"gold score: cannot read {args.path}: {exc!r}", file=sys.stderr)
         return 2

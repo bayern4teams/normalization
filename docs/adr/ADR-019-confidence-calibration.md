@@ -1,8 +1,8 @@
 # ADR-019: Confidence Calibration — Measure First, Threshold From a Stated Cost Ratio
 
 ## Status
-Accepted — 2026-10-06. Implements `docs/improvement-report.md` D2, steps 1, 2 and 4. Step 3
-(conformal prediction) is deferred.
+Accepted — 2026-10-06; amended 2026-10-14. Implements `docs/improvement-report.md` D2, steps 1
+to 4 (step 3 as risk control over the emitted answers, see below).
 
 ## Context
 
@@ -54,13 +54,38 @@ there is no threshold (`None`), never an invented 0.5.
 among the answers it keeps as the threshold rises, and its area (AURC). Tied confidences are kept
 or dropped together, so the input order cannot change the result.
 
+**Guarantee and use (amended 2026-10-14, PART1 D2.2, D2.3, D2.5; user decision: build, opt-in
+per job).** Part 1 lists the guarantee as step 3 and calls the threshold "the abstain-versus-emit
+threshold", so both are built, and neither changes a value unless a job asks:
+
+- *A risk-controlled threshold.* Every normalizer here emits one answer, never a candidate set,
+  so the conformal guarantee that fits is risk control over the emitted answers
+  (Learn-then-Test, Angelopoulos et al. 2021): scanning the stated confidences from the highest
+  down, a threshold `t` passes while the Hoeffding upper bound of the error rate among answers
+  at `>= t` stays at most `alpha = 1 / (1 + R)` (the error rate Chow's rule tolerates for cost
+  ratio R; R = 20 gives 4.76%); fixed-sequence testing keeps the family-wise error at
+  `_DELTA` (5%) with no Bonferroni term. The last passing `t` is the threshold. None passing
+  means "abstain on everything" for that type: on that corpus the stated confidence carries no
+  information.
+- *Per-type tables as versioned data.* `normcli calibrate --out-table` writes, per semantic
+  type, the threshold, the reliability bins and the corpus size, with the cost ratio, delta and
+  the corpus's provenance. The committed table (`normapi/data/calibration.json`) is built from
+  the corpora whose truth does not come from the engine: the seeded D6 corpus, Raha's erroneous
+  cells and BART's injected cells. Unchanged real cells are left out: their truth would be the
+  engine's own answer.
+- *Clones report it, and refuse only when asked.* Every clone reports per column how many of its
+  answers fall below the type's threshold and the expected number wrong (the bins' observed
+  accuracy). With `calibrated_abstention: true` on the job, such an answer becomes AMBIGUOUS,
+  original kept, and goes to the review queue (ADR-018). Default off: on today's corpora several
+  types have no passing threshold, and switching every job to "abstain on everything" for them
+  is the user's call per job, not a default.
+
 ## Alternatives considered
 
-- **Conformal prediction (MAPIE), the report's step 3.** It gives a distribution-free coverage
-  guarantee: emit a candidate set, and abstain when the set has more than one member. Deferred
-  (`ponytail:` in `calibration.py`). It needs an exchangeable calibration set per semantic type,
-  large enough that the per-type quantile is not noise, and a dispatch path that can emit sets.
-  The trigger is a labelled corpus of that size; D6 is the means to build it.
+- **Conformal prediction sets (MAPIE).** A candidate *set* needs several scored candidates per
+  value; the normalizers emit one answer (or refuse, listing candidates without scores), so the
+  set form reduces to "emit or abstain", which the risk-controlled threshold above guarantees
+  directly. MAPIE would add a dependency for the same decision.
 - **Temperature or isotonic scaling of the stated confidences.** Rejected for now. It would
   rewrite every normalizer's output with a learned map before anyone has looked at the
   reliability diagram. Measuring comes first.
