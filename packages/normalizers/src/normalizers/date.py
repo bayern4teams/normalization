@@ -26,7 +26,7 @@ import re
 from datetime import date
 from functools import cache, lru_cache
 from itertools import permutations
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import blake3
 import ciso8601
@@ -53,7 +53,7 @@ from normcore.trace import TraceStep
 from normalizers import text_ops
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Iterable, Sequence
     from datetime import datetime
 
     from normcore.interfaces import ComponentVersion, Explanation, StepSpec, ValidationResult
@@ -608,6 +608,15 @@ class DateNormalizer:
             else "unambiguous format, no order assumption needed"
         )
         confidence = 0.85 if date_order is not None else 0.95
+        evidence = {}
+        if date_order is not None and _stated_date_order(ctx) is None:
+            assert ctx.column_date_order is not None  # the order came from the column
+            assumption = f"resolved using day/month order {date_order}, which the column proves"
+            evidence["column_evidence"] = {
+                "order": date_order,
+                "proving_values": ctx.column_date_order[1],
+                "contradicting_values": 0,
+            }
 
         return _result(
             value,
@@ -619,6 +628,7 @@ class DateNormalizer:
                 "source_locale": ctx.locale,
                 "assumption": assumption,
                 "confidence": confidence,
+                **evidence,
             },
             status=NormalizationStatus.PARSED,
             confidence=confidence,
@@ -773,7 +783,7 @@ def _country_date_order(country: str) -> str | None:
     return orders.pop() if len(orders) == 1 else None
 
 
-def _infer_date_order(ctx: NormalizationContext) -> str | None:
+def _stated_date_order(ctx: NormalizationContext) -> str | None:
     """The day/month order the context states, from CLDR (it used to be a
     hand table `{"US"}`, while CLDR has M/d/y locales on four continents). A
     locale with a region names one convention; a bare language (`en`: en-US
@@ -783,6 +793,42 @@ def _infer_date_order(ctx: NormalizationContext) -> str | None:
     if ctx.locale and "-" in ctx.locale:
         return _cldr_date_order(ctx.locale.replace("-", "_"))
     return None
+
+
+def _infer_date_order(ctx: NormalizationContext) -> str | None:
+    """The stated order, else the one the column's own values prove. A column
+    contradicting the stated order states nothing, and neither does the context."""
+    stated = _stated_date_order(ctx)
+    if ctx.column_date_order is None:
+        return stated
+    proven = ctx.column_date_order[0]
+    return proven if stated in (None, proven) else None
+
+
+# A column mixing both orders evenly shows k agreeing proofs and no other with
+# probability 2 * 0.5**k; below ADR-019's delta the column states its order.
+_COLUMN_EVIDENCE_DELTA = 0.05
+
+
+def column_date_evidence(values: Iterable[object]) -> dict[str, Any]:
+    """How many distinct numeric d/m/y values in a column can only be day first
+    (`13/1/14`) or only month first (`1/13/14`), and the order they prove:
+    every proof agreeing, and enough of them (ADR-008 amendment 2026-10-17)."""
+    proofs: dict[str, set[str]] = {"DMY": set(), "MDY": set()}
+    for value in values:
+        match = isinstance(value, str) and _NUMERIC_DMY_RE.match(value.strip())
+        if match:
+            first, second = int(match[1]), int(match[2])
+            if 12 < first <= 31 and 1 <= second <= 12:
+                proofs["DMY"].add(match[0])
+            elif 12 < second <= 31 and 1 <= first <= 12:
+                proofs["MDY"].add(match[0])
+    dmy, mdy = len(proofs["DMY"]), len(proofs["MDY"])
+    proven = max(dmy, mdy)
+    order = None
+    if min(dmy, mdy) == 0 and 2 * 0.5**proven < _COLUMN_EVIDENCE_DELTA:
+        order = "DMY" if dmy else "MDY"
+    return {"DMY": dmy, "MDY": mdy, "order": order}
 
 
 def _result(

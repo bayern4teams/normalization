@@ -86,3 +86,41 @@ defaults.
 - A source system's date locale becomes reliably determinable at the
   connector level (e.g. explicit column metadata) — wire that as a first-
   class `context.locale` input rather than a per-field manual override.
+
+## Amendment 2026-10-17: a column's own values can state its day/month order
+
+**Context.** Two people labelled real refused dates independently (PART1 D6.3,
+REPORT §11.12). Each read a whole column one way: in Raha `rayyan`
+`article_jcreated_at`, 38 distinct values can only be month first (`1/13/14`),
+none can only be day first, and 320 cells were refused as AMBIGUOUS. A column
+written by one system states its convention through the values that leave no
+choice.
+
+**Decision.**
+- A clone reads each DATE/DATETIME column once before writing it and counts the
+  distinct numeric `d/m/y` values that prove an order (a part above 12, the other
+  a valid month): `DMY` proofs and `MDY` proofs (`normalizers.date.column_date_evidence`).
+- The column states an order only when every proof agrees and there are enough
+  of them that a column mixing both orders evenly would show this little
+  disagreement less than 5% of the time (`2 * 0.5**k < 0.05`, so at least 6
+  proofs: the same 0.05 as ADR-019's delta). Fewer proofs, or any proof of the
+  other order, states nothing and the values stay AMBIGUOUS.
+- The order reaches the normalizer explicitly, as `context.column_date_order`
+  (order, proofs), never inferred inside it. A stated country or locale order
+  comes first; when the column's own values contradict it, neither is used and
+  the values stay AMBIGUOUS (a stated `DMY` would otherwise misread a column
+  that proves `MDY`).
+- Every value read this way records the evidence in `structured.column_evidence`
+  (`order`, `proving_values`, `contradicting_values` = 0), and the job keeps the
+  counts per column under `column_evidence`, computed once, so a resume reads
+  the same order.
+- A person's verdict (ADR-018) wins: the column order is derived from the data,
+  not part of the question, so it is left out of the verdict key, and a context
+  without one hashes exactly as before the field existed (no stored verdict or
+  cache key moves).
+- On by default: no new guess is made. The order is proven by the column, and a
+  column that proves nothing behaves exactly as before.
+
+**Limits.** The model is the normalizer's own: the year is the last part. Proofs
+are counted over distinct values, not cells, so one repeated value is one proof.
+The pre-pass is one extra read of the date columns of a table.

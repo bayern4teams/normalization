@@ -43,12 +43,22 @@ CLEAN_STATUSES = frozenset(
 )
 
 
+def _question(context: NormalizationContext) -> NormalizationContext:
+    """The context a value is asked and decided in. The order a column's
+    values prove is derived from the data, not part of the question: a verdict
+    stays found when that evidence appears, and wins over it."""
+    if context.column_date_order is None:
+        return context
+    return context.model_copy(update={"column_date_order": None})
+
+
 def verdict_key(
     semantic_type: FieldSemanticType,
     original: str,
     context: NormalizationContext,
     profile_version: str,
 ) -> str:
+    context = _question(context)
     payload = json.dumps(
         {
             "semantic_type": semantic_type.value,
@@ -155,6 +165,7 @@ class Adjudication:
         context: NormalizationContext,
     ) -> None:
         """Only AMBIGUOUS is queued (Q14): INVALID is not a question."""
+        context = _question(context)
         for value, result in by_value.items():
             if result.normalization_status is not NormalizationStatus.AMBIGUOUS:
                 continue
@@ -194,6 +205,7 @@ class Adjudication:
     ) -> dict[str, dict[str, Any]]:
         # Per job, not per chunk: a verdict given mid-job applies from the
         # next run, which is when the queue promised it would.
+        context = _question(context)
         cache_key = f"{semantic_type.value}:{context.context_hash}"
         if cache_key not in self._verdicts:
             self._verdicts[cache_key] = self._persistence.load_verdicts(
