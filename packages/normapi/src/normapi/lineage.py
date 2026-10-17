@@ -38,6 +38,7 @@ logger = logging.getLogger(__name__)
 _SPEC_VERSION = "2-0-2"
 _SCHEMA_URL = f"https://openlineage.io/spec/{_SPEC_VERSION}/OpenLineage.json#/$defs/RunEvent"
 _COLUMN_LINEAGE_URL = "https://openlineage.io/spec/facets/1-2-0/ColumnLineageDatasetFacet.json"
+_SCHEMA_FACET_URL = "https://openlineage.io/spec/facets/1-2-0/SchemaDatasetFacet.json"
 _PRODUCER = "https://github.com/bayern4teams/normalization"
 _JOB_NAMESPACE = "normalization"
 # ponytail: a fixed 5 s per POST, so a hanging collector delays a table by
@@ -62,7 +63,7 @@ class TableRun:
     persistence: PgPersistence
     job_id: str
     table: str
-    source: dict[str, str]
+    source: dict[str, Any]
     destination: dict[str, Any]
     run_id: str = field(default_factory=lambda: str(uuid.uuid4()))
 
@@ -100,12 +101,16 @@ def table_run(
     destination_connection: Mapping[str, Any],
     source_columns: list[str],
     semantic_types: Mapping[str, FieldSemanticType],
+    source_types: Mapping[str, str] | None = None,
+    destination_types: Mapping[str, str] | None = None,
     registry: NormalizerRegistry,
     profile: NormalizationProfile,
 ) -> TableRun:
     """A new run (a fresh `runId`: a resumed table is a new attempt) with its
     column lineage computed from the job's recorded plan, never from rows."""
-    source = _dataset(source_connection, job["source_database"], job.get("source_schema"), table)
+    source_ref = _dataset(
+        source_connection, job["source_database"], job.get("source_schema"), table
+    )
     destination: dict[str, Any] = _dataset(
         destination_connection, job["destination_database"], None, table
     )
@@ -125,7 +130,9 @@ def table_run(
             # Not configured: copied as is, and nothing is claimed about it.
             else {"type": "DIRECT", "subtype": "IDENTITY"}
         )
-        return {"inputFields": [{**source, "field": column, "transformations": [transformation]}]}
+        return {
+            "inputFields": [{**source_ref, "field": column, "transformations": [transformation]}]
+        }
 
     fields = {column: entry(column) for column in source_columns}
     plan = job.get("destination_plan", {}).get(table, {})
@@ -133,14 +140,39 @@ def table_run(
         for base, companion in plan.get(key, {}).items():
             if base in fields:  # never claim a source column the source lacks
                 fields[companion] = entry(base)
+    for base, bounds in plan.get("bounds_columns", {}).items():
+        if base in fields:
+            for bound in bounds:
+                fields[bound] = entry(base)
+    # Marquez builds a dataset's fields from its `schema` facet, and its
+    # column-lineage graph links only fields it knows: without this facet the
+    # lineage was stored and the graph stayed empty (PART1 D3.3). Every field
+    # carries its type: Marquez stores an untyped field once per event (NULL
+    # never equals NULL), and then cannot resolve the field's node.
+    source = {
+        **source_ref,
+        "facets": {"schema": _schema(source_columns, source_types or {})},
+    }
     destination["facets"] = {
+        "schema": _schema(list(fields), destination_types or source_types or {}),
         "columnLineage": {
             "_producer": _PRODUCER,
             "_schemaURL": _COLUMN_LINEAGE_URL,
             "fields": fields,
-        }
+        },
     }
     return TableRun(persistence, job_id, table, source, destination)
+
+
+def _schema(columns: list[str], types: Mapping[str, str]) -> dict[str, Any]:
+    return {
+        "_producer": _PRODUCER,
+        "_schemaURL": _SCHEMA_FACET_URL,
+        "fields": [
+            {"name": column, **({"type": types[column]} if column in types else {})}
+            for column in columns
+        ],
+    }
 
 
 def complete_open_runs(persistence: PgPersistence, job_id: str, completed: set[str]) -> None:
