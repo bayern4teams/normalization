@@ -43,3 +43,18 @@ def test_two_numbers_of_one_country_code_keep_their_regions(env: _Env) -> None:
     )
     assert [r["p_region"] for r in rows] == ["US", "CA", None]  # the last: no region stated
     assert all(r["p_code"].startswith("+1") for r in rows[:2])
+
+
+def test_an_invalid_number_gets_no_companions(env: _Env) -> None:
+    """Found live (D8-D12 run): under country NO, `334774x601` is no valid
+    number, yet its comparison key went into `p_code` as
+    tel:+47-334774;ext=601 and the region as NO. The cell keeps the original;
+    a companion is written only for an answer."""
+    plan = {TABLE: {"code_columns": {"p": "p_code"}, "region_columns": {"p": "p_region"}}}
+    _, rows, _ = env.run(
+        [_rows([{"p": "334774x601"}, {"p": _example("NO")}])],
+        {"p": "PHONE"},
+        job_extra={"destination_plan": plan, "country": "NO"},
+    )
+    assert (rows[0]["p_code"], rows[0]["p_region"]) == (None, None)
+    assert rows[1]["p_region"] == "NO"

@@ -542,13 +542,16 @@ _CURRENCY_SUFFIX = "_currency"
 _CODE_SUFFIX = "_code"
 # ADR-020: typed first/last day of a DATE or DATETIME value's stated period.
 _BOUND_SUFFIXES = ("__from", "__to")
-# Only an answer has bounds: AMBIGUOUS or INVALID text states no period.
-_BOUNDED_STATUSES = frozenset(
+# What a companion column may describe: an answer, including an applied
+# verdict a person must confirm (NEEDS_REVIEW, ADR-018). AMBIGUOUS or INVALID
+# text states no period, no currency, no region.
+_ANSWER_STATUSES = frozenset(
     {
         NormalizationStatus.NORMALIZED,
         NormalizationStatus.PARSED,
         NormalizationStatus.REPAIRED,
         NormalizationStatus.UNCHANGED,
+        NormalizationStatus.NEEDS_REVIEW,
     }
 )
 _BOUNDED_TYPES = frozenset({FieldSemanticType.DATE.value, FieldSemanticType.DATETIME.value})
@@ -1545,13 +1548,17 @@ def _apply_value(
     row[column] = result.display
     errors = list(result.errors)
 
+    # Companions describe an answer. An INVALID or AMBIGUOUS cell keeps its
+    # original, and its comparison key (an E.164 for a number libphonenumber
+    # calls invalid) is no fact about it: NULL beside it (found live, D8-D12).
+    answered = result.normalization_status in _ANSWER_STATUSES
     if companion is not None:
-        row[companion] = result.structured.get("currency")
+        row[companion] = result.structured.get("currency") if answered else None
     if code_column is not None:
-        row[code_column] = result.comparison
+        row[code_column] = result.comparison if answered else None
     if region_column is not None:
-        row[region_column] = result.structured.get("region") if result.comparison else None
-    if bounds is not None and result.normalization_status in _BOUNDED_STATUSES:
+        row[region_column] = result.structured.get("region") if answered else None
+    if bounds is not None and answered:
         for column_name, value in zip(
             bounds, storage_types.date_bounds(result.structured), strict=True
         ):
