@@ -1446,7 +1446,7 @@ def _apply_value(
             bounds, storage_types.date_bounds(result.structured), strict=True
         ):
             row[column_name], bound_error = storage_types.coerce_bound(value, engine)
-            if bound_error is not None:
+            if bound_error is not None and bound_error not in errors:
                 errors.append(bound_error)
 
     # A non-empty source value the normalizer read as MISSING lands as
