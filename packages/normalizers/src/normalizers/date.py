@@ -31,7 +31,7 @@ from typing import TYPE_CHECKING
 import blake3
 import ciso8601
 import pyarrow as pa
-from babel import Locale, UnknownLocaleError
+from babel import Locale, UnknownLocaleError, localedata
 from babel.languages import get_official_languages
 from dateparser.date import DateDataParser
 from dateparser.languages.loader import default_loader
@@ -320,6 +320,7 @@ def _parse_partial(candidate: str, date_order: str | None) -> tuple[str, str] | 
     parsed, period = data.date_obj, data.period
     if (
         parsed is None
+        or not _follows_order(candidate, parsed, date_order)
         or _letter_beside_a_digit_unread(candidate, data.locale)
         or period not in ("year", "month", "day")
         or not _year_is_supported(parsed.year, candidate)
@@ -342,7 +343,9 @@ def _also_a_day_and_month(text: str) -> bool:
     is not (no day 0, no month 0), so it stays January 2000."""
     if _FOUR_DIGIT_RE.search(text):
         return False
-    numbers = [int(n) for n in _DIGITS_RE.findall(text)]
+    # The time is no day or month: `11/30 10:30 p.m.` is 30 November or
+    # November 2030, and came back as 2030-11.
+    numbers = [int(n) for n in _DIGITS_RE.findall(_TIME_OF_DAY_RE.sub(" ", text))]
     if len(numbers) != 2:  # a day and a month
         return False
     for day, month in (numbers, numbers[::-1]):
@@ -589,6 +592,7 @@ class DateNormalizer:
 
         if (
             parsed is None
+            or not _follows_order(cleaned, parsed, date_order)
             or not _year_is_supported(parsed.year, cleaned)
             or _stated_precision(cleaned, parsed, "day", data.locale) != "day"
         ):
@@ -718,6 +722,18 @@ def _try_iso_fast_path(value: str, *, keep_time: bool = False) -> tuple[str, str
     return parsed.date().isoformat(), "day"
 
 
+def _follows_order(value: str, parsed: datetime, date_order: str | None) -> bool:
+    """A numeric d/m/y value parsed under a stated order reads in that order.
+    dateparser falls back to others: under DMY `1/13/01` came back as
+    2013-01-01 (13 the year, 01 the month), an order nothing stated."""
+    match = _NUMERIC_DMY_RE.match(value)
+    if match is None or date_order not in ("DMY", "MDY"):
+        return True
+    first, second, _ = (int(g) for g in match.groups())
+    day, month = (first, second) if date_order == "DMY" else (second, first)
+    return (parsed.day, parsed.month) == (day, month)
+
+
 def _is_ambiguous_numeric_date(value: str) -> bool:
     match = _NUMERIC_DMY_RE.match(value)
     if not match:
@@ -748,8 +764,11 @@ def _country_date_order(country: str) -> str | None:
     """The order every official language of `country` agrees on in CLDR, or
     None: Canada's two are year-first, so neither orders `03/04/2024`."""
     orders = {
-        _cldr_date_order(f"{language}_{country}")
+        _cldr_date_order(locale)
         for language in get_official_languages(country, de_facto=True)
+        # A language Babel has no locale for (`no_NO`; nb_NO and nn_NO exist)
+        # states nothing; it is not a disagreeing reading.
+        if localedata.exists(locale := f"{language}_{country}")
     }
     return orders.pop() if len(orders) == 1 else None
 

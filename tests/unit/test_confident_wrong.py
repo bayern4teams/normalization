@@ -374,3 +374,27 @@ class TestNumberLocaleFromCldr:
     def test_unknown_locale_never_raises(self) -> None:
         _norm(FieldSemanticType.NUMERIC, "1,5", locale="xx-YY")
         _norm(FieldSemanticType.NUMERIC, "1,5", country="ZZ")
+
+
+class TestHeldOutFindings:
+    """Found by this branch's held-out run on real distinct values (main vs
+    branch): each a confident answer the input does not state."""
+
+    def test_a_language_babel_lacks_is_not_a_disagreement(self) -> None:
+        # Norway's official languages are no, nb, nn; Babel has nb_NO and nn_NO
+        assert _norm(FieldSemanticType.DATE, "1/10/01", country="NO").display == "2001-10-01"
+
+    @pytest.mark.parametrize("value", ["1/13/01", "10/15/13"])
+    def test_a_value_against_the_stated_order_is_not_read_another_way(self, value: str) -> None:
+        # D/M/Y in Norway: month 13 or 15 is no month; main read 1/13/01 as 2013-01-01
+        r = _norm(FieldSemanticType.DATE, value, country="NO")
+        assert r.normalization_status is NormalizationStatus.INVALID
+
+    def test_a_time_is_no_day_or_month(self) -> None:
+        # The branch's first version read it as November 2030. With no order
+        # stated it is 30 November or November 2030; D/M/Y (Norway) has no
+        # month 30, so there it is no date at all.
+        r = _norm(FieldSemanticType.DATETIME, "11/30 10:30 p.m.")
+        assert r.normalization_status is NormalizationStatus.AMBIGUOUS
+        r = _norm(FieldSemanticType.DATETIME, "11/30 10:30 p.m.", country="NO")
+        assert r.normalization_status is NormalizationStatus.INVALID
