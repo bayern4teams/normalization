@@ -293,6 +293,7 @@ class TestCodeCompanionColumns:
             "CountryCode_code": "TEXT",
             "lang_code": "TEXT",
             "tel_code": "TEXT",
+            "tel_region": "TEXT",  # PART1 D10.2: E.164 is stored with its region
         }
 
     def test_currency_earns_none_because_its_display_is_already_the_code(self) -> None:

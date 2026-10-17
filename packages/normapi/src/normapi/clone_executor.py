@@ -552,6 +552,9 @@ _BOUNDED_STATUSES = frozenset(
     }
 )
 _BOUNDED_TYPES = frozenset({FieldSemanticType.DATE.value, FieldSemanticType.DATETIME.value})
+# D10: E.164 alone does not re-render or re-parse a number (+1 is US, CA and
+# 22 more); libphonenumber's region is stored beside it.
+_REGION_SUFFIX = "_region"
 _CODE_TYPES = frozenset(
     {
         FieldSemanticType.COUNTRY.value,
@@ -702,6 +705,8 @@ def _destination_plan(
             extras[f"{column}{_CURRENCY_SUFFIX}"] = text_type
         if semantic_type in _CODE_TYPES:
             extras[f"{column}{_CODE_SUFFIX}"] = text_type
+        if semantic_type == FieldSemanticType.PHONE.value:
+            extras[f"{column}{_REGION_SUFFIX}"] = text_type
         if not typed or column in key_columns:
             continue
         bound_type = storage_types.bound_type(engine)
@@ -775,6 +780,11 @@ def plan_one_table(
             column: f"{column}{_CODE_SUFFIX}"
             for column, st in semantic_types.items()
             if st in _CODE_TYPES
+        },
+        "region_columns": {
+            column: f"{column}{_REGION_SUFFIX}"
+            for column, st in semantic_types.items()
+            if st == FieldSemanticType.PHONE.value
         },
         "bounds_columns": {
             column: [f"{column}{suffix}" for suffix in _BOUND_SUFFIXES]
@@ -1008,6 +1018,7 @@ def verify_and_create_schema(persistence: PgPersistence, job_id: str) -> dict[st
                     "currency_columns": plan["currency_columns"],
                     "code_columns": plan["code_columns"],
                     "bounds_columns": plan["bounds_columns"],
+                    "region_columns": plan["region_columns"],
                 }
         finally:
             source.close()
@@ -1246,6 +1257,7 @@ def _apply_column(
     code_column: str | None,
     country: str | None,
     bounds: list[str] | None = None,
+    region_column: str | None = None,
     confirmed_missing: Collection[str] = (),
     calibrated_abstention: bool = False,
     locale: str | None,
@@ -1369,6 +1381,7 @@ def _apply_column(
             companion=companion,
             code_column=code_column,
             bounds=bounds,
+            region_column=region_column,
             engine=engine,
         )
         # After the cast, not before it: a value that normalized fine and
@@ -1524,6 +1537,7 @@ def _apply_value(
     code_column: str | None,
     engine: str,
     bounds: list[str] | None = None,
+    region_column: str | None = None,
 ) -> list[str]:
     """One row, one column: write every projection the destination has a
     home for, and hand back whatever needs reporting."""
@@ -1535,6 +1549,8 @@ def _apply_value(
         row[companion] = result.structured.get("currency")
     if code_column is not None:
         row[code_column] = result.comparison
+    if region_column is not None:
+        row[region_column] = result.structured.get("region") if result.comparison else None
     if bounds is not None and result.normalization_status in _BOUNDED_STATUSES:
         for column_name, value in zip(
             bounds, storage_types.date_bounds(result.structured), strict=True
@@ -2018,6 +2034,7 @@ def _normalize_chunk(
     currency_columns: dict[str, str],
     code_columns: dict[str, str],
     bounds_columns: dict[str, list[str]],
+    region_columns: dict[str, str],
     pool: Any,
     planner: DistinctValuePlanner,
     seeded: Mapping[int, str],
@@ -2051,6 +2068,7 @@ def _normalize_chunk(
             *currency_columns.values(),
             *code_columns.values(),
             *(bound for pair in bounds_columns.values() for bound in pair),
+            *region_columns.values(),
         ):
             row[extra] = None
 
@@ -2090,6 +2108,7 @@ def _normalize_chunk(
                 companion=currency_columns.get(column),
                 code_column=code_columns.get(column),
                 bounds=bounds_columns.get(column),
+                region_column=region_columns.get(column),
                 confirmed_missing=job.get("confirmed_missing", {}).get(table, {}).get(column, ()),
                 calibrated_abstention=bool(job.get("calibrated_abstention")),
                 country=country,
@@ -2382,6 +2401,7 @@ def _normalize_table(
     currency_columns: dict[str, str] = table_plan.get("currency_columns", {})
     code_columns: dict[str, str] = table_plan.get("code_columns", {})
     bounds_columns: dict[str, list[str]] = table_plan.get("bounds_columns", {})
+    region_columns: dict[str, str] = table_plan.get("region_columns", {})
     stats = {column: _ColumnStats() for column in configured_columns}
     # Only this table's own key column matters: a table that does not carry
     # it gets no cross-table country, which is the behaviour without the
@@ -2439,6 +2459,7 @@ def _normalize_table(
                 currency_columns=currency_columns,
                 code_columns=code_columns,
                 bounds_columns=bounds_columns,
+                region_columns=region_columns,
                 pool=pool,
                 planner=planner,
                 seeded=seeded,

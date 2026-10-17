@@ -136,7 +136,7 @@ def table_run(
 
     fields = {column: entry(column) for column in source_columns}
     plan = job.get("destination_plan", {}).get(table, {})
-    for key in ("currency_columns", "code_columns"):
+    for key in ("currency_columns", "code_columns", "region_columns"):
         for base, companion in plan.get(key, {}).items():
             if base in fields:  # never claim a source column the source lacks
                 fields[companion] = entry(base)
