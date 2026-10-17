@@ -26,12 +26,15 @@ from __future__ import annotations
 
 import dataclasses
 import datetime as dt
+import functools
+import json
 import multiprocessing
 import os
 import threading
 import uuid
 from collections import Counter
 from concurrent.futures import ProcessPoolExecutor
+from importlib import resources
 from typing import TYPE_CHECKING, Any
 
 from normalizers.postcode_validation import country_from_postcode_format
@@ -511,6 +514,7 @@ def create_clone_job(
         "locale": request.get("locale"),
         "max_new_null_rate": request.get("max_new_null_rate"),
         "confirmed_missing": request.get("confirmed_missing") or {},
+        "calibrated_abstention": bool(request.get("calibrated_abstention")),
         "cross_table_entity_key": request.get("cross_table_entity_key"),
         "in_place": in_place,
         "progress": {
@@ -543,16 +547,22 @@ _CURRENCY_SUFFIX = "_currency"
 _CODE_SUFFIX = "_code"
 # ADR-020: typed first/last day of a DATE or DATETIME value's stated period.
 _BOUND_SUFFIXES = ("__from", "__to")
-# Only an answer has bounds: AMBIGUOUS or INVALID text states no period.
-_BOUNDED_STATUSES = frozenset(
+# What a companion column may describe: an answer, including an applied
+# verdict a person must confirm (NEEDS_REVIEW, ADR-018). AMBIGUOUS or INVALID
+# text states no period, no currency, no region.
+_ANSWER_STATUSES = frozenset(
     {
         NormalizationStatus.NORMALIZED,
         NormalizationStatus.PARSED,
         NormalizationStatus.REPAIRED,
         NormalizationStatus.UNCHANGED,
+        NormalizationStatus.NEEDS_REVIEW,
     }
 )
 _BOUNDED_TYPES = frozenset({FieldSemanticType.DATE.value, FieldSemanticType.DATETIME.value})
+# D10: E.164 alone does not re-render or re-parse a number (+1 is US, CA and
+# 22 more); libphonenumber's region is stored beside it.
+_REGION_SUFFIX = "_region"
 _CODE_TYPES = frozenset(
     {
         FieldSemanticType.COUNTRY.value,
@@ -703,6 +713,8 @@ def _destination_plan(
             extras[f"{column}{_CURRENCY_SUFFIX}"] = text_type
         if semantic_type in _CODE_TYPES:
             extras[f"{column}{_CODE_SUFFIX}"] = text_type
+        if semantic_type == FieldSemanticType.PHONE.value:
+            extras[f"{column}{_REGION_SUFFIX}"] = text_type
         if not typed or column in key_columns:
             continue
         bound_type = storage_types.bound_type(engine)
@@ -776,6 +788,11 @@ def plan_one_table(
             column: f"{column}{_CODE_SUFFIX}"
             for column, st in semantic_types.items()
             if st in _CODE_TYPES
+        },
+        "region_columns": {
+            column: f"{column}{_REGION_SUFFIX}"
+            for column, st in semantic_types.items()
+            if st == FieldSemanticType.PHONE.value
         },
         "bounds_columns": {
             column: [f"{column}{suffix}" for suffix in _BOUND_SUFFIXES]
@@ -919,6 +936,7 @@ _AMENDABLE_FIELDS = (
     "max_new_null_rate",
     "cross_table_entity_key",
     "confirmed_missing",
+    "calibrated_abstention",
 )
 
 
@@ -1008,6 +1026,7 @@ def verify_and_create_schema(persistence: PgPersistence, job_id: str) -> dict[st
                     "currency_columns": plan["currency_columns"],
                     "code_columns": plan["code_columns"],
                     "bounds_columns": plan["bounds_columns"],
+                    "region_columns": plan["region_columns"],
                 }
         finally:
             source.close()
@@ -1246,7 +1265,9 @@ def _apply_column(
     code_column: str | None,
     country: str | None,
     bounds: list[str] | None = None,
+    region_column: str | None = None,
     confirmed_missing: Collection[str] = (),
+    calibrated_abstention: bool = False,
     locale: str | None,
     signals: dict[int, tuple[str, str]] | None,
     country_is_derived: bool,
@@ -1322,6 +1343,7 @@ def _apply_column(
             country=country,
         )
     _check_idempotent(by_value, pool=pool, planner=planner, ctx=ctx, stats=stats)
+    below = _calibrate(by_value, semantic_type, stats, abstain=calibrated_abstention)
     if adjudication is not None:
         ambiguous = Counter(
             row[column]
@@ -1342,6 +1364,8 @@ def _apply_column(
         result = by_value[original]
         if result.normalization_status is NormalizationStatus.INVALID:
             stats.record_invalid(original)
+        if original in below:
+            stats.below_threshold += 1
         # An empty string arriving as NULL is the same absence in a better
         # representation, not a value normalization destroyed — counting it
         # would inflate every text column's rate and could fail a job on
@@ -1364,6 +1388,7 @@ def _apply_column(
             companion=companion,
             code_column=code_column,
             bounds=bounds,
+            region_column=region_column,
             engine=engine,
         )
         # After the cast, not before it: a value that normalized fine and
@@ -1436,6 +1461,60 @@ def _restore_undecodable(
         )
 
 
+@functools.cache
+def _calibration_table() -> dict[str, dict[str, Any]]:
+    """The committed per-type table (ADR-019, `normcli calibrate --out-table`): {} if absent."""
+    path = resources.files("normapi") / "data" / "calibration.json"
+    if not path.is_file():
+        return {}
+    types: dict[str, dict[str, Any]] = json.loads(path.read_text(encoding="utf-8"))["types"]
+    return types
+
+
+def _calibrate(
+    by_value: dict[str, NormalizedValue],
+    semantic_type: FieldSemanticType,
+    stats: _ColumnStats,
+    *,
+    abstain: bool,
+) -> set[str]:
+    """The answers below the type's risk-controlled threshold (what the report counts). Opted
+    in, each becomes AMBIGUOUS with the original kept, so it goes to the review queue; otherwise
+    nothing changes (ADR-019)."""
+    entry = _calibration_table().get(semantic_type.value)
+    if entry is None:
+        return set()
+    stats.calibration = {k: entry[k] for k in ("threshold", "abstain_on_everything", "n")}
+    threshold = entry["threshold"]
+    below: set[str] = set()
+    for value, result in by_value.items():
+        conf = result.confidence
+        if (
+            conf is None
+            or result.original_kind is not None
+            or result.normalization_status.value not in _CONFORMING
+            or (threshold is not None and conf >= threshold)
+        ):
+            continue
+        below.add(value)
+        if abstain:
+            by_value[value] = result.model_copy(
+                update={
+                    "display": result.original,
+                    "comparison": None,
+                    "search": None,
+                    "normalization_status": NormalizationStatus.AMBIGUOUS,
+                    "validation_status": "AMBIGUOUS",
+                    "errors": [
+                        *result.errors,
+                        f"stated confidence {conf} is below the calibrated threshold for "
+                        f"{semantic_type.value}; kept for review",
+                    ],
+                }
+            )
+    return below
+
+
 def _confirmed_missing(value: str, ctx: NormalizationContext) -> NormalizedValue:
     return NormalizedValue(
         original=value,
@@ -1461,6 +1540,7 @@ def _apply_value(
     code_column: str | None,
     engine: str,
     bounds: list[str] | None = None,
+    region_column: str | None = None,
 ) -> list[str]:
     """One row, one column: write every projection the destination has a
     home for, and hand back whatever needs reporting."""
@@ -1468,11 +1548,17 @@ def _apply_value(
     row[column] = result.display
     errors = list(result.errors)
 
+    # Companions describe an answer. An INVALID or AMBIGUOUS cell keeps its
+    # original, and its comparison key (an E.164 for a number libphonenumber
+    # calls invalid) is no fact about it: NULL beside it (found live, D8-D12).
+    answered = result.normalization_status in _ANSWER_STATUSES
     if companion is not None:
-        row[companion] = result.structured.get("currency")
+        row[companion] = result.structured.get("currency") if answered else None
     if code_column is not None:
-        row[code_column] = result.comparison
-    if bounds is not None and result.normalization_status in _BOUNDED_STATUSES:
+        row[code_column] = result.comparison if answered else None
+    if region_column is not None:
+        row[region_column] = result.structured.get("region") if answered else None
+    if bounds is not None and answered:
         for column_name, value in zip(
             bounds, storage_types.date_bounds(result.structured), strict=True
         ):
@@ -1582,6 +1668,8 @@ class _ColumnStats:
     samples: list[str] = dataclasses.field(default_factory=list)
     failing: Counter[str] = dataclasses.field(default_factory=Counter)
     conforming: int = 0
+    below_threshold: int = 0
+    calibration: dict[str, Any] | None = None
     unstable_samples: list[str] = dataclasses.field(default_factory=list)
 
     def record_invalid(self, value: str) -> None:
@@ -1620,6 +1708,15 @@ class _ColumnStats:
             "emptied": self.nulled,
             "checked_idempotent": self.checked_stable,
             "not_idempotent": self.unstable,
+            # ADR-019: the type's calibrated threshold and how many answers fall
+            # below it. No "expected wrong": the bins come from erroneous cells,
+            # and their accuracy says nothing about an ordinary column.
+            "calibration": None
+            if self.calibration is None
+            else {
+                **self.calibration,
+                "below_threshold": self.below_threshold,
+            },
             # D4: which values are disguised nulls, with exact counts; a
             # candidate to confirm (`confirmed_missing`), never applied here.
             "disguised_missing": [
@@ -1943,6 +2040,7 @@ def _normalize_chunk(
     currency_columns: dict[str, str],
     code_columns: dict[str, str],
     bounds_columns: dict[str, list[str]],
+    region_columns: dict[str, str],
     pool: Any,
     planner: DistinctValuePlanner,
     seeded: Mapping[int, str],
@@ -1976,6 +2074,7 @@ def _normalize_chunk(
             *currency_columns.values(),
             *code_columns.values(),
             *(bound for pair in bounds_columns.values() for bound in pair),
+            *region_columns.values(),
         ):
             row[extra] = None
 
@@ -2015,7 +2114,9 @@ def _normalize_chunk(
                 companion=currency_columns.get(column),
                 code_column=code_columns.get(column),
                 bounds=bounds_columns.get(column),
+                region_column=region_columns.get(column),
                 confirmed_missing=job.get("confirmed_missing", {}).get(table, {}).get(column, ()),
+                calibrated_abstention=bool(job.get("calibrated_abstention")),
                 country=country,
                 locale=job.get("locale"),
                 signals=signals if provides_country else None,
@@ -2306,6 +2407,7 @@ def _normalize_table(
     currency_columns: dict[str, str] = table_plan.get("currency_columns", {})
     code_columns: dict[str, str] = table_plan.get("code_columns", {})
     bounds_columns: dict[str, list[str]] = table_plan.get("bounds_columns", {})
+    region_columns: dict[str, str] = table_plan.get("region_columns", {})
     stats = {column: _ColumnStats() for column in configured_columns}
     # Only this table's own key column matters: a table that does not carry
     # it gets no cross-table country, which is the behaviour without the
@@ -2363,6 +2465,7 @@ def _normalize_table(
                 currency_columns=currency_columns,
                 code_columns=code_columns,
                 bounds_columns=bounds_columns,
+                region_columns=region_columns,
                 pool=pool,
                 planner=planner,
                 seeded=seeded,

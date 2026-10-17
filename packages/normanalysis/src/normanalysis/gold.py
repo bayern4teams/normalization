@@ -27,7 +27,7 @@ import random
 import re
 import string
 from collections import Counter, defaultdict
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field, replace
 from datetime import date
 from decimal import Decimal
@@ -171,13 +171,21 @@ def dump_cases(cases: Iterable[GoldCase]) -> str:
     )
 
 
-def load_cases(path: str | Path, semantic_type: str | None = None) -> list[GoldCase]:
+_CONTEXT_COLUMNS = ("country", "locale")
+
+
+def load_cases(
+    path: str | Path,
+    semantic_type: str | None = None,
+    context: Mapping[str, str] | None = None,
+) -> list[GoldCase]:
     """JSONL (the `dump_cases` schema) or a dirty/clean CSV (`.csv`).
 
     CSV: columns `dirty` and `clean`, plus the semantic type from a `semantic_type` column or the
     keyword; with neither it raises (a column's type is never guessed). Every row expects PARSED
     with the clean value as truth, so dirty == clean expects the value back unchanged, and a
-    year-only value is never promoted to a date. Context is empty.
+    year-only value is never promoted to a date. Context: optional `country` / `locale` columns
+    per row, else `context` (the caller's statement); none is ever inferred.
     ponytail: Raha ships dirty.csv and clean.csv as two files; merge them into one dirty/clean CSV
     first. BART's output is a table pair too. No cell-alignment loader until someone needs it.
     """
@@ -199,8 +207,10 @@ def load_cases(path: str | Path, semantic_type: str | None = None) -> list[GoldC
             raise ValueError(f"{path}: no semantic_type column and none given")
         if row.get("dirty") is None or row.get("clean") is None:
             raise ValueError(f"{path}:{n}: row has no dirty or no clean cell")
+        ctx = dict(context or {})
+        ctx.update({k: row[k] for k in _CONTEXT_COLUMNS if row.get(k)})
         cases.append(
-            GoldCase(sem, {}, row["dirty"], "PARSED", row["clean"], (), f"csv:{path.name}:{n}")
+            GoldCase(sem, ctx, row["dirty"], "PARSED", row["clean"], (), f"csv:{path.name}:{n}")
         )
     return cases
 
