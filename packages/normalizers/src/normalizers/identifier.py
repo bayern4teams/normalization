@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import functools
 import importlib
+import inspect
 import pkgutil
 import re
 import unicodedata
@@ -140,6 +141,28 @@ def tax_id_module_for(country: str | None) -> tuple[str | None, tuple[str, ...]]
     return (candidates[0] if len(candidates) == 1 else None), tuple(candidates)
 
 
+@functools.cache
+def _base_modules(module_name: str) -> tuple[str, ...]:
+    """The modules of the same stdnum country that `module_name` is built on:
+    the ones it imports. no.mva imports no.orgnr (a VAT number is the
+    organisation number plus MVA), so a bare organisation number is that
+    country's tax identifier too. From stdnum's own code, not a table."""
+    module = importlib.import_module(module_name)
+    package = module_name.rsplit(".", 1)[0]
+    return tuple(
+        sorted(
+            {
+                value.__name__
+                for value in vars(module).values()
+                if inspect.ismodule(value)
+                and value.__name__.startswith(f"{package}.")
+                and value.__name__ != module_name
+                and callable(getattr(value, "is_valid", None))
+            }
+        )
+    )
+
+
 # ponytail: a country whose single title-matched module is a narrower id (AU TFN
 # not ABN, UA RNTRC, LI PEID, ZA TIN) is still "classified"; the sibling rule
 # below turns a number another module accepts into unverifiable, at the cost of
@@ -185,6 +208,9 @@ def _tax_id_verdict(
     try:
         if module.is_valid(cleaned):
             return True, cc, {}
+        for base in _base_modules(module_name):
+            if importlib.import_module(base).is_valid(cleaned):
+                return True, cc, {"verified_by": base}
         # A tax-id title match is not proof that this is the only fiscal id of
         # the country: a number that another module of the same country accepts
         # is not "invalid", it is merely not decidable here.
@@ -269,7 +295,7 @@ class IdentifierNormalizer:
                 status = NormalizationStatus.INVALID
                 confidence = 0.3
                 validation_status = "INVALID"
-            elif verification:
+            elif check_digit_valid is None and verification:
                 validation_status = "UNKNOWN"
 
         return NormalizedValue(
