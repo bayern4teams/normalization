@@ -398,3 +398,24 @@ class TestHeldOutFindings:
         assert r.normalization_status is NormalizationStatus.AMBIGUOUS
         r = _norm(FieldSemanticType.DATETIME, "11/30 10:30 p.m.", country="NO")
         assert r.normalization_status is NormalizationStatus.INVALID
+
+
+class TestAnInvalidPhoneKeepsItsOriginal:
+    """Found live (D8-D12 run): an INVALID phone's cell held a rewritten
+    guess, `334774x601` -> `+47 334774 ext. 601`, with no error row, so the
+    source form was lost. Every other normalizer's INVALID keeps the
+    original; so does PHONE now, and it states no comparison key."""
+
+    @pytest.mark.parametrize("value", ["334774x601", "3347746018"])
+    def test_the_original_stays_and_no_key_is_claimed(self, value: str) -> None:
+        r = _norm(FieldSemanticType.PHONE, value, country="NO")
+        assert r.normalization_status is NormalizationStatus.INVALID
+        assert r.display == value
+        assert r.comparison is None
+        assert r.search is None
+        assert r.errors
+
+    def test_a_valid_number_is_unchanged(self) -> None:
+        r = _norm(FieldSemanticType.PHONE, "+1 334 774 6018")
+        assert r.display == "+1 334-774-6018"
+        assert r.comparison == "+13347746018"
