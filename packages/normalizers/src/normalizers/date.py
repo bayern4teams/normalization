@@ -23,6 +23,7 @@ normalizer emits it — its one producer is an adjudicated value, ADR-018.)
 from __future__ import annotations
 
 import re
+from datetime import date
 from functools import cache, lru_cache
 from itertools import permutations
 from typing import TYPE_CHECKING
@@ -30,6 +31,8 @@ from typing import TYPE_CHECKING
 import blake3
 import ciso8601
 import pyarrow as pa
+from babel import Locale, UnknownLocaleError, localedata
+from babel.languages import get_official_languages
 from dateparser.date import DateDataParser
 from dateparser.languages.loader import default_loader
 from edtf import natlang as edtf_natlang
@@ -59,6 +62,7 @@ _VERSION = "0.1.0"
 _PARSE_PARAMS_HASH = blake3.blake3(b"{}").hexdigest()
 
 _NUMERIC_DMY_RE = re.compile(r"^(\d{1,2})[/.\-](\d{1,2})[/.\-](\d{2,4})$")
+_HHMM_RE = re.compile(r"^(?:[01]\d|2[0-3])[0-5]\d$")
 
 # --- partial precision & repair -------------------------------------------
 #
@@ -150,7 +154,10 @@ def _stated_precision(text: str, parsed: datetime, claimed: str, locale: str | N
     component claims is a placeholder (`00/2024`). Any word used to count
     as the month: `15 Z 2024` (`Z` a time zone to dateparser) came back with
     today's month."""
-    date_part = _TIME_OF_DAY_RE.sub(" ", text)
+    # An hour stated with its meridiem (`3pm`, `11:30 am`) is time, not a
+    # date component: dateparser's am/pm words for the detected language.
+    date_part = _meridiem_time_re(locale).sub(" ", text) if locale else text
+    date_part = _TIME_OF_DAY_RE.sub(" ", date_part)
     found = _DIGITS_RE.findall(date_part)
     numbers = [n for n in found if n.strip("0")]
     zeros = [n for n in found if not n.strip("0")]
@@ -181,6 +188,19 @@ def _stated_precision(text: str, parsed: datetime, claimed: str, locale: str | N
                 ):
                     return precision
     return None
+
+
+@cache
+def _meridiem_time_re(locale: str) -> re.Pattern[str]:
+    info = default_loader.get_locale(locale).info
+    words = sorted({w for key in ("am", "pm") for w in info.get(key, [])}, key=len, reverse=True)
+    if not words:
+        return re.compile(r"(?!)")
+    alternatives = "|".join(re.escape(w) for w in words)
+    return re.compile(
+        rf"(?<!\d)\d{{1,2}}(?::\d{{2}}(?::\d{{2}})?)?\s*(?:{alternatives})(?![^\W\d_])",
+        re.IGNORECASE,
+    )
 
 
 _PARTIAL_PARSER_SETTINGS: dict[str, object] = {
@@ -300,6 +320,7 @@ def _parse_partial(candidate: str, date_order: str | None) -> tuple[str, str] | 
     parsed, period = data.date_obj, data.period
     if (
         parsed is None
+        or not _follows_order(candidate, parsed, date_order)
         or _letter_beside_a_digit_unread(candidate, data.locale)
         or period not in ("year", "month", "day")
         or not _year_is_supported(parsed.year, candidate)
@@ -316,6 +337,26 @@ def _parse_partial(candidate: str, date_order: str | None) -> tuple[str, str] | 
     return parsed.date().isoformat(), "day"
 
 
+def _also_a_day_and_month(text: str) -> bool:
+    """`24/03` is March 2024 or 24 March of no stated year: two numbers, no
+    four-digit year, and some order of them is a real day and month. `1/00`
+    is not (no day 0, no month 0), so it stays January 2000."""
+    if _FOUR_DIGIT_RE.search(text):
+        return False
+    # The time is no day or month: `11/30 10:30 p.m.` is 30 November or
+    # November 2030, and came back as 2030-11.
+    numbers = [int(n) for n in _DIGITS_RE.findall(_TIME_OF_DAY_RE.sub(" ", text))]
+    if len(numbers) != 2:  # a day and a month
+        return False
+    for day, month in (numbers, numbers[::-1]):
+        try:
+            date(2000, month, day)  # a leap year: 29/02 is a real day
+        except ValueError:
+            continue
+        return True
+    return False
+
+
 def _normalize_partial(
     original: str, cleaned: str, ctx: NormalizationContext, date_order: str | None
 ) -> NormalizedValue | None:
@@ -329,6 +370,16 @@ def _normalize_partial(
         if partial is None:
             continue
         iso, precision = partial
+        if precision == "month" and _also_a_day_and_month(candidate):
+            return _readings(
+                original,
+                cleaned,
+                ctx,
+                [
+                    {"interpretation": "month and year", "parsed_date": iso},
+                    {"interpretation": "day and month, no year stated"},
+                ],
+            )
         confidence = 0.75 if repairs else 0.9
         flags = [QualityFlag.PARTIAL_DATE] if precision != "day" else []
         if repairs:
@@ -355,14 +406,11 @@ def _normalize_partial(
 _DATEPARSER_SETTINGS_BASE: dict[str, object] = {
     "STRICT_PARSING": True,
     "RETURN_AS_TIMEZONE_AWARE": False,
+    # period "time" when the value states a time of day in any form the
+    # parser reads (`3pm`), not only the `hh:mm` shape `_HAS_TIME_RE` sees.
+    "RETURN_TIME_AS_PERIOD": True,
 }
 
-# Real-world convention: the US (and a handful of others) predominantly
-# write numeric dates Month/Day/Year; nearly everywhere else uses
-# Day/Month/Year. This is a coarse, documented heuristic, not a
-# per-country lookup table — extend `_MDY_COUNTRIES` as real gaps are
-# found, per the same "curated from evidence, not speculation" policy as
-# normalizers/country_codes.py.
 # Values whose meaning is a RANGE or a qualified point, not a date.
 # dateparser flattens all of these to a single day and reports success:
 # "1990s" became "1990", inventing year precision out of a decade, and
@@ -474,9 +522,6 @@ def _struct_to_iso(value: object) -> str | None:
     return f"{value.tm_year:04d}-{value.tm_mon:02d}-{value.tm_mday:02d}"  # type: ignore[attr-defined]
 
 
-_MDY_COUNTRIES = frozenset({"US"})
-
-
 class _StaticStepSpec:
     def __init__(self, step_id: str, operation: str, reversibility: Reversibility, lossy: bool):
         self.step_id = step_id
@@ -508,6 +553,19 @@ class DateNormalizer:
 
         keep_time = _wants_time(ctx, cleaned)
 
+        if ctx.semantic_type is FieldSemanticType.DATETIME and _HHMM_RE.match(cleaned):
+            # ISO 8601 reads four digits as a year (YYYY) and as a basic
+            # format time (hhmm): OnTime's `2220` is 22:20, not the year 2220.
+            return _readings(
+                value,
+                cleaned,
+                ctx,
+                [
+                    {"interpretation": "year", "year": cleaned},
+                    {"interpretation": "time", "hour": cleaned[:2], "minute": cleaned[2:]},
+                ],
+            )
+
         # Two shortcuts, tried in order, each returning None to mean "not
         # mine". EDTF comes first so a decade or an interval is never
         # flattened by the parsers below; ISO second because a
@@ -534,11 +592,15 @@ class DateNormalizer:
 
         if (
             parsed is None
+            or not _follows_order(cleaned, parsed, date_order)
             or not _year_is_supported(parsed.year, cleaned)
             or _stated_precision(cleaned, parsed, "day", data.locale) != "day"
         ):
             return _normalize_partial(value, cleaned, ctx, date_order) or _invalid(value, ctx)
 
+        keep_time = keep_time or (
+            ctx.semantic_type is FieldSemanticType.DATETIME and data.period == "time"
+        )
         iso = parsed.isoformat() if keep_time else parsed.date().isoformat()
         assumption = (
             f"resolved using inferred day/month order {date_order}"
@@ -660,21 +722,66 @@ def _try_iso_fast_path(value: str, *, keep_time: bool = False) -> tuple[str, str
     return parsed.date().isoformat(), "day"
 
 
+def _follows_order(value: str, parsed: datetime, date_order: str | None) -> bool:
+    """A numeric d/m/y value parsed under a stated order reads in that order.
+    dateparser falls back to others: under DMY `1/13/01` came back as
+    2013-01-01 (13 the year, 01 the month), an order nothing stated."""
+    match = _NUMERIC_DMY_RE.match(value)
+    if match is None or date_order not in ("DMY", "MDY"):
+        return True
+    first, second, _ = (int(g) for g in match.groups())
+    day, month = (first, second) if date_order == "DMY" else (second, first)
+    return (parsed.day, parsed.month) == (day, month)
+
+
 def _is_ambiguous_numeric_date(value: str) -> bool:
     match = _NUMERIC_DMY_RE.match(value)
     if not match:
         return False
     first, second, _year = match.groups()
-    return 1 <= int(first) <= 12 and 1 <= int(second) <= 12
+    # Equal day and month (`05/05/2024`) read the same in either order.
+    return 1 <= int(first) <= 12 and 1 <= int(second) <= 12 and int(first) != int(second)
+
+
+@cache
+def _cldr_date_order(locale: str) -> str | None:
+    """ "DMY" or "MDY" from CLDR's short date pattern for `locale` (ee_GH
+    `M/d/yy`, en_GB `dd/MM/y`); None when the pattern is year-first (en_CA
+    `y-MM-dd`), which says nothing about a value whose year is last, or when
+    CLDR has no such locale."""
+    try:
+        pattern = Locale.parse(locale).date_formats["short"].pattern
+    except (ValueError, UnknownLocaleError):
+        return None
+    day, month, year = (pattern.find(c) for c in "dMy")
+    if min(day, month, year) < 0 or year < min(day, month):
+        return None
+    return "DMY" if day < month else "MDY"
+
+
+@cache
+def _country_date_order(country: str) -> str | None:
+    """The order every official language of `country` agrees on in CLDR, or
+    None: Canada's two are year-first, so neither orders `03/04/2024`."""
+    orders = {
+        _cldr_date_order(locale)
+        for language in get_official_languages(country, de_facto=True)
+        # A language Babel has no locale for (`no_NO`; nb_NO and nn_NO exist)
+        # states nothing; it is not a disagreeing reading.
+        if localedata.exists(locale := f"{language}_{country}")
+    }
+    return orders.pop() if len(orders) == 1 else None
 
 
 def _infer_date_order(ctx: NormalizationContext) -> str | None:
+    """The day/month order the context states, from CLDR (it used to be a
+    hand table `{"US"}`, while CLDR has M/d/y locales on four continents). A
+    locale with a region names one convention; a bare language (`en`: en-US
+    or en-GB?) names none."""
     if ctx.country:
-        return "MDY" if ctx.country.upper() in _MDY_COUNTRIES else "DMY"
-    if ctx.locale:
-        region = ctx.locale.split("-")[-1].upper() if "-" in ctx.locale else None
-        if region:
-            return "MDY" if region in _MDY_COUNTRIES else "DMY"
+        return _country_date_order(ctx.country.upper())
+    if ctx.locale and "-" in ctx.locale:
+        return _cldr_date_order(ctx.locale.replace("-", "_"))
     return None
 
 
@@ -711,10 +818,21 @@ def _ambiguous(original: str, cleaned: str, ctx: NormalizationContext) -> Normal
     match = _NUMERIC_DMY_RE.match(cleaned)
     assert match is not None  # only called when _is_ambiguous_numeric_date matched
     first, second, year = match.groups()
-    candidates = [
-        {"interpretation": "DMY", "day": first, "month": second, "year": year},
-        {"interpretation": "MDY", "day": second, "month": first, "year": year},
-    ]
+    return _readings(
+        original,
+        cleaned,
+        ctx,
+        [
+            {"interpretation": "DMY", "day": first, "month": second, "year": year},
+            {"interpretation": "MDY", "day": second, "month": first, "year": year},
+        ],
+    )
+
+
+def _readings(
+    original: str, cleaned: str, ctx: NormalizationContext, candidates: list[dict[str, str]]
+) -> NormalizedValue:
+    """AMBIGUOUS, original kept: the value states several dates."""
     return NormalizedValue(
         original=original,
         display=cleaned,
