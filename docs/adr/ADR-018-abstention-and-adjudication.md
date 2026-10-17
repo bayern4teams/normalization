@@ -40,11 +40,24 @@ locale, field, table, source — the whole `context_hash`). `profile_version` is
 it, so a rule change invalidates verdicts. `env_id` is not: it is stored on the
 verdict and written into the applied value's trace, never matched on.
 
+**Source (amended 2026-10-14, PART1 D1.3).** `source` in the context is the
+source's identity, `engine://host:port/database[/schema]` (host lowercased, no
+user, no password), not the saved connection's id. The id changes whenever a
+connection is saved again, for example after a password rotation, and keyed on
+it every verdict made under the old id was orphaned: the same ambiguity was
+asked again, which Part 1 D1 rules out. A moved server (a new host) is a new
+source. Rows stored under a connection id are re-keyed at startup
+(`migrate_sources`): the queue row moves to the new key and its verdicts are
+copied there; the old verdict rows stay, the history is append-only. A row
+whose connection or job no longer exists cannot be re-keyed and is counted in
+the startup log.
+
 **Dedup.** A million identical ambiguous values in one context are one queue
 row with `occurrences = 1000000`. The same value in two countries is two rows.
 Occurrences are written in the same transaction that advances the table's
 checkpoint, so a chunk re-run on resume (it was not checkpointed) cannot count
-twice.
+twice. A ClickHouse table that starts over on resume (it cannot resume by
+offset) first sets this job's counts for that table back to 0.
 
 **Resolve stage** (report decision C). In `clone_executor._apply_column`, before
 dispatch, one batched verdict lookup for the chunk's distinct values in that

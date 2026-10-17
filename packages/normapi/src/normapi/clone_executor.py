@@ -46,7 +46,7 @@ from normio.connectors import (
 from normio.connectors._sql_base import DESTINATION_INSERT_CHUNK_ROWS, SOURCE_READ_BATCH_ROWS
 
 from normapi import lineage, secrets
-from normapi.adjudication import Adjudication
+from normapi.adjudication import Adjudication, source_identity
 from normapi.scaffold_profile import SCAFFOLD_PROFILE
 from normcore import (
     CloneJobStatus,
@@ -484,6 +484,11 @@ def create_clone_job(
         "job_id": job_id,
         "status": CloneJobStatus.PENDING_DB_CREATE.value,
         "source_connection_id": request["source_connection_id"],
+        # What verdicts are keyed on (ADR-018): the server and database, so
+        # re-adding the connection (a new id) keeps every decision.
+        "source_identity": source_identity(
+            source_conn, request["source_database"], request.get("source_schema")
+        ),
         "source_database": request["source_database"],
         # Saved, not just used at creation: Phase 1 and Phase 2 reopen the
         # source from the JOB, and a schema that reached only the discovery
@@ -1914,7 +1919,7 @@ def _normalize_chunk(
                 column=column,
                 semantic_type=semantic_type,
                 table=table,
-                source_id=job["source_connection_id"],
+                source_id=job["source_identity"],
                 pool=pool,
                 planner=planner,
                 typed_as=typed_columns.get(column),
@@ -2140,15 +2145,15 @@ def _resume_point(
     row_index named the earlier order's rows); finished tables are still
     skipped.
 
-    ponytail: the adjudication queue counted the restarted table's rows
-    once already, so their occurrences are counted twice. Subtract them,
-    or resume per part, if ClickHouse resume counts must be exact.
+    The adjudication queue already counted the restarted table's rows in
+    this job, so those counts start over too.
     """
     checkpoint: int = progress["checkpoints"].get(table, -1)
     if checkpoint < 0 or source_engine != "clickhouse":
         return checkpoint
     dest.truncate_table(job["destination_database"], write_target)
     persistence.delete_clone_job_errors(job_id, table)
+    persistence.reset_queue_counts(job_id, table)
     progress["rows_done"] -= checkpoint + 1
     progress["checkpoints"][table] = -1
     return -1
@@ -2347,6 +2352,11 @@ def _run_phase2(
         raise CloneJobNotFoundError(job_id)
     job.pop("error", None)  # a resumed FAILED job is no longer failing
     source_conn = _require_connection(persistence, job["source_connection_id"])
+    # A job created before source_identity existed.
+    job.setdefault(
+        "source_identity",
+        source_identity(source_conn, job["source_database"], job.get("source_schema")),
+    )
     dest_conn = _require_connection(persistence, job["destination_connection_id"])
     source = build_source_connector(source_conn, job["source_database"], job.get("source_schema"))
     dest = build_destination_writer(dest_conn)

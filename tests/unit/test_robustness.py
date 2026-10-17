@@ -108,6 +108,7 @@ def _run_table(
 ) -> _Dest:
     job: dict[str, Any] = {
         "source_connection_id": "s",
+        "source_identity": "postgres://s:5432/db",
         "destination_database": "d",
         "field_configs": {"t": field_configs},
         "destination_plan": {"t": {"typed_columns": typed or {}}},
