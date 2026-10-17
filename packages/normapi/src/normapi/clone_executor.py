@@ -2407,6 +2407,19 @@ def _normalize_table(
     _save_progress(persistence, job_id, job)
 
 
+def _destination_types(
+    source: Any, table: str, job: Mapping[str, Any], engine: str, source_types: dict[str, str]
+) -> dict[str, str]:
+    """The destination's column types exactly as Phase 1 wrote them."""
+    overrides, extras, _ = _destination_plan(
+        {c: t for c, t in job["field_configs"].get(table, {}).items() if t},
+        engine,
+        _key_columns(source, table),
+        typed=job.get("typed_destination_columns", True),
+    )
+    return {**source_types, **overrides, **extras}
+
+
 def _entity_country_context(
     source: Any, job: dict[str, Any], planner: DistinctValuePlanner, persistence: Any, job_id: str
 ) -> dict[str, str]:
@@ -2475,13 +2488,6 @@ def _run_phase2(
                 continue
             source_columns = source.get_columns(table)
             source_types = {c.name: c.native_type for c in source_columns}
-            # The destination's column types exactly as Phase 1 wrote them.
-            overrides, extras, _ = _destination_plan(
-                {c: t for c, t in job["field_configs"].get(table, {}).items() if t},
-                dest_conn["engine"],
-                _key_columns(source, table),
-                typed=job.get("typed_destination_columns", True),
-            )
             run = lineage.table_run(
                 persistence,
                 job=job,
@@ -2491,7 +2497,9 @@ def _run_phase2(
                 destination_connection=dest_conn,
                 source_columns=[c.name for c in source_columns],
                 source_types=source_types,
-                destination_types={**source_types, **overrides, **extras},
+                destination_types=_destination_types(
+                    source, table, job, dest_conn["engine"], source_types
+                ),
                 semantic_types={
                     c: FieldSemanticType(t)
                     for c, t in job["field_configs"].get(table, {}).items()
