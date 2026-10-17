@@ -52,6 +52,7 @@ def _build_parser() -> argparse.ArgumentParser:
     score_parser = gold_sub.add_parser("score", help="Score the real engine on a JSONL/CSV corpus")
     score_parser.add_argument("path", type=Path)
     score_parser.add_argument("--semantic-type", help="for a dirty/clean CSV without a type column")
+    _context_arguments(score_parser)
 
     calibrate_parser = subparsers.add_parser(
         "calibrate",
@@ -65,10 +66,21 @@ def _build_parser() -> argparse.ArgumentParser:
         help="cost of a wrong emitted value over the cost of an abstention (no default: state it)",
     )
     calibrate_parser.add_argument("--semantic-type", help="for a dirty/clean CSV without a type")
+    _context_arguments(calibrate_parser)
     calibrate_parser.add_argument("--out-json", type=Path)
     calibrate_parser.add_argument("--out-md", type=Path)
 
     return parser
+
+
+def _context_arguments(parser: argparse.ArgumentParser) -> None:
+    help_ = "context for CSV rows without their own column (never inferred)"
+    parser.add_argument("--country", help=help_)
+    parser.add_argument("--locale", help=help_)
+
+
+def _context(args: argparse.Namespace) -> dict[str, str]:
+    return {k: v for k in ("country", "locale") if (v := getattr(args, k, None))}
 
 
 def _run_calibrate(args: argparse.Namespace) -> int:
@@ -82,7 +94,7 @@ def _run_calibrate(args: argparse.Namespace) -> int:
         )
         return 2
     try:
-        cases = load_cases(args.path, semantic_type=args.semantic_type)
+        cases = load_cases(args.path, semantic_type=args.semantic_type, context=_context(args))
     except (OSError, ValueError, TypeError, KeyError) as exc:
         print(f"calibrate: cannot read {args.path}: {exc!r}", file=sys.stderr)
         return 2
@@ -120,7 +132,7 @@ def _run_gold(args: argparse.Namespace) -> int:
             return 2
         return 0
     try:
-        cases = load_cases(args.path, semantic_type=args.semantic_type)
+        cases = load_cases(args.path, semantic_type=args.semantic_type, context=_context(args))
     except (OSError, ValueError, TypeError, KeyError) as exc:
         print(f"gold score: cannot read {args.path}: {exc!r}", file=sys.stderr)
         return 2
