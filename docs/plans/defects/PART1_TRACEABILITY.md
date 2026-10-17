@@ -24,7 +24,7 @@ on B3), `fix/ci-gates` (B5, on B4).
 | D1.4 | decided_by / decided_at / rationale / confidence | verdicts table | REPORT §3 | done-live |
 | D1.5 | queue counts once | `reset_queue_counts` on a ClickHouse restart (B2) | §11.3: live kill-and-resume 10,000 (main: 13,333) | done-live |
 | D1.6 | NUL / non-UTF-8 in the queue | d682b51 | REPORT §9; §11.10 rerun `d1_nul` | done-live |
-| D1.7 | round trip on Postgres and on the user's data | — | §11.3 (Postgres); own database: Step 6 | done-live (public); own DB: decision |
+| D1.7 | round trip on Postgres and on the user's data | — | §11.3 (Postgres and ClickHouse) | done-live (public); own DB: descoped (user, 2026-10-17: "No, skip Step 6") |
 
 ## D2: confidence is decorative
 
@@ -53,7 +53,7 @@ on B3), `fix/ci-gates` (B5, on B4).
 | D4.1 | a first-class outcome reporting which cells | detector wired into Phase 2 on exact counts (B3, ADR-021) | §11.6: Norway `Ingen` 7, `Facebook` 11 ...; 6/6 counts equal GROUP BY | done-live |
 | D4.2 | output lands in MissingKind | `confirmed_missing` -> MISSING (UNKNOWN_VALUE), NULL cell, original in the error row (B3) | §11.6: confirmed run | done-live |
 | D4.3 | keep type_detection's negative controls | untouched; the dispatcher reuses the same control (B1) | `test_confident_wrong.py` | done |
-| D4.4 | the `-999` example | an in-range number is valid; calling it missing by frequency would be a guess (ADR-021 limit) | — | decision |
+| D4.4 | the `-999` example | an in-range number is valid; calling it missing by frequency would be a guess (ADR-021 limit); a person can confirm it per column | — | descoped (user, 2026-10-17: "Known limit, descope") |
 
 ## D5: destination columns are all TEXT
 
@@ -70,7 +70,7 @@ on B3), `fix/ci-gates` (B5, on B4).
 |---|---|---|---|---|
 | D6.1 | BART injects errors | BART 354f503 built and run (H2: its Postgres driver predates PG 12) | §11.8: 201 injected cells on raha.hospital; scored and used held out | done-live |
 | D6.2 | Raha's six datasets | loader, scripts | REPORT §4; §11.8 | done-live |
-| D6.3 | the corpus's own ambiguity rate (kappa / alpha) | functions exist and match references | no public corpus here has two annotators | decision |
+| D6.3 | the corpus's own ambiguity rate (kappa / alpha) | functions; `kappa_sample.py` writes a 60-value sheet (30 refused, 30 answered by the engine), `kappa_score.py` scores two people's copies | user decision 2026-10-17: two people label a CSV | pending the user's labels |
 | D6.4 | AMBIGUOUS is a correct gold label | 5-class scorer | §11.2: seeded 149/31/0/0/0 (was 142/21/11/6/0) | done-live |
 | D6.5 | the CSV loader can score context-needing types | `country` / `locale` columns or `--country` / `--locale` (B4) | §11.8 | done-live |
 
@@ -81,7 +81,7 @@ on B3), `fix/ci-gates` (B5, on B4).
 | D7.1 | registry from python-stdnum | 7bd631b | REPORT §3 | done-live |
 | D7.2 | tri-state valid / invalid / unverifiable | UNKNOWN + `verification` | REPORT §3 | done-live |
 | D7.3 | a real register validates (Norway) | valid under a module the chosen one imports (B4) | §11.7: 1,177,617 / 1,177,617 VALID (was 0); France 500,000 unchanged; 0 INVALID | done-live |
-| D7.4 | Colombia | `co.nit`'s title has no English tax word; no authoritative translation source | — | decision |
+| D7.4 | Colombia | `co.nit`'s title has no English tax word; no authoritative translation source; stays unverifiable, never a guess | — | descoped (user, 2026-10-17: "Keep unverifiable") |
 
 ## D8-D12
 
