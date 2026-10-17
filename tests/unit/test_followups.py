@@ -464,13 +464,10 @@ def _triggered_run_lines() -> list[tuple[str, str]]:
     return lines
 
 
-# gate.yml (push to milestone/** only; last run 2026-08-29) and release.yml
-# (tags) call normcli commands that were never built. Logged in REPORT.md §10,
-# not fixed here; a ratchet, so building one or breaking another workflow
-# both show up.
-_KNOWN_MISSING = {("gate.yml", c) for c in ("bench-compare", "run", "diff", "sbom", "gate")} | {
-    ("release.yml", "sbom")
-}
+# gate.yml and release.yml called five normcli commands that were never built
+# (REPORT.md §10); they were cut to commands that exist (PART1 W1). Kept as a
+# ratchet at zero: a new missing command fails here.
+_KNOWN_MISSING: set[tuple[str, str]] = set()
 
 
 class TestTriggeredWorkflowsCanRun:
@@ -486,6 +483,18 @@ class TestTriggeredWorkflowsCanRun:
                         missing.append((name, command))
         assert seen > 0  # the check is not vacuous
         assert set(missing) == _KNOWN_MISSING
+
+    def test_every_test_path_they_name_exists(self) -> None:
+        """gate.yml ran `pytest ... tests/property/test_idempotency.py`, a file
+        that does not exist (it is test_idempotency_determinism.py)."""
+        named = [
+            (name, path)
+            for name, line in _triggered_run_lines()
+            if "pytest" in line
+            for path in re.findall(r"(tests/\S+\.py)", line)
+        ]
+        assert named  # not vacuous
+        assert [(n, p) for n, p in named if not (_ROOT / p).exists()] == []
 
     def test_every_pytest_option_they_pass_exists(self) -> None:
         help_text = subprocess.run(
