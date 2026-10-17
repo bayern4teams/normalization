@@ -112,12 +112,18 @@ uv run ruff check . && uv run ruff format --check . && uv run mypy packages
 
 ## Active implementation plan
 
-D1-D12 (`docs/improvement-report.md` Part 1) and `fix/robustness` are merged to
-main; their records are [`docs/plans/defects/FINAL_REPORT.md`](docs/plans/defects/FINAL_REPORT.md)
-and `docs/benchmarks/REPORT.md` §9. The follow-ups §9 left (ClickHouse insert
-size, resuming a FAILED job, spool free space, silent letter drops, the drift
-workflow, OnTime throughput) are fixed on branch `fix/followups`, proven in
-REPORT.md §10; not merged until the user says so. Reproducers:
-`tests/unit/test_followups.py` and `tests/integration/test_followups_live.py`
-(point TEST_PG_PORT etc. at an isolated stack, never at a database you care about).
+D1-D12, `fix/robustness` and `fix/followups` are merged to main. Part 1 of
+`docs/improvement-report.md` is closed row by row in
+[`docs/plans/defects/PART1_TRACEABILITY.md`](docs/plans/defects/PART1_TRACEABILITY.md),
+summarised in `docs/plans/defects/PART1_COMPLETE.md`, measured in
+`docs/benchmarks/REPORT.md` §11. Five branches, not merged until the user says
+so, merge in this order (the last three are stacked): `fix/confident-wrong`,
+`fix/verdict-identity`, `fix/lineage-and-dates`, `fix/calibration-coverage`,
+`fix/ci-gates`. Reproducers: `tests/unit/test_confident_wrong.py`,
+`test_verdict_identity.py`, `test_date_bounds.py`, `test_lineage_schema_facet.py`,
+`test_disguised_missing_wiring.py`, `test_tax_id_base_modules.py`,
+`test_calibration_risk_control.py`, `test_calibrated_abstention.py`,
+`test_phone_region_companion.py`; live ones under `tests/integration/` and
+`docs/benchmarks/scripts/` (point TEST_PG_PORT etc. at an isolated stack, never
+at a database you care about).
 `scripts/refresh_graphs.py` is the loud graph refresh (exits non-zero if a graph tool is missing).

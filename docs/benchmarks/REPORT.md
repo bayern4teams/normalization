@@ -746,3 +746,181 @@ The four ci-fast commands, run exactly as CI runs them under `ulimit -v 16 GB`:
 - **Integration.** Postgres/ClickHouse files only; Mongo/MySQL are not in
   normbench. `test_followups_live.py`, `test_robustness_live.py` and
   `test_clone_pipeline.py`: 21 passed.
+
+## 11. Part 1 complete: every gap closed and re-measured (2026-10-14/17)
+
+Five branches from main at 002eda0 (`fix/followups` merged), in merge order: `fix/confident-wrong`
+(B1), `fix/verdict-identity` (B2), `fix/lineage-and-dates` (B3), `fix/calibration-coverage` (B4,
+stacked on B3), `fix/ci-gates` (B5, stacked on B4). The row-by-row record is
+`docs/plans/defects/PART1_TRACEABILITY.md`. Each fix: a reproducer that fails on main, one root
+fix in the shared place, a held-out check on real data. Every verdict below is direct SQL (or the
+service's own API: Marquez), never a job status.
+
+### 11.1 Environment
+- normbench as in §1, except ClickHouse: 25.12 (image already local) with
+  `memory_worker_use_cgroup` and `memory_worker_correct_memory_tracker`, capped at 6 GB, override
+  only (`compose.yaml` keeps 24.9). Before: `MemoryTracking` read 43.6 GiB at 1.0 GiB resident
+  memory on 24.9; after a start, 573 MiB. No ClickHouse memory failure in this section.
+- The machine restarted on 2026-10-15; the stack was started again with its volumes.
+
+### 11.2 Guesses shown as answers (B1)
+Reproducers: `tests/unit/test_confident_wrong.py` (124 cases, two properties). Held out: main and
+B1 on the same real distinct values (Raha, Brreg, SIRENE, GLEIF) through the full dispatcher in
+7 contexts (none, US, GB, NO, FR, en-US, fr-FR).
+
+| finding | before (main) | after | real values moved |
+|---|---|---|---|
+| N4 M/d/y from a hand table `{US}` | `10/7/2026` ee-GH -> 07-10 | CLDR per locale; per country the order all official languages agree on | — |
+| N9 equal day and month | `05/05/2024` AMBIGUOUS | 2024-05-05 | 45 (`1/1/00` ...) AMBIGUOUS -> PARSED |
+| N1 time dropped | `3pm March 15 2024` -> 2024-03-15 | 2024-03-15T15:00:00 | 35 DATETIME keep their time |
+| N2 HHMM as a year | DATETIME `2220` -> the year 2220 | AMBIGUOUS (ISO 8601 reads both) | 4-digit DATETIME values that are a valid hhmm |
+| N10 day-month or month-year | `24/03` -> 2024-03 | AMBIGUOUS | — |
+| N12 found by the held-out run | no_NO counted as a disagreeing language; `1/13/01` under D/M/Y read as 2013-01-01; `11/30 10:30 p.m.` read as 2030-11 | Babel-less languages skipped; a numeric value must read in the stated order (else INVALID); a time's digits are no day or month | 248 DATE (`1/13/xx` under GB/NO/FR) PARSED -> INVALID, the main answer was wrong; `11/30 <time>` -> AMBIGUOUS |
+| N3 https assumed | `example.com` -> https://example.com, 0.8 | AMBIGUOUS, both schemes as candidates, host and registrable domain still reported | 34,853 Brreg websites NORMALIZED -> AMBIGUOUS |
+| N5 `NA` | COUNTRY `NA` -> missing | AMBIGUOUS (Namibia or missing) when a discriminating type reads the token | 7 |
+| N7 never INVALID | PHONE `TBD`, CURRENCY `TBD` AMBIGUOUS; `¥` -> JPY, `£` -> GBP (hand table) | INVALID; a CLDR-shared symbol (11, generated) AMBIGUOUS, resolved by the country's tender | 364 US state codes in a CURRENCY column AMBIGUOUS -> INVALID |
+| N11 locale | NUMERIC/MONEY country=NO raised UnknownLocaleError (job failed); a country = its first language | every official locale Babel has is a reading; disagreement AMBIGUOUS | 307 MONEY values under NO raised -> parse |
+| N8 one pass; silent repair | `-\x00` -> `-` -> missing on pass 2; names applied ftfy silently (`ß\x85` -> an NKo digit) | tokens judged on visible text; REPAIRED with flags for every text sibling | 0 failures on the sweep (1,128 values x 8 types) |
+| N13 (found live, §11.9) | an INVALID phone's cell held a rewrite (`334774x601` -> `+47 334774 ext. 601`), no error row | original kept, no comparison key, an error | — |
+
+The seeded gold corpus (`gold generate --seed 0 --n 30`): 142 / 21 / 11 / 6 / 0 before, **149 /
+31 / 0 / 0 / 0** after (correct / correct-abstain / wrong-confident / over-abstain / wrong-status);
+seeds 0-2 at n 200: 0 wrong-confident, 0 over-abstain.
+
+### 11.3 D1: a verdict survives a re-added connection (B2)
+- Key: `context.source` is `engine://host:port/database[/schema]`, not the connection id
+  (ADR-018 amended).
+- Live (`docs/benchmarks/scripts/d1_identity_roundtrip.py`), Postgres and ClickHouse: job 1 on
+  connection A queues `03/04/2024` (occurrences 5); verdict `2024-04-03`; A deleted; the same
+  server saved again (B, a new id); job 2 on B: 5/5 cells `2024-04-03`, the clean date unchanged,
+  1 queue row (occurrences 5). Before: the verdict was orphaned.
+- Startup migration on the normbench metadata database: 2,696 legacy queue rows re-keyed to
+  2,488 (208 merged: several connection ids of one source); 0 left; both earlier verdicts kept and
+  copied. The first live run found the merge case (a primary-key violation, rolled back); fixed.
+- D1.5 live (`tests/integration/test_verdict_identity_live.py`): ClickHouse, 3 parts, no key,
+  child killed after block 2, resumed: 10,000 occurrences for 10,000 ambiguous rows. Main's code
+  on the same test: 13,333.
+
+### 11.4 D3: the Marquez column graph (B3)
+The events now carry a SchemaDatasetFacet on inputs and outputs, every field typed (the source's
+native type; the destination's type as Phase 1 wrote it). Marquez 0.51.1,
+`/api/v1/column-lineage`:
+
+| engine | destination field | graph |
+|---|---|---|
+| Postgres (Chinook) | invoice.total_currency | <- chinook.invoice.total |
+| Postgres (Chinook) | customer.phone_code | <- chinook.customer.phone |
+| ClickHouse (d1src) | prices.amount_currency | <- d1src.prices.amount |
+| ClickHouse (d1src) | prices.phone_code | <- d1src.prices.phone |
+
+Before: 0 nodes. Found live: an untyped field is stored once per event (NULL never equals NULL),
+and the node lookup then fails with "Multiple values for optional". Marquez's `dataset_fields`
+now hold one row per field (e.g. prices 5 of 5).
+
+### 11.5 D5: typed bounds beside DATE (B3), the gate
+- `d__from` / `d__to` (Postgres `date`, ClickHouse `Nullable(Date32)`), direct SQL:
+  `1990` -> 1990-01-01..1990-12-31; `1990-03` -> ..-31; `2024-02-29` twice; `199X` ->
+  1990-01-01..1999-12-31; AMBIGUOUS and INVALID NULL; `1850-06-01` a date on Postgres, NULL plus
+  one error row on ClickHouse (Date32 starts 1900).
+- Gate probe (`d5_gate_probe.py`) on the combined branches: 30 probes, every accepted value stored,
+  every rejected one NULL, no aborted INSERT.
+
+### 11.6 D4: disguised nulls in a clone (B3, ADR-021)
+- Exact counts from Phase 2, checked against `GROUP BY` on the source: Raha hospital.zip
+  `3563x` 2, `3x640` 2, `3xx94` 2; Norway Brreg (1.18M rows): websites `Facebook` 7, `facebook` 4,
+  `Ingen` 4, `ingen` 3 (Norwegian "none"); emails `tho@kvale.no;post@kvale.no` 5, one more pair 2.
+  6 of 6 and 3 of 3 equal to GROUP BY. They are candidates: damaged zips and two-address cells
+  are reported beside true disguised nulls, which is why nothing is applied unconfirmed.
+- Confirmation: see §11.8a.
+
+### 11.7 D7: Norway (B4)
+A number valid under a module the chosen one is built on (it imports it: no.mva -> no.orgnr, and
+nine other countries) is VALID, `verified_by` names the module.
+`d7_registry_check.py`: Norway **1,177,617 / 1,177,617 VALID** (was 0); France 500,000 / 500,000
+unchanged; 0 INVALID of 1,677,617.
+
+### 11.8 D2 and D6: calibration and its limits (B4)
+- Corpora with truth the engine does not decide: seeded D6 corpus (seeds 0-4, n 200: 6,000 cases),
+  Raha erroneous cells (9,001), BART-injected raha.hospital cells (BART 354f503, 201 injected
+  cells, 85 scorable). BART: 8 correct, 1 correct-abstain, 24 wrong-confident (transposed digits:
+  valid, wrong numbers), 52 wrong-status (a removed zip digit: INVALID where the truth is a zip).
+- Committed table (`normapi/data/calibration.json`, 15,086 cases, R = 20, delta 5%, exact
+  binomial bound): threshold 1.0 for COUNTRY, EMAIL, URL; 0.9 for DATE, NUMERIC; **none** (abstain
+  on everything when opted in) for BOOLEAN, COMPANY_NAME, GIVEN_NAME, FAMILY_NAME, PHONE, POSTCODE,
+  QUANTITY.
+- Held out, the honest result: confidence does not separate well-formed wrong input.
+  - BART, fit on seeded + Raha only: PHONE emitted 32, wrong 24 (75%); the PHONE threshold
+    learnt on Raha's letter-damaged phones (refused there) does not cover transposed digits.
+  - Leave one Raha dataset out: hospital, rayyan, tax 100% wrong among emitted (their own error
+    kinds are missing from the fit); movies_1 0%.
+  - So the guarantee holds where the errors resemble the calibration corpus (exchangeability);
+    across error generators it does not. This is why abstention is opt-in per job.
+- Opted-in live clone: §11.8a.
+- D6.5: the CSV loader takes `country` / `locale` per row or from `--country` / `--locale`.
+
+### 11.9 D8-D12 live (`docs/benchmarks/scripts/d8_d12_live.py`, combined branches)
+Real Brreg numbers and websites, Raha phones, a clone under country NO, direct SQL:
+- D8: the same 205 numbers, 5 with a corrupted check digit: TAX_ID statuses INVALID 5, NORMALIZED
+  200; CODE NORMALIZED 205.
+- D9: 199 of 200 real hosts' registrable domain equals an independent PSL computation, 0 differ
+  (1 has no host).
+- D10: 7 planted extensions, 7 code values `tel:+1-...;ext=12`, region 7/7 equal to libphonenumber.
+  The first run found N13 and a companion defect: an INVALID number's comparison key went into
+  the code and region columns (on main too, for the code column). Fixed: companions only for
+  answers (B4), an INVALID phone keeps its original (B1).
+- D11: Cyrillic and Arabic names carry Double Metaphone and Beider-Morse keys and no Soundex.
+- D12: a verdict whose decided value now normalizes differently: 205 cells NEEDS_REVIEW, value
+  the decided one.
+
+### 11.8a Opt-in and confirmation, live (combined branches, direct SQL)
+- D2, `calibrated_abstention: true` on Raha tax (`f_name` GIVEN_NAME, `zip` POSTCODE, US): both
+  types have no passing threshold in the committed table, so every answer is held: 200,000 /
+  200,000 AMBIGUOUS in each column, 49,062 queue rows with 400,000 occurrences. That is the
+  documented consequence of opting in for those types, and the reason it is off by default. The
+  first version also reported "200,000 expected wrong": accuracy from erroneous cells applied to an
+  ordinary column; removed.
+- D4, `confirmed_missing` `Ingen` / `ingen` on Brreg `hjemmeside`: 7 source rows, 0 left in the
+  destination, 7 error rows keeping the original, and nothing reported for them afterwards.
+
+### 11.10 Every benchmark that exposed a bug, rerun (combined branches)
+`docs/benchmarks/scripts/part1_reruns.sh`, the arguments of §6/§9 (autodetect opted in where it
+was then), each job in its own cgroup (6 GB, no swap, `ulimit -v` 16 GB), one at a time, on
+ClickHouse 25.12 (§11.1). Row counts are direct SQL on source and destination for every table
+(`count(*)` / `count()`), not the job's numbers.
+
+| run | engine | tables | rows (source = destination) | phase 2 s | error rows | peak RSS MB (driver / workers) | before |
+|---|---|---|---|---|---|---|---|
+| d1_nul | CH | 1 | 4 | 1.0 | 4 | 364 / 0 | §3 FAILED, §9 COMPLETED |
+| ch_badutf8 | CH | 1 | 1 | 1.0 | 2 | 360 / 0 | §7 FAILED |
+| d5_ch | CH | 1 | 6 | 1.0 | 12 | 362 / 0 | §3 truncated silently |
+| d5_pg | PG | 1 | 6 | 1.0 | 6 | 327 / 0 | §3 rounded silently |
+| chinook | PG | 11 | 15,607 | 2.0 | 32 | 411 / 0 | §7 F-DECIMAL-SOURCE |
+| raha | PG | 6 | 214,176 | 132.6 | 3,494 | 438 / 0 | §6 21.4 s (different autodetect mapping) |
+| uk_price_paid | PG | 1 | 931,453 | 120.7 | 0 | 423 / 400 | §6 99.6 s |
+| france (SIRENE, default) | PG | 1 | 500,000 | 15.3 | 0 | 408 / 0 | §7 F-AUTODETECT |
+| luxembourg | PG | 1 | 179,684 | 13.2 | 0 | 415 / 0 | §6 6.1 s |
+| pagila (PG18) | PG | 71 | 173,270 | 11.3 | 66 | 400 / 0 | §7 FAILED in Phase 1 |
+| norway (Brreg) | PG | 1 | 1,177,617 | 147.5 | 1,180,524 | 767 / 767 | §7 FAILED (dotted names); see below |
+| gleif | PG | 1 | 3,458,719 | 894.0 | 115,015 | 1660 / 0 | §7 FAILED; §9 595 s |
+| nyc_taxi | CH | 1 | 2,964,624 | 51.3 | 0 | 738 / 0 | §6 48.0 s |
+| tpch_sf1 | CH | 8 | 8,661,245 | 110.4 | 0 | 748 / 0 | §6 97.5 s |
+| ontime | CH | 1 | 1,598,468 | 252.8 | 2,476,121 | 767 / 767 | §7 FAILED (stream), §9 FAILED (memory) |
+| **tpch_sf10** | CH | 8 | **86,586,082** | 1,143.1 | 0 | 754 / 0 | §6 1,093 s; not rerun since |
+
+All 16 COMPLETED; every table's source and destination row counts are equal. Error rows on
+ontime, gleif and norway come from autodetect's column mappings, which are opt-in (§9) and
+reported, not applied unasked.
+
+**Norway was 10,614 s on the first rerun.** Profiled: autodetect now suggested Brreg's 4-digit
+postnummer as DATE (years), and the clone spent 3 h parsing postcodes. On main only luck hid it:
+DATE and DATETIME both accepted the sample and tied, so detection fell back to FREE_TEXT; N2
+rightly makes `0150` an hhmm too, so DATE won alone. Fix (B1): a value read only as a year is no
+value-only evidence that a column holds dates (a named column is still found by its name).
+Rerun on the fixed branches: 147.5 s, postnummer passthrough, 1,177,617 rows both sides.
+
+### 11.11 CI and memory
+- The four ci-fast commands under `ulimit -v 16 GB` on each branch and on the merge of all five
+  (scratch worktree, the merge order above, no conflicts): ruff, ruff format and mypy clean;
+  pytest on the merge 3,184+ passed, 22 skipped, 1 xfailed. GitHub ci-fast green on every pushed
+  head (run ids in PART1_COMPLETE.md).
+- The workflow ratchet is at zero missing commands; a test path a workflow names must exist.
