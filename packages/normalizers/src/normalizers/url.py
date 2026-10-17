@@ -80,10 +80,10 @@ if TYPE_CHECKING:
 
 _VERSION = "0.1.0"
 
-# Scheme assumed for a bare host. https, not http: every major browser
-# address bar and every modern site defaults there, so guessing http
-# would be the less-correct guess, not the more-conservative one.
-_ASSUMED_SCHEME = "https"
+# A bare host states no scheme. It is parsed under each of these so the host
+# and registrable domain (which it does state) are reported, and the URL
+# itself is AMBIGUOUS between them: picking https was a guess (PART1 N3).
+_BARE_HOST_SCHEMES = ("http", "https")
 
 
 def _looks_like_bare_host(value: str) -> bool:
@@ -246,7 +246,7 @@ class URLNormalizer:
         # exactly as it was before, so nothing regresses.
         scheme_assumed = False
         if not parts.scheme and not parts.netloc and _looks_like_bare_host(cleaned):
-            candidate = f"{_ASSUMED_SCHEME}://{cleaned}"
+            candidate = f"{_BARE_HOST_SCHEMES[-1]}://{cleaned}"
             try:
                 repaired_parts = urlsplit(candidate)
             except ValueError:
@@ -261,12 +261,10 @@ class URLNormalizer:
         flags: list[QualityFlag] = []
         warnings: list[str] = []
         if scheme_assumed:
-            # The scheme is our inference, not the source's data — flagged
-            # so a caller can tell a guessed URL from a stated one, and
-            # surfaced in `repaired` (§0's distinct value types) so the
-            # exact repaired string is inspectable, not just its effect.
+            # Flagged as before, so type detection still does not count a
+            # bare host as clean evidence that a column holds URLs.
             flags.append(QualityFlag.PARSER_FALLBACK)
-            warnings.append(f"no scheme in input; assumed {_ASSUMED_SCHEME!r} for a bare hostname")
+            warnings.append("no scheme in input: http and https are both readings")
 
         host, idn_ok = _normalize_host(parts.hostname or "")
         if not idn_ok:
@@ -310,16 +308,51 @@ class URLNormalizer:
             **_registrable(host, idn_ok=idn_ok),
         }
 
+        if scheme_assumed:
+            return NormalizedValue(
+                original=value,
+                display=value.strip(),
+                structured={
+                    **structured,
+                    "scheme": None,
+                    "candidates": [
+                        {
+                            "scheme": candidate,
+                            "url": urlunsplit(
+                                SplitResult(
+                                    candidate,
+                                    f"{userinfo}{host}{_normalize_port(candidate, parts.port)}",
+                                    path,
+                                    query,
+                                    fragment,
+                                )
+                            ),
+                        }
+                        for candidate in _BARE_HOST_SCHEMES
+                    ],
+                },
+                validation_status="AMBIGUOUS",
+                normalization_status=NormalizationStatus.AMBIGUOUS,
+                confidence=0.5,
+                flags=flags,
+                warnings=warnings,
+                trace=[_normalize_trace_step(value, changed=False)],
+                lossiness=Reversibility.LOSSLESS,
+                profile_version="",
+                env_id="",
+                semantic_type=ctx.semantic_type,
+                context_hash=ctx.context_hash,
+            )
+
         return NormalizedValue(
             original=value,
-            repaired=cleaned if scheme_assumed else None,
             display=display,
             comparison=comparison,
             search=comparison,
             structured=structured,
             validation_status="VALID",
             normalization_status=NormalizationStatus.NORMALIZED,
-            confidence=min(1.0 if idn_ok else 0.7, 0.8 if scheme_assumed else 1.0),
+            confidence=1.0 if idn_ok else 0.7,
             flags=flags,
             warnings=warnings,
             trace=[_normalize_trace_step(value, changed=(display != cleaned))],
@@ -348,7 +381,11 @@ class URLNormalizer:
             return ValidationOutcome(
                 is_valid=False, status="MISSING", reason=result.original_kind.value
             )
-        is_valid = result.normalization_status is NormalizationStatus.NORMALIZED
+        # A bare host is a URL whose scheme is unstated, not a non-URL.
+        is_valid = result.normalization_status in (
+            NormalizationStatus.NORMALIZED,
+            NormalizationStatus.AMBIGUOUS,
+        )
         return ValidationOutcome(
             is_valid=is_valid,
             status=result.validation_status or "UNKNOWN",

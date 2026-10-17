@@ -41,6 +41,7 @@ from normalizers.unicode_normalizer import (
     UnicodeNormalizer,
     UnicodeProcessingOptions,
     build_unicode_trace,
+    disclose_repair,
 )
 
 if TYPE_CHECKING:
@@ -165,7 +166,7 @@ class CompanyNormalizer:
             else NormalizationStatus.UNCHANGED
         )
 
-        return NormalizedValue(
+        result = NormalizedValue(
             original=value,
             display=legal_name,
             comparison=comparison_name,
@@ -183,6 +184,7 @@ class CompanyNormalizer:
             semantic_type=ctx.semantic_type,
             context_hash=ctx.context_hash,
         )
+        return disclose_repair(result, unicode_result)
 
     def normalize_batch(self, values: pa.Array, ctx: NormalizationContext) -> pa.StructArray:
         results = [self.normalize(v, ctx) for v in values.to_pylist()]

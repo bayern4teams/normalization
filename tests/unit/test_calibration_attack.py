@@ -369,7 +369,9 @@ def test_cli_csv_corpus_and_default_bins_equal_the_library(tmp_path):
 
 
 def test_cli_seed0_report_claims_hold():
-    """The flagged bin on `gold generate --seed 0 --n 30` is the URL bare-host family, all wrong."""
+    """`gold generate --seed 0 --n 30` used to flag [0.8, 0.9): the bare-host URLs (https
+    guessed at 0.8) and one ee-GH date (hand M/d/y table). With both fixed (PART1 N3, N4)
+    no answer is confident and wrong, so no bin is flagged."""
     cases = generate_corpus(0, 30)
     scored = score(cases, default_engine)
     clean = {"NORMALIZED", "UNCHANGED", "REPAIRED", "PARSED"}
@@ -380,10 +382,5 @@ def test_cli_seed0_report_claims_hold():
     ]
     assert len(kept) == len(scored.pairs)
     rel = reliability(scored.pairs, groups=scored.pair_types)
-    assert [(b.lo, b.hi) for b in rel.overconfident_bins] == [(0.8, 0.9)]
-    low_url = [
-        (case, ok)
-        for case, (conf, ok), t in zip(kept, scored.pairs, scored.pair_types, strict=True)
-        if 0.8 <= conf < 0.9 and t == "URL"
-    ]
-    assert low_url and all("url/bare-host" in case.source and not ok for case, ok in low_url)
+    assert rel.overconfident_bins == []
+    assert all(ok for _, ok in scored.pairs)

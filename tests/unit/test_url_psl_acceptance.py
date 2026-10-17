@@ -583,7 +583,12 @@ def test_no_suffix_literals_in_url_py() -> None:
 # --------------------------------------------------------------------------- additive only
 
 
-@pytest.mark.parametrize("url", list(_BEFORE_D9), ids=range(len(_BEFORE_D9)))
+# The bare host moved on purpose after D9: its https was a guess, it is now
+# AMBIGUOUS between http and https (PART1 N3, tests/unit/test_confident_wrong.py).
+_UNCHANGED_SINCE_D9 = [u for u in _BEFORE_D9 if u != "example.com/path"]
+
+
+@pytest.mark.parametrize("url", _UNCHANGED_SINCE_D9, ids=range(len(_UNCHANGED_SINCE_D9)))
 def test_existing_output_is_byte_identical(url: str) -> None:
     before = _BEFORE_D9[url]
     r = _run(url)

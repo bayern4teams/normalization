@@ -70,21 +70,11 @@ def _column(t: F, planted: dict[str, int]) -> tuple[Counter[str], NormalizationC
 
 
 # --- recall: realistic disguised nulls in columns of authoritative valid values -------------
-_VALIDATOR_SAYS_AMBIGUOUS = pytest.mark.xfail(
-    strict=True,
-    reason="normalizer finding (lead, HANDOFF escalation j): the PHONE and CURRENCY validators "
-    "return AMBIGUOUS for any non-matching text (`N/A`, `TBD`, `?`), never INVALID, so a "
-    "never-guess detector cannot report them; flips when those validators say INVALID",
-)
 
 
-@pytest.mark.parametrize(
-    "t",
-    [
-        pytest.param(t, marks=_VALIDATOR_SAYS_AMBIGUOUS) if t in {F.PHONE, F.CURRENCY} else t
-        for t in sorted(VALID, key=str)
-    ],
-)
+# PHONE and CURRENCY were strict xfails here (HANDOFF escalation j) until their
+# validators said INVALID for text that names no number or currency (PART1 N7).
+@pytest.mark.parametrize("t", sorted(VALID, key=str))
 def test_recall_planted_sentinels(t: F) -> None:
     planted = dict.fromkeys(SENTINELS, 4)
     col, ctx = _column(t, planted)
@@ -205,8 +195,10 @@ def test_context_changes_validity_phone_region() -> None:
     # lead round 2: without a region a national number is AMBIGUOUS, not invalid: never reported
     assert nat not in no_region
     assert nat not in with_us  # ... and with one it conforms: validity is context-relative
-    assert "n/a" not in no_region  # the region-less validator says AMBIGUOUS (escalation j)
-    assert "n/a" in with_us  # with a region the validator can say no, and it is reported
+    # `n/a` is no number in any region: reported with or without one (PART1 N7;
+    # it used to be AMBIGUOUS without a region, escalation j).
+    assert "n/a" in no_region
+    assert "n/a" in with_us
 
 
 def test_free_text_and_identifier_abstain() -> None:

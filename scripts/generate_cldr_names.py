@@ -163,6 +163,7 @@ def build() -> dict[str, dict[str, str]]:
     countries: dict[str, str | None] = {}
     currency_names: dict[str, str | None] = {}
     currency_symbols: dict[str, str | None] = {}
+    symbol_codes: dict[str, set[str]] = {}
     languages: dict[str, str | None] = {}
 
     for locale_id in localedata.locale_identifiers():
@@ -193,6 +194,7 @@ def build() -> dict[str, dict[str, str]]:
             # ISO-code path already resolves those.
             if isinstance(symbol, str) and symbol.strip() and symbol.strip() != code:
                 _record(currency_symbols, symbol.strip(), code)
+                symbol_codes.setdefault(symbol.strip(), set()).add(code)
 
         for code, name in raw_languages.items():
             # "en_GB" -> "British English": the language subtag is what
@@ -220,6 +222,16 @@ def build() -> dict[str, dict[str, str]]:
             for symbol, code in _resolved(currency_symbols)
             if code in _ISO_4217 and code not in _NON_CURRENCY_CODES and not _is_invisible(symbol)
         },
+        # The symbols `_record` dropped for naming several currencies ("$":
+        # USD in en_US, CAD in en_CA): a value that is one of them is a
+        # currency whose code is unstated, AMBIGUOUS rather than INVALID.
+        "CLDR_SHARED_CURRENCY_SYMBOLS": {
+            symbol: " ".join(sorted(real))
+            for symbol, codes in sorted(symbol_codes.items())
+            if len(real := {c for c in codes if c in _ISO_4217 and c not in _NON_CURRENCY_CODES})
+            > 1
+            and not _is_invisible(symbol)
+        },
         "CLDR_LANGUAGE_NAMES": {
             name: subtag
             for name, subtag in _resolved(languages)
@@ -232,7 +244,11 @@ def build() -> dict[str, dict[str, str]]:
 
 _MODULES: dict[str, tuple[str, ...]] = {
     "_cldr_country_names": ("CLDR_COUNTRY_NAMES",),
-    "_cldr_currency_names": ("CLDR_CURRENCY_NAMES", "CLDR_CURRENCY_SYMBOLS"),
+    "_cldr_currency_names": (
+        "CLDR_CURRENCY_NAMES",
+        "CLDR_CURRENCY_SYMBOLS",
+        "CLDR_SHARED_CURRENCY_SYMBOLS",
+    ),
     "_cldr_language_names": ("CLDR_LANGUAGE_NAMES",),
 }
 
@@ -240,6 +256,7 @@ _SUMMARIES: dict[str, str] = {
     "CLDR_COUNTRY_NAMES": "country/territory name (casefolded) -> ISO 3166-1 alpha-2",
     "CLDR_CURRENCY_NAMES": "currency name (casefolded) -> ISO 4217 alpha-3",
     "CLDR_CURRENCY_SYMBOLS": "currency symbol (as written) -> ISO 4217 alpha-3",
+    "CLDR_SHARED_CURRENCY_SYMBOLS": "currency symbol naming several currencies -> their codes",
     "CLDR_LANGUAGE_NAMES": "language name (casefolded) -> ISO 639 subtag",
 }
 
