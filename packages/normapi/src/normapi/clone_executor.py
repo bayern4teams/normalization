@@ -45,6 +45,7 @@ from normio.connectors import (
 )
 from normio.connectors._sql_base import DESTINATION_INSERT_CHUNK_ROWS, SOURCE_READ_BATCH_ROWS
 
+from normanalysis import disguised_missing
 from normapi import lineage, secrets
 from normapi.adjudication import Adjudication
 from normapi.scaffold_profile import SCAFFOLD_PROFILE
@@ -504,6 +505,7 @@ def create_clone_job(
         "country": request.get("country"),
         "locale": request.get("locale"),
         "max_new_null_rate": request.get("max_new_null_rate"),
+        "confirmed_missing": request.get("confirmed_missing") or {},
         "cross_table_entity_key": request.get("cross_table_entity_key"),
         "in_place": in_place,
         "progress": {
@@ -911,6 +913,7 @@ _AMENDABLE_FIELDS = (
     "typed_destination_columns",
     "max_new_null_rate",
     "cross_table_entity_key",
+    "confirmed_missing",
 )
 
 
@@ -1238,6 +1241,7 @@ def _apply_column(
     code_column: str | None,
     country: str | None,
     bounds: list[str] | None = None,
+    confirmed_missing: Collection[str] = (),
     locale: str | None,
     signals: dict[int, tuple[str, str]] | None,
     country_is_derived: bool,
@@ -1273,6 +1277,10 @@ def _apply_column(
     )
     undecodable = _decode_column(pending, column)
     distinct_values = list({row[column] for _, row in pending if row[column] is not None})
+    # D4: values a person confirmed are disguised nulls in this column are
+    # MISSING, never dispatched (the original stays in the error row).
+    confirmed = {v: _confirmed_missing(v, ctx) for v in distinct_values if v in confirmed_missing}
+    distinct_values = [v for v in distinct_values if v not in confirmed]
     # ADR-018 resolve stage: a value someone already decided is answered
     # from its verdict and never dispatched.
     adjudicated = (
@@ -1321,6 +1329,7 @@ def _apply_column(
             {v: by_value[v] for v in ambiguous}, ambiguous, semantic_type=semantic_type, context=ctx
         )
     by_value.update(adjudicated)
+    by_value.update(confirmed)
     for offset, row in pending:
         original = row[column]
         if original is None:
@@ -1340,6 +1349,8 @@ def _apply_column(
             # while counting `total` for only some produced a report whose
             # own categories exceeded its own denominator.
             stats.record_status(result.normalization_status)
+            if result.original_kind is None and result.normalization_status.value in _CONFORMING:
+                stats.conforming += 1
         errors = _apply_value(
             row,
             result,
@@ -1418,6 +1429,21 @@ def _restore_undecodable(
                 "error": f"value is not valid UTF-8; {kept}",
             }
         )
+
+
+def _confirmed_missing(value: str, ctx: NormalizationContext) -> NormalizedValue:
+    return NormalizedValue(
+        original=value,
+        original_kind=MissingKind.UNKNOWN_VALUE,
+        normalization_status=NormalizationStatus.NORMALIZED,
+        validation_status="MISSING",
+        confidence=1.0,
+        warnings=["confirmed as a disguised missing value for this column"],
+        profile_version=SCAFFOLD_PROFILE.version,
+        env_id="",
+        semantic_type=ctx.semantic_type,
+        context_hash=ctx.context_hash,
+    )
 
 
 def _apply_value(
@@ -1505,6 +1531,17 @@ def _record_country_signal(
 
 
 _SAMPLE_VALUES_PER_COLUMN = 3
+_FAILING_VALUES_KEPT = 10_000
+# What counts as a conforming cell for D4's minority rule.
+_CONFORMING = frozenset(
+    s.value
+    for s in (
+        NormalizationStatus.NORMALIZED,
+        NormalizationStatus.PARSED,
+        NormalizationStatus.REPAIRED,
+        NormalizationStatus.UNCHANGED,
+    )
+)
 
 
 @dataclasses.dataclass
@@ -1538,10 +1575,19 @@ class _ColumnStats:
     # later.
     statuses: Counter[str] = dataclasses.field(default_factory=Counter)
     samples: list[str] = dataclasses.field(default_factory=list)
+    failing: Counter[str] = dataclasses.field(default_factory=Counter)
+    conforming: int = 0
     unstable_samples: list[str] = dataclasses.field(default_factory=list)
 
     def record_invalid(self, value: str) -> None:
         self.invalid += 1
+        # Exact per-value counts for the D4 report; a column with more
+        # distinct failing values than this is dirty data, not disguised
+        # nulls, and the detector reports only table-named ones from it.
+        # ponytail: a fixed bound on distinct values kept; a spillable
+        # counter if a column's report must cover more.
+        if value in self.failing or len(self.failing) < _FAILING_VALUES_KEPT:
+            self.failing[value] += 1
         # A handful of real examples is what makes the finding actionable —
         # "99.2% of this column is not a COUNTRY" is a number, but
         # "Country located primarily in North America" is the answer.
@@ -1569,6 +1615,12 @@ class _ColumnStats:
             "emptied": self.nulled,
             "checked_idempotent": self.checked_stable,
             "not_idempotent": self.unstable,
+            # D4: which values are disguised nulls, with exact counts; a
+            # candidate to confirm (`confirmed_missing`), never applied here.
+            "disguised_missing": [
+                {"value": c.value, "count": c.count, "hint": c.hint.value if c.hint else None}
+                for c in disguised_missing.candidates(self.failing, self.conforming)
+            ],
         }
 
 
@@ -1958,6 +2010,7 @@ def _normalize_chunk(
                 companion=currency_columns.get(column),
                 code_column=code_columns.get(column),
                 bounds=bounds_columns.get(column),
+                confirmed_missing=job.get("confirmed_missing", {}).get(table, {}).get(column, ()),
                 country=country,
                 locale=job.get("locale"),
                 signals=signals if provides_country else None,
