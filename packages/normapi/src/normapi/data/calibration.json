@@ -1,0 +1,933 @@
+{
+ "cost_ratio": 20.0,
+ "delta": 0.05,
+ "corpus": "seeded D6 corpus (gold generate seeds 0-4, n 200) + Raha erroneous cells (raha_calibration_corpus.py) + BART-injected raha.hospital cells (PART1 D2, REPORT.md \u00a711)",
+ "cases": 15086,
+ "types": {
+  "BOOLEAN": {
+   "n": 200,
+   "threshold": null,
+   "abstain_on_everything": true,
+   "bins": [
+    {
+     "lo": 0.0,
+     "hi": 0.1,
+     "count": 0,
+     "mean_confidence": null,
+     "accuracy": null
+    },
+    {
+     "lo": 0.1,
+     "hi": 0.2,
+     "count": 0,
+     "mean_confidence": null,
+     "accuracy": null
+    },
+    {
+     "lo": 0.2,
+     "hi": 0.3,
+     "count": 0,
+     "mean_confidence": null,
+     "accuracy": null
+    },
+    {
+     "lo": 0.3,
+     "hi": 0.4,
+     "count": 0,
+     "mean_confidence": null,
+     "accuracy": null
+    },
+    {
+     "lo": 0.4,
+     "hi": 0.5,
+     "count": 0,
+     "mean_confidence": null,
+     "accuracy": null
+    },
+    {
+     "lo": 0.5,
+     "hi": 0.6,
+     "count": 0,
+     "mean_confidence": null,
+     "accuracy": null
+    },
+    {
+     "lo": 0.6,
+     "hi": 0.7,
+     "count": 0,
+     "mean_confidence": null,
+     "accuracy": null
+    },
+    {
+     "lo": 0.7,
+     "hi": 0.8,
+     "count": 0,
+     "mean_confidence": null,
+     "accuracy": null
+    },
+    {
+     "lo": 0.8,
+     "hi": 0.9,
+     "count": 0,
+     "mean_confidence": null,
+     "accuracy": null
+    },
+    {
+     "lo": 0.9,
+     "hi": 1.0,
+     "count": 200,
+     "mean_confidence": 1.0,
+     "accuracy": 0.0
+    }
+   ]
+  },
+  "COMPANY_NAME": {
+   "n": 24,
+   "threshold": null,
+   "abstain_on_everything": true,
+   "bins": [
+    {
+     "lo": 0.0,
+     "hi": 0.1,
+     "count": 0,
+     "mean_confidence": null,
+     "accuracy": null
+    },
+    {
+     "lo": 0.1,
+     "hi": 0.2,
+     "count": 0,
+     "mean_confidence": null,
+     "accuracy": null
+    },
+    {
+     "lo": 0.2,
+     "hi": 0.3,
+     "count": 0,
+     "mean_confidence": null,
+     "accuracy": null
+    },
+    {
+     "lo": 0.3,
+     "hi": 0.4,
+     "count": 0,
+     "mean_confidence": null,
+     "accuracy": null
+    },
+    {
+     "lo": 0.4,
+     "hi": 0.5,
+     "count": 0,
+     "mean_confidence": null,
+     "accuracy": null
+    },
+    {
+     "lo": 0.5,
+     "hi": 0.6,
+     "count": 0,
+     "mean_confidence": null,
+     "accuracy": null
+    },
+    {
+     "lo": 0.6,
+     "hi": 0.7,
+     "count": 0,
+     "mean_confidence": null,
+     "accuracy": null
+    },
+    {
+     "lo": 0.7,
+     "hi": 0.8,
+     "count": 0,
+     "mean_confidence": null,
+     "accuracy": null
+    },
+    {
+     "lo": 0.8,
+     "hi": 0.9,
+     "count": 0,
+     "mean_confidence": null,
+     "accuracy": null
+    },
+    {
+     "lo": 0.9,
+     "hi": 1.0,
+     "count": 24,
+     "mean_confidence": 1.0,
+     "accuracy": 0.0
+    }
+   ]
+  },
+  "COUNTRY": {
+   "n": 999,
+   "threshold": 1.0,
+   "abstain_on_everything": false,
+   "bins": [
+    {
+     "lo": 0.0,
+     "hi": 0.1,
+     "count": 0,
+     "mean_confidence": null,
+     "accuracy": null
+    },
+    {
+     "lo": 0.1,
+     "hi": 0.2,
+     "count": 0,
+     "mean_confidence": null,
+     "accuracy": null
+    },
+    {
+     "lo": 0.2,
+     "hi": 0.3,
+     "count": 0,
+     "mean_confidence": null,
+     "accuracy": null
+    },
+    {
+     "lo": 0.3,
+     "hi": 0.4,
+     "count": 0,
+     "mean_confidence": null,
+     "accuracy": null
+    },
+    {
+     "lo": 0.4,
+     "hi": 0.5,
+     "count": 0,
+     "mean_confidence": null,
+     "accuracy": null
+    },
+    {
+     "lo": 0.5,
+     "hi": 0.6,
+     "count": 0,
+     "mean_confidence": null,
+     "accuracy": null
+    },
+    {
+     "lo": 0.6,
+     "hi": 0.7,
+     "count": 0,
+     "mean_confidence": null,
+     "accuracy": null
+    },
+    {
+     "lo": 0.7,
+     "hi": 0.8,
+     "count": 0,
+     "mean_confidence": null,
+     "accuracy": null
+    },
+    {
+     "lo": 0.8,
+     "hi": 0.9,
+     "count": 0,
+     "mean_confidence": null,
+     "accuracy": null
+    },
+    {
+     "lo": 0.9,
+     "hi": 1.0,
+     "count": 999,
+     "mean_confidence": 1.0,
+     "accuracy": 1.0
+    }
+   ]
+  },
+  "DATE": {
+   "n": 1522,
+   "threshold": 0.9,
+   "abstain_on_everything": false,
+   "bins": [
+    {
+     "lo": 0.0,
+     "hi": 0.1,
+     "count": 0,
+     "mean_confidence": null,
+     "accuracy": null
+    },
+    {
+     "lo": 0.1,
+     "hi": 0.2,
+     "count": 0,
+     "mean_confidence": null,
+     "accuracy": null
+    },
+    {
+     "lo": 0.2,
+     "hi": 0.3,
+     "count": 0,
+     "mean_confidence": null,
+     "accuracy": null
+    },
+    {
+     "lo": 0.3,
+     "hi": 0.4,
+     "count": 0,
+     "mean_confidence": null,
+     "accuracy": null
+    },
+    {
+     "lo": 0.4,
+     "hi": 0.5,
+     "count": 0,
+     "mean_confidence": null,
+     "accuracy": null
+    },
+    {
+     "lo": 0.5,
+     "hi": 0.6,
+     "count": 0,
+     "mean_confidence": null,
+     "accuracy": null
+    },
+    {
+     "lo": 0.6,
+     "hi": 0.7,
+     "count": 0,
+     "mean_confidence": null,
+     "accuracy": null
+    },
+    {
+     "lo": 0.7,
+     "hi": 0.8,
+     "count": 0,
+     "mean_confidence": null,
+     "accuracy": null
+    },
+    {
+     "lo": 0.8,
+     "hi": 0.9,
+     "count": 922,
+     "mean_confidence": 0.85,
+     "accuracy": 0.21691973969631237
+    },
+    {
+     "lo": 0.9,
+     "hi": 1.0,
+     "count": 600,
+     "mean_confidence": 0.9333333333333333,
+     "accuracy": 1.0
+    }
+   ]
+  },
+  "EMAIL": {
+   "n": 1000,
+   "threshold": 1.0,
+   "abstain_on_everything": false,
+   "bins": [
+    {
+     "lo": 0.0,
+     "hi": 0.1,
+     "count": 0,
+     "mean_confidence": null,
+     "accuracy": null
+    },
+    {
+     "lo": 0.1,
+     "hi": 0.2,
+     "count": 0,
+     "mean_confidence": null,
+     "accuracy": null
+    },
+    {
+     "lo": 0.2,
+     "hi": 0.3,
+     "count": 0,
+     "mean_confidence": null,
+     "accuracy": null
+    },
+    {
+     "lo": 0.3,
+     "hi": 0.4,
+     "count": 0,
+     "mean_confidence": null,
+     "accuracy": null
+    },
+    {
+     "lo": 0.4,
+     "hi": 0.5,
+     "count": 0,
+     "mean_confidence": null,
+     "accuracy": null
+    },
+    {
+     "lo": 0.5,
+     "hi": 0.6,
+     "count": 0,
+     "mean_confidence": null,
+     "accuracy": null
+    },
+    {
+     "lo": 0.6,
+     "hi": 0.7,
+     "count": 0,
+     "mean_confidence": null,
+     "accuracy": null
+    },
+    {
+     "lo": 0.7,
+     "hi": 0.8,
+     "count": 0,
+     "mean_confidence": null,
+     "accuracy": null
+    },
+    {
+     "lo": 0.8,
+     "hi": 0.9,
+     "count": 0,
+     "mean_confidence": null,
+     "accuracy": null
+    },
+    {
+     "lo": 0.9,
+     "hi": 1.0,
+     "count": 1000,
+     "mean_confidence": 1.0,
+     "accuracy": 1.0
+    }
+   ]
+  },
+  "FAMILY_NAME": {
+   "n": 694,
+   "threshold": null,
+   "abstain_on_everything": true,
+   "bins": [
+    {
+     "lo": 0.0,
+     "hi": 0.1,
+     "count": 0,
+     "mean_confidence": null,
+     "accuracy": null
+    },
+    {
+     "lo": 0.1,
+     "hi": 0.2,
+     "count": 0,
+     "mean_confidence": null,
+     "accuracy": null
+    },
+    {
+     "lo": 0.2,
+     "hi": 0.3,
+     "count": 0,
+     "mean_confidence": null,
+     "accuracy": null
+    },
+    {
+     "lo": 0.3,
+     "hi": 0.4,
+     "count": 0,
+     "mean_confidence": null,
+     "accuracy": null
+    },
+    {
+     "lo": 0.4,
+     "hi": 0.5,
+     "count": 0,
+     "mean_confidence": null,
+     "accuracy": null
+    },
+    {
+     "lo": 0.5,
+     "hi": 0.6,
+     "count": 0,
+     "mean_confidence": null,
+     "accuracy": null
+    },
+    {
+     "lo": 0.6,
+     "hi": 0.7,
+     "count": 0,
+     "mean_confidence": null,
+     "accuracy": null
+    },
+    {
+     "lo": 0.7,
+     "hi": 0.8,
+     "count": 0,
+     "mean_confidence": null,
+     "accuracy": null
+    },
+    {
+     "lo": 0.8,
+     "hi": 0.9,
+     "count": 0,
+     "mean_confidence": null,
+     "accuracy": null
+    },
+    {
+     "lo": 0.9,
+     "hi": 1.0,
+     "count": 694,
+     "mean_confidence": 1.0,
+     "accuracy": 0.0
+    }
+   ]
+  },
+  "GIVEN_NAME": {
+   "n": 272,
+   "threshold": null,
+   "abstain_on_everything": true,
+   "bins": [
+    {
+     "lo": 0.0,
+     "hi": 0.1,
+     "count": 0,
+     "mean_confidence": null,
+     "accuracy": null
+    },
+    {
+     "lo": 0.1,
+     "hi": 0.2,
+     "count": 0,
+     "mean_confidence": null,
+     "accuracy": null
+    },
+    {
+     "lo": 0.2,
+     "hi": 0.3,
+     "count": 0,
+     "mean_confidence": null,
+     "accuracy": null
+    },
+    {
+     "lo": 0.3,
+     "hi": 0.4,
+     "count": 0,
+     "mean_confidence": null,
+     "accuracy": null
+    },
+    {
+     "lo": 0.4,
+     "hi": 0.5,
+     "count": 0,
+     "mean_confidence": null,
+     "accuracy": null
+    },
+    {
+     "lo": 0.5,
+     "hi": 0.6,
+     "count": 0,
+     "mean_confidence": null,
+     "accuracy": null
+    },
+    {
+     "lo": 0.6,
+     "hi": 0.7,
+     "count": 0,
+     "mean_confidence": null,
+     "accuracy": null
+    },
+    {
+     "lo": 0.7,
+     "hi": 0.8,
+     "count": 0,
+     "mean_confidence": null,
+     "accuracy": null
+    },
+    {
+     "lo": 0.8,
+     "hi": 0.9,
+     "count": 0,
+     "mean_confidence": null,
+     "accuracy": null
+    },
+    {
+     "lo": 0.9,
+     "hi": 1.0,
+     "count": 272,
+     "mean_confidence": 1.0,
+     "accuracy": 0.0
+    }
+   ]
+  },
+  "NUMERIC": {
+   "n": 6335,
+   "threshold": 0.9,
+   "abstain_on_everything": false,
+   "bins": [
+    {
+     "lo": 0.0,
+     "hi": 0.1,
+     "count": 0,
+     "mean_confidence": null,
+     "accuracy": null
+    },
+    {
+     "lo": 0.1,
+     "hi": 0.2,
+     "count": 0,
+     "mean_confidence": null,
+     "accuracy": null
+    },
+    {
+     "lo": 0.2,
+     "hi": 0.3,
+     "count": 0,
+     "mean_confidence": null,
+     "accuracy": null
+    },
+    {
+     "lo": 0.3,
+     "hi": 0.4,
+     "count": 0,
+     "mean_confidence": null,
+     "accuracy": null
+    },
+    {
+     "lo": 0.4,
+     "hi": 0.5,
+     "count": 0,
+     "mean_confidence": null,
+     "accuracy": null
+    },
+    {
+     "lo": 0.5,
+     "hi": 0.6,
+     "count": 0,
+     "mean_confidence": null,
+     "accuracy": null
+    },
+    {
+     "lo": 0.6,
+     "hi": 0.7,
+     "count": 0,
+     "mean_confidence": null,
+     "accuracy": null
+    },
+    {
+     "lo": 0.7,
+     "hi": 0.8,
+     "count": 0,
+     "mean_confidence": null,
+     "accuracy": null
+    },
+    {
+     "lo": 0.8,
+     "hi": 0.9,
+     "count": 0,
+     "mean_confidence": null,
+     "accuracy": null
+    },
+    {
+     "lo": 0.9,
+     "hi": 1.0,
+     "count": 6335,
+     "mean_confidence": 0.9895027624309393,
+     "accuracy": 1.0
+    }
+   ]
+  },
+  "PHONE": {
+   "n": 702,
+   "threshold": null,
+   "abstain_on_everything": true,
+   "bins": [
+    {
+     "lo": 0.0,
+     "hi": 0.1,
+     "count": 0,
+     "mean_confidence": null,
+     "accuracy": null
+    },
+    {
+     "lo": 0.1,
+     "hi": 0.2,
+     "count": 0,
+     "mean_confidence": null,
+     "accuracy": null
+    },
+    {
+     "lo": 0.2,
+     "hi": 0.3,
+     "count": 0,
+     "mean_confidence": null,
+     "accuracy": null
+    },
+    {
+     "lo": 0.3,
+     "hi": 0.4,
+     "count": 0,
+     "mean_confidence": null,
+     "accuracy": null
+    },
+    {
+     "lo": 0.4,
+     "hi": 0.5,
+     "count": 0,
+     "mean_confidence": null,
+     "accuracy": null
+    },
+    {
+     "lo": 0.5,
+     "hi": 0.6,
+     "count": 0,
+     "mean_confidence": null,
+     "accuracy": null
+    },
+    {
+     "lo": 0.6,
+     "hi": 0.7,
+     "count": 0,
+     "mean_confidence": null,
+     "accuracy": null
+    },
+    {
+     "lo": 0.7,
+     "hi": 0.8,
+     "count": 0,
+     "mean_confidence": null,
+     "accuracy": null
+    },
+    {
+     "lo": 0.8,
+     "hi": 0.9,
+     "count": 0,
+     "mean_confidence": null,
+     "accuracy": null
+    },
+    {
+     "lo": 0.9,
+     "hi": 1.0,
+     "count": 702,
+     "mean_confidence": 1.0,
+     "accuracy": 0.9658119658119658
+    }
+   ]
+  },
+  "POSTCODE": {
+   "n": 338,
+   "threshold": null,
+   "abstain_on_everything": true,
+   "bins": [
+    {
+     "lo": 0.0,
+     "hi": 0.1,
+     "count": 0,
+     "mean_confidence": null,
+     "accuracy": null
+    },
+    {
+     "lo": 0.1,
+     "hi": 0.2,
+     "count": 0,
+     "mean_confidence": null,
+     "accuracy": null
+    },
+    {
+     "lo": 0.2,
+     "hi": 0.3,
+     "count": 0,
+     "mean_confidence": null,
+     "accuracy": null
+    },
+    {
+     "lo": 0.3,
+     "hi": 0.4,
+     "count": 0,
+     "mean_confidence": null,
+     "accuracy": null
+    },
+    {
+     "lo": 0.4,
+     "hi": 0.5,
+     "count": 0,
+     "mean_confidence": null,
+     "accuracy": null
+    },
+    {
+     "lo": 0.5,
+     "hi": 0.6,
+     "count": 0,
+     "mean_confidence": null,
+     "accuracy": null
+    },
+    {
+     "lo": 0.6,
+     "hi": 0.7,
+     "count": 0,
+     "mean_confidence": null,
+     "accuracy": null
+    },
+    {
+     "lo": 0.7,
+     "hi": 0.8,
+     "count": 0,
+     "mean_confidence": null,
+     "accuracy": null
+    },
+    {
+     "lo": 0.8,
+     "hi": 0.9,
+     "count": 0,
+     "mean_confidence": null,
+     "accuracy": null
+    },
+    {
+     "lo": 0.9,
+     "hi": 1.0,
+     "count": 338,
+     "mean_confidence": 1.0,
+     "accuracy": 0.0
+    }
+   ]
+  },
+  "QUANTITY": {
+   "n": 2,
+   "threshold": null,
+   "abstain_on_everything": true,
+   "bins": [
+    {
+     "lo": 0.0,
+     "hi": 0.1,
+     "count": 0,
+     "mean_confidence": null,
+     "accuracy": null
+    },
+    {
+     "lo": 0.1,
+     "hi": 0.2,
+     "count": 0,
+     "mean_confidence": null,
+     "accuracy": null
+    },
+    {
+     "lo": 0.2,
+     "hi": 0.3,
+     "count": 0,
+     "mean_confidence": null,
+     "accuracy": null
+    },
+    {
+     "lo": 0.3,
+     "hi": 0.4,
+     "count": 0,
+     "mean_confidence": null,
+     "accuracy": null
+    },
+    {
+     "lo": 0.4,
+     "hi": 0.5,
+     "count": 0,
+     "mean_confidence": null,
+     "accuracy": null
+    },
+    {
+     "lo": 0.5,
+     "hi": 0.6,
+     "count": 0,
+     "mean_confidence": null,
+     "accuracy": null
+    },
+    {
+     "lo": 0.6,
+     "hi": 0.7,
+     "count": 0,
+     "mean_confidence": null,
+     "accuracy": null
+    },
+    {
+     "lo": 0.7,
+     "hi": 0.8,
+     "count": 0,
+     "mean_confidence": null,
+     "accuracy": null
+    },
+    {
+     "lo": 0.8,
+     "hi": 0.9,
+     "count": 0,
+     "mean_confidence": null,
+     "accuracy": null
+    },
+    {
+     "lo": 0.9,
+     "hi": 1.0,
+     "count": 2,
+     "mean_confidence": 1.0,
+     "accuracy": 1.0
+    }
+   ]
+  },
+  "URL": {
+   "n": 670,
+   "threshold": 1.0,
+   "abstain_on_everything": false,
+   "bins": [
+    {
+     "lo": 0.0,
+     "hi": 0.1,
+     "count": 0,
+     "mean_confidence": null,
+     "accuracy": null
+    },
+    {
+     "lo": 0.1,
+     "hi": 0.2,
+     "count": 0,
+     "mean_confidence": null,
+     "accuracy": null
+    },
+    {
+     "lo": 0.2,
+     "hi": 0.3,
+     "count": 0,
+     "mean_confidence": null,
+     "accuracy": null
+    },
+    {
+     "lo": 0.3,
+     "hi": 0.4,
+     "count": 0,
+     "mean_confidence": null,
+     "accuracy": null
+    },
+    {
+     "lo": 0.4,
+     "hi": 0.5,
+     "count": 0,
+     "mean_confidence": null,
+     "accuracy": null
+    },
+    {
+     "lo": 0.5,
+     "hi": 0.6,
+     "count": 0,
+     "mean_confidence": null,
+     "accuracy": null
+    },
+    {
+     "lo": 0.6,
+     "hi": 0.7,
+     "count": 0,
+     "mean_confidence": null,
+     "accuracy": null
+    },
+    {
+     "lo": 0.7,
+     "hi": 0.8,
+     "count": 0,
+     "mean_confidence": null,
+     "accuracy": null
+    },
+    {
+     "lo": 0.8,
+     "hi": 0.9,
+     "count": 0,
+     "mean_confidence": null,
+     "accuracy": null
+    },
+    {
+     "lo": 0.9,
+     "hi": 1.0,
+     "count": 670,
+     "mean_confidence": 1.0,
+     "accuracy": 1.0
+    }
+   ]
+  }
+ },
+ "built_on": "fix/confident-wrong + fix/verdict-identity + fix/lineage-and-dates + fix/calibration-coverage, 2026-10-17"
+}

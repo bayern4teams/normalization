@@ -68,3 +68,12 @@ def test_the_cli_writes_the_table(tmp_path: Path) -> None:
     table = json.loads(out.read_text())
     assert table["cost_ratio"] == 20
     assert "NUMERIC" in table["types"]
+
+
+def test_the_committed_table_loads_and_names_its_corpus() -> None:
+    clone_executor._calibration_table.cache_clear()
+    table = clone_executor._calibration_table()
+    assert {"DATE", "NUMERIC", "PHONE"} <= set(table)
+    for entry in table.values():
+        assert entry["threshold"] is None or 0 < entry["threshold"] <= 1
+        assert entry["abstain_on_everything"] is (entry["threshold"] is None)
