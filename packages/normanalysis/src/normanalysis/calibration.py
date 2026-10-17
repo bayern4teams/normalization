@@ -11,9 +11,15 @@ Measuring comes before tuning.
 * `chow_threshold`: the abstain/emit threshold from a cost ratio the caller must state.
 * `risk_coverage`: error rate among the answers kept, as the threshold rises, and its area (AURC).
 
-ponytail: conformal prediction (the report's step 3: candidate sets with a coverage guarantee,
-MAPIE) and per-source `calibration_bins` persisted for dispatch are deferred to Part 3; the trigger
-is a labelled corpus large enough per semantic type that these bins are not mostly noise.
+* `risk_controlled_threshold`: the guarantee (the report's step 3, ADR-019 amended): the lowest
+  threshold whose emitted answers' error rate is bounded by 1 / (1 + cost ratio), with probability
+  at least 1 - delta (Learn-then-Test, fixed-sequence Hoeffding).
+* `calibration_table`: per semantic type, that threshold and the reliability bins: the versioned
+  data a clone uses to report (and, opted in, to abstain) by calibrated confidence.
+
+ponytail: conformal prediction *sets* (MAPIE) are not built: every normalizer emits one answer, so
+a set reduces to emit-or-abstain, which `risk_controlled_threshold` guarantees directly. Upgrade:
+conformal sets once a normalizer scores several candidates per value.
 """
 
 from __future__ import annotations
@@ -151,6 +157,91 @@ def chow_threshold(pairs: Pairs, cost_ratio: float) -> float | None:
         if cost < best_cost:
             best_t, best_cost = conf, cost
     return best_t
+
+
+def risk_controlled_threshold(
+    pairs: Pairs, cost_ratio: float, delta: float = _DELTA
+) -> float | None:
+    """The lowest stated confidence t such that, for every threshold from the highest down to t,
+    the Hoeffding upper bound of the error rate among the answers at >= t is at most
+    alpha = 1 / (1 + cost_ratio). Testing in that fixed order and stopping at the first failure
+    keeps the chance that any accepted threshold's true risk exceeds alpha at most `delta`, with
+    no Bonferroni term (Learn-then-Test, Angelopoulos et al. 2021). The bound is the exact
+    binomial (Clopper-Pearson) one. `math.inf`: no threshold
+    passes, abstain on everything; `None`: no pairs."""
+    if not 0 < cost_ratio < math.inf:
+        raise ValueError(f"cost_ratio must be positive and finite, got {cost_ratio!r}")
+    _check(pairs)
+    if not pairs:
+        return None
+    alpha = 1 / (1 + cost_ratio)
+    best = math.inf
+    kept = errors = 0
+    for conf, group in groupby(sorted(pairs, key=lambda p: -p[0]), key=lambda p: p[0]):
+        oks = [ok for _, ok in group]
+        kept += len(oks)
+        errors += len(oks) - sum(oks)
+        if _binomial_upper(errors, kept, delta) > alpha:
+            break
+        best = conf
+    return best
+
+
+def _binomial_cdf(k: int, n: int, p: float) -> float:
+    """P(X <= k) for X ~ Binomial(n, p), summed in log space (n up to millions)."""
+    if p <= 0:
+        return 1.0
+    if p >= 1:
+        return 1.0 if k >= n else 0.0
+    log_p, log_q = math.log(p), math.log1p(-p)
+    return min(
+        1.0,
+        sum(
+            math.exp(
+                math.lgamma(n + 1) - math.lgamma(i + 1) - math.lgamma(n - i + 1)
+                + i * log_p + (n - i) * log_q
+            )
+            for i in range(k + 1)
+        ),
+    )  # fmt: skip
+
+
+def _binomial_upper(errors: int, n: int, delta: float) -> float:
+    """Clopper-Pearson one-sided upper bound of the error rate: the p at which seeing at most
+    `errors` in `n` has probability `delta`. Exact for the binomial, so tighter than Hoeffding
+    (0 errors in 500 bounds the rate at 0.6% instead of 5.5%) and still distribution-free."""
+    if errors >= n:
+        return 1.0
+    lo, hi = errors / n, 1.0
+    while hi - lo > 2 * math.ulp(hi):  # bisection to float resolution
+        mid = (lo + hi) / 2
+        if _binomial_cdf(errors, n, mid) > delta:
+            lo = mid
+        else:
+            hi = mid
+    return hi
+
+
+def calibration_table(
+    pairs: Pairs, pair_types: Sequence[str], *, cost_ratio: float, bins: int = _BINS
+) -> dict[str, dict[str, Any]]:
+    """Per semantic type: the risk-controlled threshold (None with `abstain_on_everything` when
+    none passes), the number of answers and the reliability bins."""
+    if len(pairs) != len(pair_types):
+        raise ValueError("pairs and pair_types differ in length")
+    by_type: dict[str, list[tuple[float, bool]]] = {}
+    for pair, label in zip(pairs, pair_types, strict=True):
+        by_type.setdefault(label, []).append(pair)
+    table: dict[str, dict[str, Any]] = {}
+    for label, group in sorted(by_type.items()):
+        t = risk_controlled_threshold(group, cost_ratio)
+        table[label] = {
+            "n": len(group),
+            "threshold": None if t is None or math.isinf(t) else t,
+            "abstain_on_everything": t is not None and math.isinf(t),
+            "bins": [asdict(b) for b in reliability(group, bins=bins).bins],
+        }
+    return table
 
 
 def risk_coverage(pairs: Pairs) -> tuple[list[tuple[float, float]], float | None]:
