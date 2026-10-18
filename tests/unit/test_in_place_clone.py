@@ -80,7 +80,12 @@ class TestInPlaceJobWiring:
                 self.saved = {}
 
             def get_connection(self, connection_id):
-                return {"connection_id": connection_id, "engine": "postgres"}
+                return {
+                    "connection_id": connection_id,
+                    "engine": "postgres",
+                    "host": "h",
+                    "port": 5432,
+                }
 
             def create_clone_job(self, job_id, job):
                 self.saved[job_id] = job
