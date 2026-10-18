@@ -1,11 +1,11 @@
 """Run one clone job end to end through the real API (in-process) and record what it did.
 
 Used for docs/benchmarks/REPORT.md. Credentials are the project's own test fixtures for the
-isolated `normbench` docker stack (compose.yaml + .tmp/normbench.override.yaml); never point
+isolated `normbench` docker stack (compose.yaml + $BENCH_DIR/compose.yaml); never point
 this at a real database. Every number it records is re-checked by direct SQL in the report.
 
     uv run python docs/benchmarks/scripts/clone_bench.py --engine postgres --src-db pagila \
-        --dst-db pagila_out --out .tmp/bench/pagila.json [--country US --locale en-US]
+        --dst-db pagila_out --out $BENCH_DIR/work/bench/pagila.json [--country US --locale en-US]
 """
 
 from __future__ import annotations
@@ -91,7 +91,7 @@ def main() -> None:  # noqa: PLR0915 - one linear benchmark script
     os.environ.setdefault("NORM_SECRET_KEY", Fernet.generate_key().decode())
     from normapi.app import create_app  # noqa: PLC0415 - after NORM_SECRET_KEY is set
 
-    bench = Path(".tmp/bench")
+    bench = Path(os.environ["BENCH_DIR"]) / "work" / "bench"
     bench.mkdir(parents=True, exist_ok=True)
     client = TestClient(create_app(pg_dsn=APP_DSN, custom_dictionaries_dir=bench / "custom-dicts"))
 

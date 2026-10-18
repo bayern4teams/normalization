@@ -125,7 +125,7 @@ convention:
 
 ## 9. Additions from the improvement-report defects (D1-D12, 2026-10)
 
-Plan: `docs/plans/DEFECTS_IMPLEMENTATION_PLAN.md`; state per item: `docs/plans/defects/HANDOFF.md`.
+Plan: `docs/archive/plans/DEFECTS_IMPLEMENTATION_PLAN.md`; state per item: `docs/archive/plans/defects/HANDOFF.md`.
 
 | item | where | contract change |
 |---|---|---|

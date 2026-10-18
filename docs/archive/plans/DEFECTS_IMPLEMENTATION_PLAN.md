@@ -91,8 +91,8 @@ the implementation, by the verifier (§4), never fitted afterwards.
 | role | model / effort | does |
 |---|---|---|
 | **Lead** (the launched session) | Opus 5.5, high | designs, does the complex and cross-cutting items itself, writes worker briefs, reviews and approves/rejects *every* result, owns commits, `HANDOFF.md`, phase gates, notifications |
-| **defects-worker** (`.claude/agents/defects-worker.md`) | Sonnet 5.5, high | implements one item inside named files; reports to `.handoff/<id>.report.md` |
-| **defects-verifier** (`.claude/agents/defects-verifier.md`) | Sonnet 5.5, high | *derive*: writes acceptance checks from the report before implementation; *attack*: tries to break the result afterwards; read-only on `src/` |
+| **defects-worker** (`docs/archive/agents/defects-worker.md`) | Sonnet 5.5, high | implements one item inside named files; reports to `.handoff/<id>.report.md` |
+| **defects-verifier** (`docs/archive/agents/defects-verifier.md`) | Sonnet 5.5, high | *derive*: writes acceptance checks from the report before implementation; *attack*: tries to break the result afterwards; read-only on `src/` |
 
 Measured in the reference project: the frontmatter `model` key is honoured but a worker's `effort` could not
 be confirmed as high (one worker reported low). So: the lead **always passes `model: "sonnet"`

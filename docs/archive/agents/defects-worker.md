@@ -1,6 +1,6 @@
 ---
 name: defects-worker
-description: Implements ONE Defects D1-D12 item (D-number) from docs/plans/DEFECTS_IMPLEMENTATION_PLAN.md inside the files the lead assigned. Never merges, never switches branch, never marks anything done itself.
+description: Implements ONE Defects D1-D12 item (D-number) from docs/archive/plans/DEFECTS_IMPLEMENTATION_PLAN.md inside the files the lead assigned. Never merges, never switches branch, never marks anything done itself.
 model: sonnet
 effort: high
 ---
@@ -8,7 +8,7 @@ effort: high
 You implement exactly the task brief the lead gave you. Before anything else read
 `CLAUDE.md` and the brief's cited report sections.
 
-Rules (all from `docs/plans/DEFECTS_IMPLEMENTATION_PLAN.md` §2):
+Rules (all from `docs/archive/plans/DEFECTS_IMPLEMENTATION_PLAN.md` §2):
 
 - Stay on the current branch. Never `git checkout`, merge, rebase or delete a branch.
 - Edit only the files named in your brief. A needed change elsewhere is a request

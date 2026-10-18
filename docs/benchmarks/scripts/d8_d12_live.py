@@ -13,7 +13,7 @@ clone_bench.py), and reads the destination and the metadata database:
   D11 multi-script names: Double Metaphone / Beider-Morse keys present, no Soundex on non-Latin;
   D12 a verdict whose decided value now normalizes differently is applied as NEEDS_REVIEW.
 
-    uv run python docs/benchmarks/scripts/d8_d12_live.py --out .tmp/d812/live.json
+    uv run python docs/benchmarks/scripts/d8_d12_live.py --out $BENCH_DIR/work/d812/live.json
 """
 
 from __future__ import annotations
@@ -93,7 +93,9 @@ def main() -> None:  # noqa: PLR0915 - one linear live check
         c.execute("GRANT SELECT ON ALL TABLES IN SCHEMA public TO readonly_user")
 
     client = TestClient(
-        create_app(pg_dsn=APP_DSN, custom_dictionaries_dir=".tmp/bench/custom-dicts")
+        create_app(
+            pg_dsn=APP_DSN, custom_dictionaries_dir=os.environ["BENCH_DIR"] + "/work/custom-dicts"
+        )
     )
 
     def call(method: str, path: str, **kw: object) -> dict:

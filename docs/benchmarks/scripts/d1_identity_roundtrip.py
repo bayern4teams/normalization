@@ -105,7 +105,9 @@ def main() -> None:  # noqa: PLR0915 - one linear live check
     from normapi.app import create_app  # noqa: PLC0415 - after NORM_SECRET_KEY is set
 
     client = TestClient(
-        create_app(pg_dsn=APP_DSN, custom_dictionaries_dir=".tmp/bench/custom-dicts")
+        create_app(
+            pg_dsn=APP_DSN, custom_dictionaries_dir=os.environ["BENCH_DIR"] + "/work/custom-dicts"
+        )
     )
 
     def call(method: str, path: str, **kw: object) -> dict:

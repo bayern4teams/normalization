@@ -1,6 +1,6 @@
 # Defects D1-D12 — final report
 
-Branch `feat/defects-fixes`, plan `docs/plans/DEFECTS_IMPLEMENTATION_PLAN.md`, report `docs/improvement-report.md`
+Branch `feat/defects-fixes`, plan `docs/archive/plans/DEFECTS_IMPLEMENTATION_PLAN.md`, report `docs/improvement-report.md`
 Part 1. Written 2026-10-06 at the end of Phase 5. **Nothing is merged: the user verifies locally and merges.**
 
 ## Outcome

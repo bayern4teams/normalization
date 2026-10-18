@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 import uuid
@@ -58,10 +59,10 @@ def main() -> None:
         ch.command(f"CREATE DATABASE `{src}`")
         ch.command(f"CREATE TABLE `{src}`.t (id Int32, d String) ENGINE = MergeTree ORDER BY id")
         ch.insert(f"`{src}`.t", [list(r) for r in ROWS], column_names=["id", "d"])
-    fc = f".tmp/d5b_{tag}.json"
+    fc = f"{os.environ['BENCH_DIR']}/work/d5b_{tag}.json"
     with open(fc, "w") as fh:
         json.dump({"t": {"d": "DATE"}}, fh)
-    bench = f".tmp/d5b_{tag}_bench.json"
+    bench = f"{os.environ['BENCH_DIR']}/work/d5b_{tag}_bench.json"
     subprocess.run(
         [sys.executable, "docs/benchmarks/scripts/clone_bench.py", "--engine", args.engine,
          "--src-db", src, "--dst-db", dst, "--no-autodetect", "--field-configs", fc,

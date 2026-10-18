@@ -6,7 +6,7 @@ that text). Prints Cohen's kappa, Krippendorff's alpha (nominal), the share of v
 differently or marked "can't tell" (the corpus's ambiguity rate), and how that set compares with
 what the engine refused.
 
-    uv run python docs/benchmarks/scripts/kappa_score.py .tmp/labels
+    uv run python docs/benchmarks/scripts/kappa_score.py $BENCH_DIR/work/labels
 """
 
 from __future__ import annotations
