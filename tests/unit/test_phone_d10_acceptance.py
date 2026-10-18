@@ -193,6 +193,26 @@ class TestNoExtensionOutputUnchanged:
                 and got["display"] == row["value"]
             ):
                 continue
+            # fix/confident-wrong (found live): an INVALID number keeps its
+            # original and claims no comparison or search key; its status and
+            # its parse in `structured` are unchanged.
+            if (
+                got != row["out"]
+                and row["out"]["status"] == got["status"] == "INVALID"
+                and got["display"] == row["value"]
+                and got["comparison"] is None
+                and got["search"] is None
+            ):
+                continue
+            # fix/confident-wrong (PART1 N7): text libphonenumber says is no
+            # number in any region moves AMBIGUOUS -> INVALID, original kept.
+            if (
+                got != row["out"]
+                and row["out"]["status"] == "AMBIGUOUS"
+                and got["status"] == "INVALID"
+                and got["display"] == row["value"]
+            ):
+                continue
             if got != row["out"]:
                 moved.append((row["value"], row["country"], row["default_region"]))
         assert moved == [], f"{len(moved)} extension-free outputs changed, e.g. {moved[:5]}"
@@ -207,7 +227,9 @@ class TestNoExtensionOutputUnchanged:
             assert s.structured["e164"] is not None
             n = phonenumbers.parse(s.structured["e164"], None)
             assert v == phonenumbers.format_number(n, Fmt.RFC3966), row["value"]
-            assert s.comparison == s.structured["e164"], row["value"]  # E.164 when no ext
+            # E.164 when no ext; an INVALID number claims no key (PART1, D8-D12 live run)
+            expected = s.structured["e164"] if s.normalization_status.value != "INVALID" else None
+            assert s.comparison == expected, row["value"]
 
 
 @pytest.mark.unit

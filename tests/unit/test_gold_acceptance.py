@@ -244,19 +244,24 @@ class TestDefaultEngine:
 
 @pytest.mark.unit
 class TestCorpusIsNotVacuous:
-    def test_real_engine_is_wrong_or_abstains_on_at_least_one_generated_case(self) -> None:
+    def test_a_guessing_engine_is_caught_on_the_generated_corpus(self) -> None:
+        # This used to require the real engine to miss at least one case. Since
+        # PART1 N3/N4/N9 it scores 100% on every seeded corpus, so the corpus's
+        # power is shown the other way: an engine that answers where the real
+        # one abstains (its first candidate, at full confidence) must be caught.
         cases = generate_corpus(seed=0, n_per_injector=30)
-        r = score(cases, default_engine)
-        out = _outcomes(r, cases)
-        bad = [
-            (c, o)
-            for c, o in zip(cases, out, strict=True)
-            if o in {"wrong-confident", "over-abstain"}
-        ]
-        assert bad, "the engine scores 100%: the injectors only test what already works"
-        assert _count(r, "wrong-confident") + _count(r, "over-abstain") == len(bad)
-        # and the engine is not simply broken: the same corpus is mostly right
-        assert _count(r, "correct") + _count(r, "correct-abstain") > len(cases) // 2
+
+        def guessing_engine(case: GoldCase) -> tuple[str, str | None, float | None]:
+            status, value, confidence = default_engine(case)
+            if status == "AMBIGUOUS" and case.candidates:
+                return "NORMALIZED", case.candidates[0], 1.0
+            return status, value, confidence
+
+        r = score(cases, guessing_engine)
+        assert _count(r, "wrong-confident") > 0
+        # and the real engine is not simply broken: the same corpus is mostly right
+        real = score(cases, default_engine)
+        assert _count(real, "correct") + _count(real, "correct-abstain") > len(cases) // 2
 
     def test_oracle_on_the_generated_corpus_is_all_correct(self) -> None:
         cases = generate_corpus(seed=3, n_per_injector=10)

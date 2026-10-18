@@ -20,10 +20,13 @@ genuinely ambiguous — `AMBIGUOUS`, never a guess — unless
 from __future__ import annotations
 
 import re
+from decimal import Decimal
+from functools import cache
 from typing import TYPE_CHECKING
 
 import blake3
 import pyarrow as pa
+from babel import Locale, UnknownLocaleError
 from babel.languages import get_official_languages
 from babel.numbers import NumberFormatError, parse_decimal
 from normcore.context import NormalizationContext
@@ -92,8 +95,8 @@ class NumericNormalizer:
         if symbol_match:
             leading_symbol, body = symbol_match.group(1), symbol_match.group(2)
 
-        locale = _resolve_locale(ctx)
-        if locale is None:
+        locales = _resolve_locales(ctx)
+        if not locales:
             if _is_ambiguous_number(body):
                 return _ambiguous(value, ctx)
             # Without a locale, Babel has to be told SOMETHING, and the
@@ -114,10 +117,22 @@ class NumericNormalizer:
         # normalization is safe and unconditional.
         normalized_body = body.replace("'", "\u2019")
 
-        try:
-            decimal_value = parse_decimal(normalized_body, locale=locale or "en_US")
-        except (NumberFormatError, ValueError):
+        # Every locale the context names is a reading; the value is what the
+        # readings agree on. A country's official languages can disagree
+        # (`1,234`: 1234 in en_CA, 1.234 in fr_CA), and then it is AMBIGUOUS.
+        readings: dict[Decimal, str | None] = {}
+        candidates: list[str | None] = [*locales] or [None]
+        for candidate in candidates:
+            try:
+                parsed = parse_decimal(normalized_body, locale=candidate or "en_US")
+            except (NumberFormatError, ValueError):
+                continue
+            readings.setdefault(parsed, candidate)
+        if not readings:
             return _invalid(value, ctx)
+        if len(readings) > 1:
+            return _ambiguous(value, ctx)
+        ((decimal_value, locale),) = readings.items()
 
         if is_negative_paren:
             decimal_value = -decimal_value
@@ -195,39 +210,36 @@ class NumericNormalizer:
         return None
 
 
-def _resolve_locale(ctx: NormalizationContext) -> str | None:
+def _resolve_locales(ctx: NormalizationContext) -> list[str]:
+    """The locales `ctx` states: its locale, else every official language
+    of its country that Babel has data for (`no_NO` is not one: asking for
+    it raised UnknownLocaleError out of the normalizer, PART1 N11)."""
     if ctx.locale:
-        return ctx.locale.replace("-", "_")
+        known = _known(ctx.locale.replace("-", "_"))
+        return [known] if known else []
     if ctx.country:
-        return _locale_for_country(ctx.country.upper())
-    return None
+        return list(_locales_for_country(ctx.country.upper()))
+    return []
 
 
-def _locale_for_country(country: str) -> str:
-    """Babel needs a real `language_TERRITORY` locale tag, not a bare
-    ISO country code — `parse_decimal(..., locale="US")` raises
-    `UnknownLocaleError` outright (found empirically in M5). Most
-    countries resolve via `babel.languages.get_official_languages()`;
-    the handful that don't (the US notably has no CLDR-designated
-    "official" language at the territory level, despite English being
-    the obvious de facto choice) are covered by this small curated
-    fallback, extended as new gaps are found — the same evidence-driven
-    policy as normalizers/country_codes.py's alias table."""
-    fallback = _COUNTRY_LOCALE_FALLBACK.get(country)
-    if fallback is not None:
-        return fallback
-    languages = get_official_languages(country)
-    if languages:
-        return f"{languages[0]}_{country}"
-    return f"en_{country}"
+@cache
+def _known(locale: str) -> str | None:
+    """`locale` when Babel has its data, else None."""
+    try:
+        Locale.parse(locale)
+    except (ValueError, UnknownLocaleError):
+        return None
+    return locale
 
 
-_COUNTRY_LOCALE_FALLBACK: dict[str, str] = {
-    "US": "en_US",
-    "GB": "en_GB",
-    "AU": "en_AU",
-    "CA": "en_CA",
-}
+@cache
+def _locales_for_country(country: str) -> tuple[str, ...]:
+    """Taking the first official language was a guess where they differ."""
+    return tuple(
+        locale
+        for language in get_official_languages(country, de_facto=True)
+        if (locale := _known(f"{language}_{country}")) is not None
+    )
 
 
 def _is_ambiguous_number(body: str) -> bool:

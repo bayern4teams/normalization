@@ -19,11 +19,13 @@ en_CA), `¥` (JPY in ja, CNY in zh) and `kr` (four Nordic currencies).
 from __future__ import annotations
 
 import re
+from functools import cache
 from typing import TYPE_CHECKING
 
 import blake3
 import pyarrow as pa
 import pycountry
+from babel.numbers import get_territory_currencies
 from normcore.context import NormalizationContext
 from normcore.enums import FieldSemanticType, MissingKind, NormalizationStatus, Reversibility
 from normcore.models import NormalizedValue
@@ -32,7 +34,11 @@ from normcore.rules import ComponentVersionInfo, ExplanationText, ValidationOutc
 from normcore.trace import TraceStep
 
 from normalizers import text_ops
-from normalizers._cldr_currency_names import CLDR_CURRENCY_NAMES, CLDR_CURRENCY_SYMBOLS
+from normalizers._cldr_currency_names import (
+    CLDR_CURRENCY_NAMES,
+    CLDR_CURRENCY_SYMBOLS,
+    CLDR_SHARED_CURRENCY_SYMBOLS,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -69,18 +75,6 @@ def _is_real_iso_code(code: str) -> bool:
     return pycountry.currencies.get(alpha_3=code) is not None
 
 
-# Symbols are inherently ambiguous (§47) EXCEPT where a symbol is only
-# used by one currency IN PRACTICE — which is a judgement CLDR does not
-# make, so these three stay hand-curated and are consulted BEFORE the
-# generated table. CLDR drops "¥" (ja uses it for JPY, zh for CNY) and
-# has no unambiguous entry for "£" (several locales use it for their own
-# pound), yet in real-world data both overwhelmingly mean JPY and GBP.
-_UNAMBIGUOUS_SYMBOLS: dict[str, str] = {
-    "€": "EUR",
-    "£": "GBP",
-    "¥": "JPY",
-}
-
 # Symbols safe to look for ANYWHERE in the value ("₹1,234"). A symbol
 # containing letters is only ever matched against the whole value: "Ar",
 # "Br", "Ft" and "kr" are ordinary words in some language, and scanning
@@ -90,17 +84,6 @@ _SUBSTRING_SYMBOLS: dict[str, str] = {
     symbol: code
     for symbol, code in CLDR_CURRENCY_SYMBOLS.items()
     if not any(ch.isalpha() for ch in symbol)
-}
-
-# "$" specifically requires country/locale context — curated from
-# common real-world data, not exhaustive.
-_DOLLAR_COUNTRY_MAP: dict[str, str] = {
-    "US": "USD",
-    "CA": "CAD",
-    "AU": "AUD",
-    "NZ": "NZD",
-    "SG": "SGD",
-    "HK": "HKD",
 }
 
 # CLDR ships singular display names only ("US Dollar"), so the plural and
@@ -147,7 +130,13 @@ class CurrencyNormalizer:
         canonical, confidence = _resolve_currency(cleaned, ctx)
 
         if canonical is None:
-            return _ambiguous(value, ctx)
+            # AMBIGUOUS only when the value is a symbol CLDR gives to several
+            # currencies (`$`, `kr`); text that names no currency (`TBD`,
+            # `N/A`) is INVALID, so a sentinel is visible (PART1 N7).
+            shared = _shared_symbol(cleaned.strip())
+            if shared is None:
+                return _ambiguous(value, ctx, status=NormalizationStatus.INVALID)
+            return _ambiguous(value, ctx, candidates=shared.split())
 
         structured = {
             "original_currency": cleaned,
@@ -189,11 +178,15 @@ class CurrencyNormalizer:
             return ValidationOutcome(
                 is_valid=False, status="MISSING", reason=result.original_kind.value
             )
-        is_valid = result.normalization_status is not NormalizationStatus.AMBIGUOUS
+        is_valid = result.normalization_status is NormalizationStatus.NORMALIZED
         return ValidationOutcome(
             is_valid=is_valid,
             status=result.validation_status or "UNKNOWN",
-            reason=None if is_valid else "ambiguous currency symbol without context",
+            reason=None
+            if is_valid
+            else "ambiguous currency symbol without context"
+            if result.normalization_status is NormalizationStatus.AMBIGUOUS
+            else "names no currency",
         )
 
     def explain(self, result: NormalizedValue) -> Explanation:
@@ -254,11 +247,10 @@ def resolve_name(lowered: str) -> str | None:
 
 
 def _resolve_symbol(cleaned: str) -> str | None:
-    """Hand-curated symbols, then CLDR's whole-value, then CLDR's scannable."""
-    for symbol, code in _UNAMBIGUOUS_SYMBOLS.items():
-        if symbol in cleaned:
-            return code
-
+    """CLDR's whole-value symbols, then its scannable ones. A symbol CLDR
+    gives to several currencies is in neither (`¥` is JPY in ja, CNY in zh;
+    `£` is GBP, FKP, GIP, SHP, SSP): the hand list that read `¥` as JPY and
+    `£` as GBP was a guess (PART1 N7); context resolves them instead."""
     # Whole-value before substring, so the letter-bearing symbols ("A$",
     # "R$", "$US", "Afl.", "zł") resolve without ever being scanned for
     # inside free text.
@@ -285,33 +277,60 @@ def _resolve_currency(cleaned: str, ctx: NormalizationContext) -> tuple[str | No
     if symbol is not None:
         return symbol, 0.95
 
-    # "$" reaches here only when it is NOT one of the disambiguated forms
-    # above ("A$", "CA$", "$US"), so a bare "$" needs context or stays
-    # ambiguous — never guessed (§47).
-    #
-    # The value must BE the sign, not merely contain it. `"$" in cleaned`
-    # made any string with a dollar sign anywhere in it resolve to the
-    # context country's dollar: measured on a real source, the range
-    # strings `$5 mil. - $10 mil.` and `Under $500,000` all came back VALID
-    # USD at 0.8 confidence under `country=US`. That is a guess about
-    # arbitrary prose, which §47 and this project's "never guess on
-    # ambiguous data" rule both forbid — and it is the same class of bug
-    # the disambiguated forms above exist to avoid.
-    if cleaned.strip() == "$":
-        country = (ctx.country or "").upper()
-        if country in _DOLLAR_COUNTRY_MAP:
-            return _DOLLAR_COUNTRY_MAP[country], 0.8
+    # A symbol several currencies share (`$`, `¥`, `kr`) resolves only by
+    # context: the one candidate that is the context country's own tender in
+    # CLDR. The value must BE the symbol: `$5 mil. - $10 mil.` under
+    # country=US used to come back USD at 0.8, a guess about prose (§47).
+    shared = CLDR_SHARED_CURRENCY_SYMBOLS.get(cleaned.strip())
+    if shared is not None and ctx.country:
+        local = _tender(ctx.country.upper())
+        hits = [code for code in shared.split() if code in local]
+        if len(hits) == 1:
+            return hits[0], 0.8
 
     return None, 0.0
 
 
-def _ambiguous(value: str, ctx: NormalizationContext) -> NormalizedValue:
+def _shared_symbol(cleaned: str) -> str | None:
+    """The codes of the shared symbol `cleaned` is, or holds (`$100`). As with
+    the unshared ones, a symbol with letters (`kr`, `Rs`) only as the whole
+    value: inside text it is an ordinary word."""
+    if (codes := CLDR_SHARED_CURRENCY_SYMBOLS.get(cleaned)) is not None:
+        return codes
+    return next(
+        (
+            codes
+            for symbol, codes in CLDR_SHARED_CURRENCY_SYMBOLS.items()
+            if symbol in cleaned and not any(ch.isalpha() for ch in symbol)
+        ),
+        None,
+    )
+
+
+@cache
+def _tender(country: str) -> frozenset[str]:
+    try:
+        return frozenset(get_territory_currencies(country, tender=True, non_tender=False))
+    except (ValueError, LookupError):
+        return frozenset()
+
+
+def _ambiguous(
+    value: str,
+    ctx: NormalizationContext,
+    *,
+    candidates: list[str] | None = None,
+    status: NormalizationStatus = NormalizationStatus.AMBIGUOUS,
+) -> NormalizedValue:
+    structured: dict[str, object] = {"original_currency": value, "canonical_currency": None}
+    if candidates:
+        structured["candidates"] = candidates
     return NormalizedValue(
         original=value,
         display=value,
-        structured={"original_currency": value, "canonical_currency": None},
-        validation_status="AMBIGUOUS",
-        normalization_status=NormalizationStatus.AMBIGUOUS,
+        structured=structured,
+        validation_status=status.value,
+        normalization_status=status,
         confidence=0.0,
         trace=[_resolve_trace_step(value, changed=False)],
         lossiness=Reversibility.LOSSLESS,

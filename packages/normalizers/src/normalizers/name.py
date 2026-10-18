@@ -51,6 +51,7 @@ from normalizers.unicode_normalizer import (
     UnicodeProcessingOptions,
     UnicodeProcessingResult,
     build_unicode_trace,
+    disclose_repair,
 )
 
 if TYPE_CHECKING:
@@ -209,9 +210,10 @@ class NameNormalizer:
         trace = build_unicode_trace(unicode_result, enabled=ctx.include_trace)
 
         if ctx.semantic_type in (FieldSemanticType.GIVEN_NAME, FieldSemanticType.FAMILY_NAME):
-            return _normalize_single_component(value, cleaned, trace, unicode_result, ctx)
-
-        return self._normalize_person_name(value, cleaned, trace, unicode_result, ctx)
+            result = _normalize_single_component(value, cleaned, trace, unicode_result, ctx)
+        else:
+            result = self._normalize_person_name(value, cleaned, trace, unicode_result, ctx)
+        return disclose_repair(result, unicode_result)
 
     def _normalize_person_name(
         self,

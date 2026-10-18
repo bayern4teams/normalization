@@ -90,9 +90,14 @@ class PhoneNormalizer:
             # whether the text states its own country (a `tel:+<cc>...` URI
             # does, so it parses above with no region). When it cannot parse
             # without one, the country is missing: AMBIGUOUS, never a guess.
+            # NOT_A_NUMBER does not depend on the region (`TBD`, `N/A`): no
+            # country would make it a phone number, so it is INVALID and a
+            # sentinel in a phone column is visible (PART1 N7).
             return (
                 _ambiguous_no_region(value, ctx)
-                if region is None and not has_explicit_plus
+                if region is None
+                and not has_explicit_plus
+                and exc.error_type != phonenumbers.NumberParseException.NOT_A_NUMBER
                 else _invalid(value, ctx, reason=str(exc))
             )
 
@@ -161,15 +166,20 @@ class PhoneNormalizer:
 
         status = NormalizationStatus.PARSED if is_valid else NormalizationStatus.INVALID
 
+        # An invalid number keeps its original, like every other INVALID: the
+        # formatted form was a rewrite of a number libphonenumber rejects
+        # (`334774x601` -> `+47 334774 ext. 601`, the source form lost), and
+        # its E.164 is no key to compare on. The parse stays in `structured`.
         return NormalizedValue(
             original=value,
-            display=international_format,
-            comparison=rfc3966 if parsed.extension else e164,
-            search=e164,
+            display=international_format if is_valid else value,
+            comparison=(rfc3966 if parsed.extension else e164) if is_valid else None,
+            search=e164 if is_valid else None,
             structured=structured,
             validation_status="VALID" if is_valid else "INVALID",
             normalization_status=status,
-            confidence=1.0 if is_valid else 0.5,
+            confidence=1.0 if is_valid else 0.0,
+            errors=[] if is_valid else ["not a valid number for its region"],
             flags=flags,
             trace=[_parse_trace_step(value, changed=True)],
             lossiness=Reversibility.PARTIALLY_REVERSIBLE,

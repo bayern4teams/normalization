@@ -284,7 +284,15 @@ def _parses_cleanly(normalizer: object, value: str, ctx: NormalizationContext) -
     if not normalizer.validate(value, ctx).is_valid:  # type: ignore[attr-defined]
         return False
     result = normalizer.normalize(value, ctx)  # type: ignore[attr-defined]
-    return QualityFlag.PARSER_FALLBACK not in result.flags and result.original_kind is None
+    # A value read only as a year states a 4-digit number, not a date: Brreg's
+    # postcodes (`0150`) came out DATE once DATETIME stopped tying with DATE
+    # (PART1 N2 makes `0150` an hhmm too), and the clone parsed them as years.
+    year_only = (result.structured or {}).get("precision") == "year"
+    return (
+        QualityFlag.PARSER_FALLBACK not in result.flags
+        and result.original_kind is None
+        and not year_only
+    )
 
 
 def _discriminates(normalizer: object, ctx: NormalizationContext) -> bool:

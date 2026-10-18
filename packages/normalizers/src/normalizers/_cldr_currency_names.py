@@ -5,7 +5,7 @@ Regenerate with `python scripts/generate_cldr_names.py`.
 
 Source: Unicode CLDR via Babel 2.18.0
 License: Unicode-3.0 (CLDR data) - https://www.unicode.org/license.txt
-Generated: 2026-09-26
+Generated: 2026-10-14
 """
 
 from __future__ import annotations
@@ -23059,4 +23059,19 @@ CLDR_CURRENCY_SYMBOLS: dict[str, str] = {
     '₾': 'GEL',
     '元': 'CNY',
     '￦': 'KRW',
+}
+
+# 11 entries.
+CLDR_SHARED_CURRENCY_SYMBOLS: dict[str, str] = {
+    '$': 'ARS AUD BBD BMD BND BSD BZD CAD CLP COP CUP FJD GYD JMD KYD LRD MXN NAD NZD SBD SGD SRD TTD TWD USD UYU XCD',
+    'Br': 'BYN ETB',
+    'C$': 'CAD NIO',
+    'K': 'MMK PGK ZMW',
+    'L': 'HNL MDL',
+    'Rs': 'INR MUR PKR SCR',
+    'kr': 'DKK NOK SEK',
+    'kr.': 'DKK ISK',
+    '£': 'FKP GBP GIP SHP SSP',
+    '¥': 'CNY JPY',
+    '￥': 'CNY JPY',
 }
