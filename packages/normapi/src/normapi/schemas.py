@@ -261,6 +261,11 @@ class CloneJobCreateRequest(BaseModel):
     # row in the error report either way. Set it when a clone feeds
     # something that cannot tolerate a silently gutted column.
     max_new_null_rate: float | None = Field(default=None, ge=0.0, le=1.0)
+    # D4: per table and column, source values a person confirmed are
+    # disguised nulls (from a job's `quality[...]["disguised_missing"]`).
+    # They are written as NULL with an error row keeping the original.
+    # Exact values only: nothing is matched loosely, nothing is guessed.
+    confirmed_missing: dict[str, dict[str, list[str]]] | None = None
     # Normalize the source database in place instead of cloning it into a
     # second one. Each table is built beside its original under a staging
     # name and swapped in, so peak extra storage is the largest SINGLE
@@ -307,6 +312,7 @@ class CloneJobAmendRequest(BaseModel):
     typed_destination_columns: bool | None = None
     max_new_null_rate: float | None = Field(default=None, ge=0.0, le=1.0)
     cross_table_entity_key: str | None = None
+    confirmed_missing: dict[str, dict[str, list[str]]] | None = None
 
 
 class CloneJobCreateResponse(BaseModel):

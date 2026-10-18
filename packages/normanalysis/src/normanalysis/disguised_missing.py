@@ -112,7 +112,6 @@ def detect_disguised_missing(
     # AMBIGUOUS / UNKNOWN ("needs context", never guess) are neither failing
     # nor valid: excluded from the minority rule and from the mean below.
     valid_counts: list[int] = []
-    failing_cells = 0
     failing: dict[str, int] = {}
     for value, count in value_counts.items():
         if count <= 0 or not isinstance(value, str):
@@ -122,8 +121,20 @@ def detect_disguised_missing(
             valid_counts.append(count)
         elif verdict.status not in _UNDECIDED:
             failing[value] = count
-            failing_cells += count
-    if not valid_counts or failing_cells >= sum(valid_counts):
+    return candidates(failing, sum(valid_counts), sentinels=sentinels)
+
+
+def candidates(
+    failing: Mapping[str, int], valid_cells: int, *, sentinels: Mapping[str, str] | None = None
+) -> list[DisguisedMissing]:
+    """The rule above on counts a caller already has: `failing` is each value
+    the type rejected with a definitive verdict and its count, `valid_cells`
+    how many cells conformed. A clone has both for every cell it wrote, so
+    it reports exact counts without validating anything again."""
+    if sentinels is None:
+        sentinels = _defaults()[1]
+    failing_cells = sum(failing.values())
+    if not valid_cells or failing_cells >= valid_cells:
         return []
     # "Recurs as a small set": the recurring failing values are candidates when there are no more
     # of them than the missing-value table has spellings of a missing value (no column holds more

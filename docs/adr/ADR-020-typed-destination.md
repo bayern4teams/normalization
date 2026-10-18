@@ -49,20 +49,30 @@ it (`1e999999999`) is a cast failure too. The executor passes the job's engine
 not a question anyone can answer, so it is not queued for adjudication
 (ADR-018, Q14). The original string is preserved in the error row.
 
-**DATE and DATETIME stay TEXT.** They normalize to EDTF values that can be
-partial (`1990`, `1990-03`) when that is all the source stated. A SQL DATE
-column cannot hold a partial date. Typing it would either turn year-only dates
-into NULL or invent a month and day; both break "precision is preserved, never
-invented".
+**DATE and DATETIME stay TEXT, with typed bounds beside them (amended
+2026-10-14, user decision of 2026-10-06, PART1 D5.3).** They normalize to EDTF
+values that can be partial (`1990`, `1990-03`) when that is all the source
+stated. A SQL DATE column cannot hold a partial date. Typing it would either
+turn year-only dates into NULL or invent a month and day; both break
+"precision is preserved, never invented". So the TEXT column keeps the value as
+stated, and two typed companions, `<col>__from` and `<col>__to`, hold the first
+and the last day of the stated period: `1990` is 1990-01-01 to 1990-12-31,
+`1990-03` is 1990-03-01 to 1990-03-31, a full date is itself twice, an EDTF
+range is its own bounds (an open end stays NULL). A bound is a range, not a
+point, so nothing is invented, and SQL can filter and sort on it. They are
+Postgres `DATE` and ClickHouse `Date32`. Only a clean answer gets bounds; an
+AMBIGUOUS or INVALID value gets NULL in both. A bound outside the column's
+range (ClickHouse Date32: 1900-01-01 to 2299-12-31) is NULL plus an error row,
+through the same gate as numbers. A DATETIME's bounds are the dates of its
+period; its time stays in the TEXT column. Key columns get no companions, like
+the other typed columns.
 
 ## Alternatives considered
 
 - **Typed DATE plus the EDTF original in a companion column** (`<col>__edtf`).
-  This is the only design that could add DATE without losing precision. It is
-  not implemented: it adds a column per date, the typed column would still
-  have to be NULL for every partial value, and nothing in this plan needs SQL
-  date arithmetic yet. *Flagged for the user's decision.* The trigger to build
-  it is a consumer that needs date arithmetic in the destination.
+  Rejected for the bounds above: the typed column would still be NULL for
+  every partial value, while bounds give every clean value, partial or not, a
+  queryable range.
 - **Rebuilding the gate as a separate layer.** Rejected: `coerce` already sits
   at the one place every typed value passes through.
 
