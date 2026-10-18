@@ -1,6 +1,6 @@
 """Independent acceptance checks for D7 (stdnum catalogue, tri-state) and D8 (TAX_ID/CODE split).
 
-Derived from docs/plans/DEFECTS_IMPLEMENTATION_PLAN.md section 9 (D7, D8 *Accept*) and
+Derived from docs/archive/plans/DEFECTS_IMPLEMENTATION_PLAN.md section 9 (D7, D8 *Accept*) and
 docs/improvement-report.md D7/D8, not from the implementation. Target contract:
 
 * `normalizers.identifier.tax_id_module_for(country) -> (chosen | None, candidates)`;

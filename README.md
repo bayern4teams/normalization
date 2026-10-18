@@ -21,7 +21,7 @@ and UI. See:
 - [`docs/normalization-tool-evaluation.md`](docs/normalization-tool-evaluation.md) — library evaluation matrix
 - [`docs/dependency-inventory.md`](docs/dependency-inventory.md) — license-audited dependency list
 - [`docs/adr/`](docs/adr/) — architecture decision records
-- [`docs/improvement-report.md`](docs/improvement-report.md) — verified defects D1-D12, research, architecture; implemented per [`docs/plans/DEFECTS_IMPLEMENTATION_PLAN.md`](docs/plans/DEFECTS_IMPLEMENTATION_PLAN.md)
+- [`docs/improvement-report.md`](docs/improvement-report.md) — verified defects D1-D12, research, architecture; implemented per [`docs/archive/plans/DEFECTS_IMPLEMENTATION_PLAN.md`](docs/archive/plans/DEFECTS_IMPLEMENTATION_PLAN.md)
 - [`docs/traceability-matrix.md`](docs/traceability-matrix.md) — spec section → implementation mapping
 - [`docs/verification/`](docs/verification/) — signed milestone gate packs
 
@@ -47,7 +47,7 @@ DATABASE` rights are required by the app itself.
   [`ADR-019`](docs/adr/ADR-019-confidence-calibration.md),
   [`ADR-020`](docs/adr/ADR-020-typed-destination.md) — the review queue for
   ambiguous values, confidence calibration, and typed destination columns
-  (improvement-report D1-D12; plan and status in `docs/plans/`)
+  (improvement-report D1-D12; plan and status in `docs/archive/plans/`)
 
 Measuring accuracy (D6/D2): `uv run python -m normcli gold generate --seed 0
 --n 30 --out corpus.jsonl`, then `normcli gold score corpus.jsonl` and

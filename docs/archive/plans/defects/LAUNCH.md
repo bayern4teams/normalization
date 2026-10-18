@@ -7,8 +7,8 @@ Do these in order. Each step says what to check and what to send back.
 
 ## 1. Put the kit on `main` (needs the user's explicit OK)
 A routine always clones `main` and skills/agents/`.mcp.json`/`scripts/cloud_setup.sh` load at session
-start, so they must be on `main`. The kit is: `docs/plans/DEFECTS_IMPLEMENTATION_PLAN.md`, `docs/plans/defects/` (HANDOFF, LOCAL_VERIFY,
-SUPERVISOR, LAUNCH), `.claude/agents/defects-worker.md`, `.claude/agents/defects-verifier.md`,
+start, so they must be on `main`. The kit is: `docs/archive/plans/DEFECTS_IMPLEMENTATION_PLAN.md`, `docs/archive/plans/defects/` (HANDOFF, LOCAL_VERIFY,
+SUPERVISOR, LAUNCH), `docs/archive/agents/defects-worker.md`, `docs/archive/agents/defects-verifier.md`,
 `.claude/skills/ponytail*` (+ license), `scripts/cloud_setup.sh`, `scripts/refresh_graphs.py`,
 `tests/unit/test_refresh_graphs.py`, and the pointer lines in `AGENTS.md`/`CLAUDE.md` and `README.md`.
 (`.mcp.json` already carries `codebase-memory-mcp`; it is unchanged.) It contains no feature code.
@@ -33,15 +33,15 @@ Network access Full, and paste `phase-kit/templates/environment_setup.sh` (verba
 
 ```
 You are the Defects D1-D12 supervisor tick. Run: git fetch origin feat/defects-fixes, then read
-docs/plans/defects/SUPERVISOR.md with: git show origin/feat/defects-fixes:docs/plans/defects/SUPERVISOR.md
+docs/archive/plans/defects/SUPERVISOR.md with: git show origin/feat/defects-fixes:docs/archive/plans/defects/SUPERVISOR.md
 Follow the LAST fenced block in that file exactly. Do nothing else.
 ```
 If the UI offers a push-permission option, allow pushes to non-`claude/` branches.
 
 ## 4. Dry run
 ```bash
-sed -i 's/\*\*Autonomy:\*\* off/**Autonomy:** dryrun/' docs/plans/defects/HANDOFF.md
-git add docs/plans/defects/HANDOFF.md && git commit -m "handoff: Autonomy dryrun" && git push origin feat/defects-fixes
+sed -i 's/\*\*Autonomy:\*\* off/**Autonomy:** dryrun/' docs/archive/plans/defects/HANDOFF.md
+git add docs/archive/plans/defects/HANDOFF.md && git commit -m "handoff: Autonomy dryrun" && git push origin feat/defects-fixes
 ```
 Run the routine once (run-now), wait a few minutes, then:
 ```bash
@@ -54,15 +54,15 @@ work. Send the line back if anything fails; the line also records the setup log.
 ## 5. Go live
 ```bash
 git pull --ff-only
-sed -i 's/\*\*Autonomy:\*\* dryrun/**Autonomy:** unattended-through-phase-5/' docs/plans/defects/HANDOFF.md
-git add docs/plans/defects/HANDOFF.md && git commit -m "handoff: unattended" && git push origin feat/defects-fixes
+sed -i 's/\*\*Autonomy:\*\* dryrun/**Autonomy:** unattended-through-phase-5/' docs/archive/plans/defects/HANDOFF.md
+git add docs/archive/plans/defects/HANDOFF.md && git commit -m "handoff: unattended" && git push origin feat/defects-fixes
 ```
 Do not work on `feat/defects-fixes` locally while it runs.
 
 ## 6. Watch
 ```bash
 git fetch origin && git log --oneline origin/feat/defects-fixes | head -8
-git show origin/feat/defects-fixes:docs/plans/defects/HANDOFF.md | sed -n 1,10p
+git show origin/feat/defects-fixes:docs/archive/plans/defects/HANDOFF.md | sed -n 1,10p
 ```
 Healthy: a recent `Lock:` and commits per item. `[PHASE n DONE]` = a phase finished. Act only on
 `[BLOCKED]`. Silence after a limit stop is normal; the next hourly tick resumes after the reset.

@@ -5,7 +5,7 @@ be changed through git without editing the UI:
 
 ```
 You are the Defects D1-D12 supervisor tick. Run: git fetch origin feat/defects-fixes, then read
-docs/plans/defects/SUPERVISOR.md with: git show origin/feat/defects-fixes:docs/plans/defects/SUPERVISOR.md
+docs/archive/plans/defects/SUPERVISOR.md with: git show origin/feat/defects-fixes:docs/archive/plans/defects/SUPERVISOR.md
 Follow the LAST fenced block in that file exactly. Do nothing else.
 ```
 
@@ -27,7 +27,7 @@ You are the lead engineer's supervisor tick for Defects D1-D12. Work on branch f
 never check out, merge, rebase or delete another branch.
 
 1. git fetch origin && git checkout -B feat/defects-fixes origin/feat/defects-fixes (a routine session
-   starts on a throwaway claude/... branch; all work goes to feat/defects-fixes). Read ONLY docs/plans/defects/HANDOFF.md now: an idle tick must
+   starts on a throwaway claude/... branch; all work goes to feat/defects-fixes). Read ONLY docs/archive/plans/defects/HANDOFF.md now: an idle tick must
    stay cheap, so CLAUDE.md and the plan are read in step 3b, after the exit checks.
 1b. If HANDOFF.md says "Autonomy: dryrun": write ONE line to .handoff/supervisor_dryrun.txt with the
    time, HEAD sha, how you evaluated the step 2 conditions, and whether each of these works in this
@@ -53,7 +53,7 @@ never check out, merge, rebase or delete another branch.
 3. Otherwise take the lock: set "Lock: <current ISO time>" in HANDOFF.md, commit, push. If that push
    is rejected, another session got there first: git pull --rebase, re-read "Lock"; if it is now
    held, EXIT as in step 2. Never force-push.
-3b. Now read CLAUDE.md and docs/plans/DEFECTS_IMPLEMENTATION_PLAN.md (sections 2-5, 7-9).
+3b. Now read CLAUDE.md and docs/archive/plans/DEFECTS_IMPLEMENTATION_PLAN.md (sections 2-5, 7-9).
 4. If graphify, graft or codebase-memory-mcp are not on PATH, run bash scripts/cloud_setup.sh; if
    graphify-out/graph.json or graft/ is missing, run the project bootstrap (uv sync --all-extras && uv run python scripts/refresh_graphs.py). If a tool is
    still missing, that is a [BLOCKED] (step 8), not something to skip.

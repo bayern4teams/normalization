@@ -754,7 +754,7 @@ The four ci-fast commands, run exactly as CI runs them under `ulimit -v 16 GB`:
 Five branches from main at 002eda0 (`fix/followups` merged), in merge order: `fix/confident-wrong`
 (B1), `fix/verdict-identity` (B2), `fix/lineage-and-dates` (B3), `fix/calibration-coverage` (B4,
 stacked on B3), `fix/ci-gates` (B5, stacked on B4). The row-by-row record is
-`docs/plans/defects/PART1_TRACEABILITY.md`. Each fix: a reproducer that fails on main, one root
+`docs/archive/plans/defects/PART1_TRACEABILITY.md`. Each fix: a reproducer that fails on main, one root
 fix in the shared place, a held-out check on real data. Every verdict below is direct SQL (or the
 service's own API: Marquez), never a job status.
 

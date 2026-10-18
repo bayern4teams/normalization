@@ -1,4 +1,4 @@
-"""Reproducers for PART1 D1.3 and D1.5 (docs/plans/defects/PART1_TRACEABILITY.md).
+"""Reproducers for PART1 D1.3 and D1.5 (docs/archive/plans/defects/PART1_TRACEABILITY.md).
 
 D1.3, F-VERDICT-SCOPE: a verdict's key held the saved connection id (as
 `context.source`), so re-adding a connection, after a password rotation for

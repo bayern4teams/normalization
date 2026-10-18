@@ -1,5 +1,5 @@
 """Reproducers for the confident-wrong normalizer findings in
-docs/plans/defects/PART1_TRACEABILITY.md (N1-N10): a guess shown as an
+docs/archive/plans/defects/PART1_TRACEABILITY.md (N1-N10): a guess shown as an
 answer, or a refusal where the input states the answer. One class per
 finding; each failed on main (002eda0) before its fix.
 """

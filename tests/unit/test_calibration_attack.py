@@ -1,7 +1,7 @@
 """D2 attack tests: independent brute force, exact permutation averages, boundary pins, edge input.
 
 Heavy Monte Carlo (seeds x n x skewed confidence laws) lives in the D2 verdict
-(docs/plans/defects/FINAL_REPORT.md appendix), not here.
+(docs/archive/plans/defects/FINAL_REPORT.md appendix), not here.
 xfail(strict) marks a confirmed defect: it flips to a failure when the defect is fixed.
 """
 

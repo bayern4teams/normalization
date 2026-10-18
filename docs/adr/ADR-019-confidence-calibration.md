@@ -95,4 +95,4 @@ threshold", so both are built, and neither changes a value unless a job asks:
 
 - `normcli calibrate <corpus> --cost-ratio R [--out-json P] [--out-md P]` scores a corpus with the
   real engine and writes the report. It refuses to run without `--cost-ratio`.
-- The live numbers (the user's own labelled data) are recorded in `docs/plans/defects/LOCAL_VERIFY.md`.
+- The live numbers (the user's own labelled data) are recorded in `docs/archive/plans/defects/LOCAL_VERIFY.md`.

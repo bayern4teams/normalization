@@ -1,6 +1,6 @@
 """Independent acceptance checks for D11 (phonetics that fit the data).
 
-Derived from docs/plans/DEFECTS_IMPLEMENTATION_PLAN.md section 9 D11 *Accept*, section 2.4, and
+Derived from docs/archive/plans/DEFECTS_IMPLEMENTATION_PLAN.md section 9 D11 *Accept*, section 2.4, and
 docs/improvement-report.md D11 + Part 2 "Names, multi-script", not from the implementation.
 
 Target contract (field names are part of the spec; see .handoff/D11.acceptance.md in git history):

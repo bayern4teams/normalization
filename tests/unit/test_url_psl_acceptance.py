@@ -1,6 +1,6 @@
 """Independent acceptance checks for D9 (registrable domain from the Public Suffix List).
 
-Derived from docs/plans/DEFECTS_IMPLEMENTATION_PLAN.md section 9 (D9 *Accept*), section 2.4 and
+Derived from docs/archive/plans/DEFECTS_IMPLEMENTATION_PLAN.md section 9 (D9 *Accept*), section 2.4 and
 docs/improvement-report.md D9 / Part 2 "URL", not from the implementation. Target contract:
 
 * URL normalizer `structured` gains, additively, `registrable_domain` (str | None),

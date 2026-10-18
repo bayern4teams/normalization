@@ -114,8 +114,8 @@ uv run ruff check . && uv run ruff format --check . && uv run mypy packages
 
 D1-D12, `fix/robustness` and `fix/followups` are merged to main. Part 1 of
 `docs/improvement-report.md` is closed row by row in
-[`docs/plans/defects/PART1_TRACEABILITY.md`](docs/plans/defects/PART1_TRACEABILITY.md),
-summarised in `docs/plans/defects/PART1_COMPLETE.md`, measured in
+[`docs/archive/plans/defects/PART1_TRACEABILITY.md`](docs/archive/plans/defects/PART1_TRACEABILITY.md),
+summarised in `docs/archive/plans/defects/PART1_COMPLETE.md`, measured in
 `docs/benchmarks/REPORT.md` §11. Six branches, not merged until the user says
 so, merge in this order (B3-B5 are stacked; the last also merges B1 and B2): `fix/confident-wrong`,
 `fix/verdict-identity`, `fix/lineage-and-dates`, `fix/calibration-coverage`,
