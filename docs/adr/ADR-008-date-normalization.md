@@ -118,7 +118,8 @@ choice.
   not part of the question, so it is left out of the verdict key, and a context
   without one hashes exactly as before the field existed (no stored verdict or
   cache key moves).
-- On by default: no new guess is made. The order is proven by the column, and a
+- On by default (user decision 2026-10-18, after REPORT §11.13 showed Raha's year-first
+  corruptions are written as dates, exactly as with a stated `country=US`): no new guess is made. The order is proven by the column, and a
   column that proves nothing behaves exactly as before.
 
 **Limits.** The model is the normalizer's own: the year is the last part. Proofs

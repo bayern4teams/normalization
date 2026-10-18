@@ -116,14 +116,15 @@ D1-D12, `fix/robustness` and `fix/followups` are merged to main. Part 1 of
 `docs/improvement-report.md` is closed row by row in
 [`docs/plans/defects/PART1_TRACEABILITY.md`](docs/plans/defects/PART1_TRACEABILITY.md),
 summarised in `docs/plans/defects/PART1_COMPLETE.md`, measured in
-`docs/benchmarks/REPORT.md` §11. Five branches, not merged until the user says
+`docs/benchmarks/REPORT.md` §11. Six branches, not merged until the user says
 so, merge in this order (the last three are stacked): `fix/confident-wrong`,
 `fix/verdict-identity`, `fix/lineage-and-dates`, `fix/calibration-coverage`,
-`fix/ci-gates`. Reproducers: `tests/unit/test_confident_wrong.py`,
+`fix/ci-gates`, then `fix/column-evidence` (column evidence for the date order
+and the decimal mark, ADR-008/ADR-011 amendments). Reproducers: `tests/unit/test_confident_wrong.py`,
 `test_verdict_identity.py`, `test_date_bounds.py`, `test_lineage_schema_facet.py`,
 `test_disguised_missing_wiring.py`, `test_tax_id_base_modules.py`,
 `test_calibration_risk_control.py`, `test_calibrated_abstention.py`,
-`test_phone_region_companion.py`; live ones under `tests/integration/` and
+`test_phone_region_companion.py`, `test_column_evidence.py`; live ones under `tests/integration/` and
 `docs/benchmarks/scripts/` (point TEST_PG_PORT etc. at an isolated stack, never
 at a database you care about).
 `scripts/refresh_graphs.py` is the loud graph refresh (exits non-zero if a graph tool is missing).

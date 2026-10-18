@@ -40,6 +40,8 @@ class NormalizationContext(BaseModel):
     # The day/month order the column's own values prove, and how many distinct
     # values prove it (none contradict it): ADR-008 amendment 2026-10-17.
     column_date_order: tuple[str, int] | None = None
+    # The same for the decimal mark (`.` or `,`) of a NUMERIC or MONEY column.
+    column_decimal_mark: tuple[str, int] | None = None
     error_policy: ErrorPolicy = ErrorPolicy.RETURN_ORIGINAL
     pii_visibility: str = "masked"
     # Whether normalizers build the per-step `trace` (Source.txt §65).
@@ -83,7 +85,9 @@ class NormalizationContext(BaseModel):
         """
         # A context without a column order hashes as it did before the field
         # existed: stored verdict keys and cache keys hold these hashes.
-        unset = {"column_date_order"} if self.column_date_order is None else set()
+        unset = {
+            f for f in ("column_date_order", "column_decimal_mark") if getattr(self, f) is None
+        }
         payload = self.model_dump(mode="json", exclude={"pii_visibility", *unset})
         canonical = _canonical_json(payload)
         # errors="surrogatepass": field_name and friends are caller-supplied

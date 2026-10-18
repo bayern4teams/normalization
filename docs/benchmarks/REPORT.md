@@ -964,3 +964,23 @@ confidence) with `column_evidence` recorded on each value.
 A person's verdict wins over the column (unit test fails without the fix); a context without a
 column order hashes exactly as on main (pinned in `test_column_evidence.py`), so no stored verdict
 key or cache key moves. CI set on the branch: 3,197 passed.
+
+User decision 2026-10-18, shown these numbers: "Keep default on".
+
+**Decimal mark (ADR-011 amendment, same rule).** Live, `column_evidence_live.py --type NUMERIC`:
+Raha `movies_1.rating_count` (7,390 real cells), text destination.
+
+| | before (five branches) | after |
+|---|---|---|
+| job evidence | — | `{".": 11, ",": 0, "mark": "."}` |
+| ambiguous cells refused | 5,494 | 0 |
+| resolved, not in the proven mark | — | 0 |
+| queue rows / occurrences | 5,150 / 5,494 | 0 / 0 |
+| rows source = destination | 7,390 = 7,390 | 7,390 = 7,390 |
+
+Scored against Raha's clean files (same row positions), every previously refused cell in the
+three real NUMERIC columns whose values prove a mark: `movies_1.rating_count` 5,494 / 5,494 right
+(`1,234` is the count 1234), `beers.abv` 1,266 / 1,266, `tax.rate` 1,872 / 1,872; 0 wrong. A
+scan of every text column on the source stack found no other column with ambiguous numbers and
+a proof; text columns (names, addresses) are never typed NUMERIC. CI set on the branch after both
+rules: 3,227 passed.

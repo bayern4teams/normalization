@@ -3,7 +3,7 @@
 
 Copies one real column (Raha `rayyan.article_jcreated_at`, or `--table`/`--column`) into a fresh
 source database on the normbench stack, clones it through the API in-process with the column
-as DATE and no country, and reads the destination and the metadata database by direct SQL:
+as DATE (or NUMERIC, `--type`) and no country, and reads the destination and the metadata database by direct SQL:
 how many cells kept their original (refused), the job's evidence, the queue rows, and for every
 resolved cell that it is exactly the reading in the proven order. Run it on two checkouts to
 compare (before / after).
@@ -19,6 +19,7 @@ import os
 import re
 import time
 import uuid
+from decimal import Decimal
 
 import psycopg
 from cryptography.fernet import Fernet
@@ -27,6 +28,7 @@ from fastapi.testclient import TestClient
 APP_DSN = "postgresql://normalization:normalization@localhost:5535/normalization"
 SRC = {"host": "localhost", "port": 5436, "username": "readonly_user", "password": "readonly_pass"}
 DST = {"host": "localhost", "port": 5535, "username": "normalization", "password": "normalization"}
+SINGLE_GROUP = re.compile(r"^[-+]?\d{1,3}[.,]\d{3}$")
 DMY = re.compile(r"^(\d{1,2})[/.\-](\d{1,2})[/.\-](\d{2,4})$")
 
 
@@ -40,6 +42,7 @@ def main() -> None:  # noqa: PLR0915 - one linear live check
     ap.add_argument("--db", default="raha")
     ap.add_argument("--table", default="rayyan")
     ap.add_argument("--column", default="article_jcreated_at")
+    ap.add_argument("--type", default="DATE", choices=["DATE", "NUMERIC"])
     args = ap.parse_args()
     os.environ.setdefault("NORM_SECRET_KEY", Fernet.generate_key().decode())
     from normapi.app import create_app  # noqa: PLC0415
@@ -77,7 +80,9 @@ def main() -> None:  # noqa: PLR0915 - one linear live check
             "destination_connection_id": dst_conn,
             "destination_database": out_db,
             "autodetect_field_types": False,
-            "field_configs": {"t": {"d": "DATE"}},
+            # text destination, so a refused value keeps its original in the cell
+            "typed_destination_columns": False,
+            "field_configs": {"t": {"d": args.type}},
         },
     )
     job_id = created["job_id"]
@@ -99,24 +104,38 @@ def main() -> None:  # noqa: PLR0915 - one linear live check
             "SELECT data FROM normalization_clone_jobs WHERE job_id = %s", (job_id,)
         ).fetchone()
     evidence = json.loads(stored[0]).get("column_evidence", {}).get("t", {}).get("d")
-    order = (evidence or {}).get("order")
+    order = (evidence or {}).get("order") or (evidence or {}).get("mark")
 
-    ambiguous = {
-        i: v
-        for i, v in enumerate(values)
-        if v and (m := DMY.match(v.strip())) and m[1] != m[2] and int(m[1]) <= 12 and int(m[2]) <= 12
-    }
+    if args.type == "NUMERIC":
+        ambiguous = {i: v for i, v in enumerate(values) if v and SINGLE_GROUP.match(v.strip())}
 
-    def reading(v: str) -> str:
-        first, second, year = DMY.match(v.strip()).groups()  # type: ignore[union-attr]
-        day, month = (first, second) if order == "DMY" else (second, first)
-        y = int(year) if len(year) == 4 else None
-        return f"{y:04d}-{int(month):02d}-{int(day):02d}" if y else f"-{int(month):02d}-{int(day):02d}"
+        def reads_in_order(v: str, w: str) -> bool:
+            grouping = "," if order == "." else "."
+            body = v.strip().replace(grouping, "").replace(str(order), ".")
+            return Decimal(w) == Decimal(body)
+    else:
+        ambiguous = {
+            i: v
+            for i, v in enumerate(values)
+            if v
+            and (m := DMY.match(v.strip()))
+            and m[1] != m[2]
+            and int(m[1]) <= 12
+            and int(m[2]) <= 12
+        }
+
+        def reads_in_order(v: str, w: str) -> bool:
+            first, second, year = DMY.match(v.strip()).groups()  # type: ignore[union-attr]
+            day, month = (first, second) if order == "DMY" else (second, first)
+            tail = f"-{int(month):02d}-{int(day):02d}"
+            return w.endswith(f"{int(year):04d}{tail}" if len(year) == 4 else tail)
 
     refused = sum(written[i] == v for i, v in ambiguous.items())
     resolved = {i: written[i] for i, v in ambiguous.items() if written[i] != v}
     wrong = [
-        (values[i], w) for i, w in resolved.items() if not (order and w.endswith(reading(values[i])))
+        (values[i], w)
+        for i, w in resolved.items()
+        if not (order and w is not None and reads_in_order(values[i], w))
     ]
     out = {
         "job": job_id,

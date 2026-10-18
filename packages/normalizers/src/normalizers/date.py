@@ -53,7 +53,7 @@ from normcore.trace import TraceStep
 from normalizers import text_ops
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Sequence
+    from collections.abc import Iterable, Mapping, Sequence
     from datetime import datetime
 
     from normcore.interfaces import ComponentVersion, Explanation, StepSpec, ValidationResult
@@ -823,12 +823,17 @@ def column_date_evidence(values: Iterable[object]) -> dict[str, Any]:
                 proofs["DMY"].add(match[0])
             elif 12 < second <= 31 and 1 <= first <= 12:
                 proofs["MDY"].add(match[0])
-    dmy, mdy = len(proofs["DMY"]), len(proofs["MDY"])
-    proven = max(dmy, mdy)
-    order = None
-    if min(dmy, mdy) == 0 and 2 * 0.5**proven < _COLUMN_EVIDENCE_DELTA:
-        order = "DMY" if dmy else "MDY"
-    return {"DMY": dmy, "MDY": mdy, "order": order}
+    counts = {k: len(v) for k, v in proofs.items()}
+    return {**counts, "order": proven_by_column(counts)}
+
+
+def proven_by_column(counts: Mapping[str, int]) -> str | None:
+    """The one reading every proof in a column supports, when there are enough
+    proofs (the rule above); None on any contradiction or too few."""
+    supported = [k for k, n in counts.items() if n]
+    if len(supported) != 1 or 2 * 0.5 ** counts[supported[0]] >= _COLUMN_EVIDENCE_DELTA:
+        return None
+    return supported[0]
 
 
 def _result(

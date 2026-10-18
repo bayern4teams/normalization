@@ -68,3 +68,24 @@ cross-dimension conversion attempts.
 - CLDR currency-symbol tables change in a way that shifts ambiguity
   resolution for a previously-unambiguous symbol — caught by the nightly
   drift job.
+
+## Amendment 2026-10-18: a column's own values can state its decimal mark
+
+The rule of ADR-008's amendment of 2026-10-17, for the number shape that stays AMBIGUOUS
+without a locale (`1,234`, `1.234`: one separator, three digits after it).
+
+- A clone reads each NUMERIC and MONEY column once before writing it and counts distinct
+  numbers that prove `.` is the decimal mark (`1.5`, `1,234.56`, or `,` grouping: `1,234,567`)
+  and those that prove `,` (`1,5`, `1.234,56`, `1.234.567`)
+  (`normalizers.numeric.column_decimal_evidence`).
+- Same threshold and the same refusals: every proof agreeing and at least six
+  (`2 * 0.5**k < 0.05`); any contradiction or fewer proofs states nothing.
+- The mark reaches the parser as `context.column_decimal_mark` (MONEY hands its amount to the
+  numeric parser with the same context). It decides only a value that is ambiguous and that
+  the stated locales do not already read one way: it chooses between a country's disagreeing
+  official languages (Canada: en `.`, fr `,`), and when it contradicts every stated locale
+  (Germany states `,`, the column proves `.`) the value stays AMBIGUOUS.
+- Each value read this way records `structured.column_evidence` (`decimal_mark`,
+  `proving_values`, `contradicting_values` = 0); the job keeps the counts under
+  `column_evidence`. A context without the field hashes as before.
+- On by default, as the date order (user decision 2026-10-18).

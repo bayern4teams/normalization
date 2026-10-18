@@ -120,3 +120,82 @@ class TestKeys:
         rows, _ = _clone(env, [*_MDY_PROOFS, "3/4/14"], job_id="proven")
         # the person read it day first; the column's evidence does not overrule them
         assert rows[-1]["d"] == "2014-04-03"
+
+
+# --- the decimal mark (the same rule for NUMERIC and MONEY) --------------------------------
+
+_DOT_PROOFS = ["1.5", "12.25", "3,456,789", "1,234.56", "0.75", "7,000,000"]  # six: `.` decimal
+_COMMA_PROOFS = ["1,5", "12,25", "3.456.789", "1.234,56", "0,75", "7.000.000"]
+
+
+def _num(value: str, **kw: object) -> object:
+    from normalizers.numeric import NumericNormalizer  # noqa: PLC0415
+
+    ctx = NormalizationContext(field_name="n", semantic_type=T.NUMERIC, **kw)
+    return NumericNormalizer().normalize(value, ctx)
+
+
+class TestDecimalEvidence:
+    def test_six_agreeing_proofs_state_the_mark(self) -> None:
+        from normalizers.numeric import column_decimal_evidence  # noqa: PLC0415
+
+        assert column_decimal_evidence([*_DOT_PROOFS, "1,234", "42", None]) == {
+            ".": 6,
+            ",": 0,
+            "mark": ".",
+        }
+        assert column_decimal_evidence(_COMMA_PROOFS)["mark"] == ","
+
+    def test_fewer_or_contradicted_states_nothing(self) -> None:
+        from normalizers.numeric import column_decimal_evidence  # noqa: PLC0415
+
+        assert column_decimal_evidence(_DOT_PROOFS[:5])["mark"] is None
+        assert column_decimal_evidence([*_DOT_PROOFS, "1,5"]) == {".": 6, ",": 1, "mark": None}
+
+    def test_the_column_mark_resolves_an_ambiguous_number(self) -> None:
+        r = _num("1,234", column_decimal_mark=(".", 6))
+        assert (r.normalization_status, r.display) == (S.NORMALIZED, "1234")
+        assert r.structured["column_evidence"] == {
+            "decimal_mark": ".",
+            "proving_values": 6,
+            "contradicting_values": 0,
+        }
+        assert _num("1.234", column_decimal_mark=(",", 6)).display == "1234"
+        assert _num("1,234", column_decimal_mark=(",", 6)).display == "1.234"
+        assert _num("1,234").normalization_status is S.AMBIGUOUS
+
+    def test_a_stated_locale_comes_first_and_a_contradiction_states_nothing(self) -> None:
+        # Germany states `,`; a column proving `.` is read neither way
+        assert _num("1,234", country="DE", column_decimal_mark=(".", 9)).normalization_status is (
+            S.AMBIGUOUS
+        )
+        # Canada's languages disagree (en `.`, fr `,`): the column decides between them
+        assert _num("1,234", country="CA").normalization_status is S.AMBIGUOUS
+        assert _num("1,234", country="CA", column_decimal_mark=(".", 9)).display == "1234"
+        # an unambiguous value is untouched by the column
+        assert _num("1,5", column_decimal_mark=(".", 9)).display == "1.5"
+
+    def test_money_reads_its_amount_with_the_column_mark(self) -> None:
+        from normalizers.money import MoneyNormalizer  # noqa: PLC0415
+
+        ctx = NormalizationContext(
+            field_name="m", semantic_type=T.MONEY, column_decimal_mark=(".", 9)
+        )
+        r = MoneyNormalizer().normalize("USD 1,234", ctx)
+        assert r.structured["canonical_amount"] == "1234"
+
+
+class TestDecimalClone:
+    def test_a_proven_numeric_column_writes_its_ambiguous_numbers(self, env: _Env) -> None:
+        _, rows, job = env.run(
+            [_rows([{"n": v} for v in [*_DOT_PROOFS, "1,234"]])], {"n": "NUMERIC"}, job_id="n"
+        )
+        assert job["column_evidence"][TABLE]["n"] == {".": 6, ",": 0, "mark": "."}
+        assert rows[-1]["n"] == "1234"
+
+    def test_a_mixed_column_stays_ambiguous(self, env: _Env) -> None:
+        _, rows, job = env.run(
+            [_rows([{"n": v} for v in [*_DOT_PROOFS, "1,5", "1,234"]])], {"n": "NUMERIC"}
+        )
+        assert job["column_evidence"][TABLE]["n"]["mark"] is None
+        assert rows[-1]["n"] == "1,234"
