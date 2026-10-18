@@ -1,0 +1,60 @@
+"""PART1 D10.2: "store E.164 together with the region" (libphonenumber's
+FALSEHOODS: E.164 alone does not re-render or re-parse a number; +1 is the US,
+Canada and 22 more). A clone stored display and E.164 only; a PHONE column now
+gets `<col>_region`, the region libphonenumber reads from the number. Example
+numbers come from libphonenumber itself. Fails on main.
+"""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+import phonenumbers
+import pytest
+from normapi.clone_executor import _destination_plan
+from tests.unit.test_adjudication_acceptance import TABLE, _Env, _rows
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+pytestmark = pytest.mark.unit
+
+
+def _example(region: str) -> str:
+    number = phonenumbers.example_number(region)
+    return phonenumbers.format_number(number, phonenumbers.PhoneNumberFormat.INTERNATIONAL)
+
+
+@pytest.fixture
+def env(tmp_path: Path) -> _Env:
+    return _Env(tmp_path)
+
+
+def test_the_plan_gives_a_phone_column_a_region_companion() -> None:
+    _, extras, _ = _destination_plan({"p": "PHONE"}, "postgres", [], typed=True)
+    assert extras["p_region"] == "TEXT"
+
+
+def test_two_numbers_of_one_country_code_keep_their_regions(env: _Env) -> None:
+    plan = {TABLE: {"code_columns": {"p": "p_code"}, "region_columns": {"p": "p_region"}}}
+    values = [_example("US"), _example("CA"), "(201) 555-0123"]
+    _, rows, _ = env.run(
+        [_rows([{"p": v} for v in values])], {"p": "PHONE"}, job_extra={"destination_plan": plan}
+    )
+    assert [r["p_region"] for r in rows] == ["US", "CA", None]  # the last: no region stated
+    assert all(r["p_code"].startswith("+1") for r in rows[:2])
+
+
+def test_an_invalid_number_gets_no_companions(env: _Env) -> None:
+    """Found live (D8-D12 run): under country NO, `334774x601` is no valid
+    number, yet its comparison key went into `p_code` as
+    tel:+47-334774;ext=601 and the region as NO. The cell keeps the original;
+    a companion is written only for an answer."""
+    plan = {TABLE: {"code_columns": {"p": "p_code"}, "region_columns": {"p": "p_region"}}}
+    _, rows, _ = env.run(
+        [_rows([{"p": "334774x601"}, {"p": _example("NO")}])],
+        {"p": "PHONE"},
+        job_extra={"destination_plan": plan, "country": "NO"},
+    )
+    assert (rows[0]["p_code"], rows[0]["p_region"]) == (None, None)
+    assert rows[1]["p_region"] == "NO"
