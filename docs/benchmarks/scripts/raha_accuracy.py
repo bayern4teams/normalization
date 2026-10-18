@@ -14,13 +14,14 @@ from __future__ import annotations
 import csv
 import decimal
 import json
+import os
 import sys
 from collections import Counter
 from pathlib import Path
 
 from normanalysis.gold import GoldCase, classify, default_engine
 
-ROOT = Path("data/benchmarks/A")
+ROOT = Path(os.environ["BENCH_DIR"]) / "datasets" / "A"
 US = {"country": "US", "locale": "en-US"}
 COLUMNS: dict[str, tuple[dict[str, str], dict[str, str]]] = {
     "hospital": (
@@ -184,4 +185,4 @@ def main(out_dir: str) -> None:
 
 
 if __name__ == "__main__":
-    main(sys.argv[1] if len(sys.argv) > 1 else ".tmp/bench/raha")
+    main(sys.argv[1] if len(sys.argv) > 1 else os.environ["BENCH_DIR"] + "/work/bench/raha")

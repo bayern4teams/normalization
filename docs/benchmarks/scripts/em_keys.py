@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import csv
 import json
+import os
 from pathlib import Path
 
 from normapi.app import build_dispatcher
@@ -16,7 +17,7 @@ from normapi.scaffold_profile import SCAFFOLD_PROFILE
 from normcore.context import NormalizationContext
 from normcore.enums import FieldSemanticType
 
-ROOT = Path("data/benchmarks/A")
+ROOT = Path(os.environ["BENCH_DIR"]) / "datasets" / "A"
 CASES = [
     ("structured-amazon-google", "manufacturer", "COMPANY_NAME"),
     ("structured-dblp-acm", "year", "DATE"),

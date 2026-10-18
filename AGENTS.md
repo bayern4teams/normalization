@@ -127,4 +127,6 @@ and the decimal mark, ADR-008/ADR-011 amendments). Reproducers: `tests/unit/test
 `test_phone_region_companion.py`, `test_column_evidence.py`; live ones under `tests/integration/` and
 `docs/benchmarks/scripts/` (point TEST_PG_PORT etc. at an isolated stack, never
 at a database you care about).
+Benchmark stack, datasets and outputs live outside the repo in `$BENCH_DIR`
+(`/home/bayern/Projects/benchmark`, see its README); benchmark scripts need `BENCH_DIR` set.
 `scripts/refresh_graphs.py` is the loud graph refresh (exits non-zero if a graph tool is missing).

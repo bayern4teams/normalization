@@ -8,7 +8,7 @@ how many cells kept their original (refused), the job's evidence, the queue rows
 resolved cell that it is exactly the reading in the proven order. Run it on two checkouts to
 compare (before / after).
 
-    uv run python docs/benchmarks/scripts/column_evidence_live.py --out .tmp/colev/after.json
+    uv run python docs/benchmarks/scripts/column_evidence_live.py --out $BENCH_DIR/work/colev/after.json
 """
 
 from __future__ import annotations
@@ -59,7 +59,9 @@ def main() -> None:  # noqa: PLR0915 - one linear live check
         c.execute("GRANT SELECT ON ALL TABLES IN SCHEMA public TO readonly_user")
 
     client = TestClient(
-        create_app(pg_dsn=APP_DSN, custom_dictionaries_dir=".tmp/bench/custom-dicts")
+        create_app(
+            pg_dsn=APP_DSN, custom_dictionaries_dir=os.environ["BENCH_DIR"] + "/work/custom-dicts"
+        )
     )
 
     def call(method: str, path: str, **kw: object) -> dict:

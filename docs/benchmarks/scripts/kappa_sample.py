@@ -5,9 +5,9 @@ Draws real values from the public benchmark data on the normbench stack: half th
 refuses (AMBIGUOUS), half that it answers, across dates, money, phones, country codes, URLs and
 person names. Each row lists the readings to choose from: the engine's own candidates (or its
 answer), plus "can't tell", "missing" and "something else". Seeded, so both people get the same
-sheet. The values are dataset values: the sheet stays under .tmp/, never committed.
+sheet. The values are dataset values: the sheet stays under $BENCH_DIR/work/, never committed.
 
-    uv run python docs/benchmarks/scripts/kappa_sample.py --out-dir .tmp/labels --n 60
+    uv run python docs/benchmarks/scripts/kappa_sample.py --out-dir $BENCH_DIR/work/labels --n 60
 """
 
 from __future__ import annotations

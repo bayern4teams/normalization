@@ -47,7 +47,7 @@ Session incident (07:04:59 local): the desktop session ended mid-run, and the us
 
 ## 2. Datasets
 
-All files are under `data/benchmarks/` (git-ignored), each with a SOURCE.md giving URL, UTC download
+All files are under `$BENCH_DIR/datasets/` (outside the repo since 2026-10-18; `data/benchmarks/` before), each with a SOURCE.md giving URL, UTC download
 time, licence and sha256. MANIFEST-AC.md and MANIFEST-D.md list every file. Every size matched the
 published or expected size. Only SIRENE (sha1) and the Luxembourg file (md5) publish checksums, and both
 matched.
@@ -347,7 +347,9 @@ Each finding has a reproducer. None is fixed (held-out rule), except F-YEAR00.
   - `d4_live.py`: GROUP BY → detector.
   - `raha_accuracy.py`: the Raha canonical-truth scorer.
 - **Setup:** the compose override and the loaders lived under `.tmp/`, a local scratch area that is not
-  committed.
+  committed. Since 2026-10-18 the stack, datasets and working files live in `$BENCH_DIR` (outside the
+  repo: `compose.yaml`, `config/`, `datasets/`, `work/`); the scripts read it from the `BENCH_DIR`
+  environment variable, and their small field configs are in `docs/benchmarks/configs/`.
 - **Raw results:** they stay local because they hold dataset values. This report quotes only counts and
   short examples.
 
