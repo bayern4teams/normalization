@@ -199,3 +199,18 @@ class TestDecimalClone:
         )
         assert job["column_evidence"][TABLE]["n"]["mark"] is None
         assert rows[-1]["n"] == "1,234"
+
+
+def test_neither_proof_moves_a_verdict_key() -> None:
+    from normapi.adjudication import verdict_key  # noqa: PLC0415
+
+    plain = NormalizationContext(field_name="n", semantic_type=T.NUMERIC)
+    keys = {
+        verdict_key(T.NUMERIC, "1,234", plain.model_copy(update=proof), "v1")
+        for proof in (
+            {},
+            {"column_decimal_mark": (".", 9)},
+            {"column_date_order": ("MDY", 9)},
+        )
+    }
+    assert len(keys) == 1

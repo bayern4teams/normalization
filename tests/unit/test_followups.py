@@ -103,6 +103,7 @@ def _store(tmp_path: Path) -> PgPersistence:
 def _job(block_rows: int = 2000) -> dict[str, Any]:
     return {
         "source_connection_id": "s",
+        "source_identity": "postgres://s:5432/db",
         "destination_database": "d",
         "field_configs": {"t": {"amt": "MONEY"}},
         "destination_plan": {"t": {"typed_columns": {}}},

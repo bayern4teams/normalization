@@ -20,9 +20,9 @@ service's own API), **5 done** (a measurement or a code property with no live pa
 | B3 | `fix/lineage-and-dates` | typed Marquez schema facets (column graph); `<col>__from` / `<col>__to` typed date bounds; disguised nulls reported with exact counts, applied only when confirmed | main |
 | B4 | `fix/calibration-coverage` | Norway VALID under the base module; risk-controlled thresholds and the committed table, opt-in abstention; `<col>_region`; companions only for answers; gold CSV context | B3 |
 | B5 | `fix/ci-gates` | gate.yml / release.yml cut to commands that exist; ratchet 0; REPORT §11, traceability, D6.3 | B4 |
-| C1 | `fix/column-evidence` | a column's own values state its day/month order and decimal mark (ADR-008, ADR-011 amendments); merges B1 in | B5 + B1 |
+| C1 | `fix/column-evidence` | a column's own values state its day/month order and decimal mark (ADR-008, ADR-011 amendments); merges B1 and B2 in (B2 also changed `adjudication.py`; resolved there) | B5 + B1 + B2 |
 
-B2 is the only branch not contained in C1; C1 contains B1, B3, B4 and B5.
+C1 contains all five earlier branches, so the six merges below apply without conflicts.
 
 ## Before and after (direct SQL; REPORT §11)
 

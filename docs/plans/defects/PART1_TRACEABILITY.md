@@ -12,7 +12,7 @@ decision, quoted). Evidence: `docs/benchmarks/REPORT.md` (REPORT), section §11 
 
 Branches (merge in this order; the last three are stacked): `fix/confident-wrong` (B1),
 `fix/verdict-identity` (B2), `fix/lineage-and-dates` (B3), `fix/calibration-coverage` (B4,
-on B3), `fix/ci-gates` (B5, on B4), then `fix/column-evidence` (C1, on B5 with B1 merged in).
+on B3), `fix/ci-gates` (B5, on B4), then `fix/column-evidence` (C1, on B5 with B1 and B2 merged in).
 
 ## D1: AMBIGUOUS has an exit path
 

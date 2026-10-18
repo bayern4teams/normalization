@@ -117,7 +117,7 @@ D1-D12, `fix/robustness` and `fix/followups` are merged to main. Part 1 of
 [`docs/plans/defects/PART1_TRACEABILITY.md`](docs/plans/defects/PART1_TRACEABILITY.md),
 summarised in `docs/plans/defects/PART1_COMPLETE.md`, measured in
 `docs/benchmarks/REPORT.md` §11. Six branches, not merged until the user says
-so, merge in this order (B3-B5 are stacked; the last also merges B1): `fix/confident-wrong`,
+so, merge in this order (B3-B5 are stacked; the last also merges B1 and B2): `fix/confident-wrong`,
 `fix/verdict-identity`, `fix/lineage-and-dates`, `fix/calibration-coverage`,
 `fix/ci-gates`, then `fix/column-evidence` (column evidence for the date order
 and the decimal mark, ADR-008/ADR-011 amendments). Reproducers: `tests/unit/test_confident_wrong.py`,

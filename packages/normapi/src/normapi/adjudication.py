@@ -18,13 +18,18 @@ import blake3
 from normcore.pii import character_class_mask, content_hash, sanitize_surrogates
 from normcore.trace import TraceStep
 
-from normcore import NormalizationStatus, NormalizedValue
+from normcore import (
+    FieldSemanticType,
+    NormalizationContext,
+    NormalizationStatus,
+    NormalizedValue,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Mapping
 
     from normapi.pg_persistence import PgPersistence
-    from normcore import FieldSemanticType, NormalizationContext, NormalizationProfile
+    from normcore import NormalizationProfile
 
 # Q15: a human and an agent decide through the same column; which one did is
 # this string, so swapping one for the other is data, not a migration.
@@ -43,13 +48,23 @@ CLEAN_STATUSES = frozenset(
 )
 
 
+def source_identity(connection: Mapping[str, Any], database: str, schema: str | None) -> str:
+    """What a verdict's `context.source` names: the server and database the
+    value came from, never the saved connection's id or its credentials. The
+    id changed whenever a connection was saved again (a password rotation),
+    and every verdict made under the old one was orphaned (F-VERDICT-SCOPE)."""
+    identity = f"{connection['engine']}://{str(connection['host']).lower()}:{connection['port']}"
+    return "/".join(p for p in (identity, database, schema) if p)
+
+
 def _question(context: NormalizationContext) -> NormalizationContext:
-    """The context a value is asked and decided in. The order a column's
-    values prove is derived from the data, not part of the question: a verdict
-    stays found when that evidence appears, and wins over it."""
-    if context.column_date_order is None:
-        return context
-    return context.model_copy(update={"column_date_order": None})
+    """The context a value is asked and decided in. What a column's values
+    prove (a day/month order, a decimal mark) is derived from the data, not
+    part of the question: a verdict stays found when that evidence appears,
+    and wins over it."""
+    if context.column_date_order is None and context.column_decimal_mark is None:
+        return context  # the common case keeps its cached hash
+    return context.model_copy(update={"column_date_order": None, "column_decimal_mark": None})
 
 
 def verdict_key(
@@ -214,3 +229,40 @@ class Adjudication:
                 profile_version=self._profile_version,
             )
         return self._verdicts[cache_key]
+
+
+def migrate_sources(persistence: PgPersistence) -> dict[str, int]:
+    """Re-key queue rows and verdicts stored under a saved connection's id
+    (before source_identity) to that connection's identity. Idempotent: a
+    row whose source is no longer a connection id is left alone. A row whose
+    connection or job is gone cannot be re-keyed and is only counted. Verdict
+    rows are copied, never changed: the history stays the audit trail."""
+    report = {"migrated": 0, "unmigrated": 0}
+    _, rows = persistence.list_queue(semantic_type=None, decided=None, limit=2**31, offset=0)
+    for row in rows:
+        context = json.loads(row["context"])
+        source = context.get("source")
+        if not source or "://" in source:
+            continue
+        connection = persistence.get_connection(source)
+        job = persistence.get_clone_job(row["last_job_id"])
+        detail = json.loads(row["detail"])
+        original = row["original"]
+        if detail.get("original_encoding") == "json":
+            original = json.loads(original)
+        if connection is None or job is None or original != sanitize_surrogates(original):
+            report["unmigrated"] += 1
+            continue
+        context["source"] = source_identity(
+            connection, job["source_database"], job.get("source_schema")
+        )
+        new_context = NormalizationContext(**context)
+        semantic_type = FieldSemanticType(row["semantic_type"])
+        persistence.rekey_adjudication(
+            row["key"],
+            new_key=verdict_key(semantic_type, original, new_context, row["profile_version"]),
+            context=new_context.model_dump_json(),
+            context_hash=new_context.context_hash,
+        )
+        report["migrated"] += 1
+    return report
