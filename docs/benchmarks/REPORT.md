@@ -937,3 +937,50 @@ people labelled independently; `kappa_score.py`:
   like `6/21/10`. On rayyan.article_jcreated_at 38 values prove M/D/Y, 0 prove D/M/Y, 320 are
   refused today. That is the next change (user decision: column evidence, default on), after
   Part 1.
+
+### 11.13 Column evidence for the day/month order (`fix/column-evidence`, ADR-008 amended)
+
+Live, `docs/benchmarks/scripts/column_evidence_live.py`: Raha `rayyan.article_jcreated_at`
+(1,000 real cells) copied to a fresh source, cloned as DATE with no country, read back by SQL.
+
+| | before (five branches) | after |
+|---|---|---|
+| job evidence | — | `{"DMY": 0, "MDY": 38, "order": "MDY"}` |
+| ambiguous cells refused (original kept) | 320 | 0 |
+| resolved, not in the proven order | — | 0 |
+| queue rows / occurrences | 179 / 320 | 0 / 0 |
+| rows source = destination | 1,000 = 1,000 | 1,000 = 1,000 |
+
+Scored against Raha's clean file (same rows by `id`): of the 320 resolved cells, the 39 that Raha
+left intact are all right; the other 281 are cells Raha corrupted by writing the year first
+(`12/1/06` for `1/6/12`), wrong under either day/month reading. No value in the column proves a
+year-first order (every corrupted year is 01-15, at most 31), so nothing in the data can tell
+them apart. Stating `country=US` on the same cells gives the identical 39 right / 281 wrong: the
+column's evidence answers exactly what a correct stated locale answers. The clean column proves
+M/D/Y too (85 values, 0 against). Before, these 281 corrupted cells went to the review queue as
+AMBIGUOUS; with the column's order they are written as dates (confidence 0.85, the stated-order
+confidence) with `column_evidence` recorded on each value.
+
+A person's verdict wins over the column (unit test fails without the fix); a context without a
+column order hashes exactly as on main (pinned in `test_column_evidence.py`), so no stored verdict
+key or cache key moves. CI set on the branch: 3,197 passed.
+
+User decision 2026-10-18, shown these numbers: "Keep default on".
+
+**Decimal mark (ADR-011 amendment, same rule).** Live, `column_evidence_live.py --type NUMERIC`:
+Raha `movies_1.rating_count` (7,390 real cells), text destination.
+
+| | before (five branches) | after |
+|---|---|---|
+| job evidence | — | `{".": 11, ",": 0, "mark": "."}` |
+| ambiguous cells refused | 5,494 | 0 |
+| resolved, not in the proven mark | — | 0 |
+| queue rows / occurrences | 5,150 / 5,494 | 0 / 0 |
+| rows source = destination | 7,390 = 7,390 | 7,390 = 7,390 |
+
+Scored against Raha's clean files (same row positions), every previously refused cell in the
+three real NUMERIC columns whose values prove a mark: `movies_1.rating_count` 5,494 / 5,494 right
+(`1,234` is the count 1234), `beers.abv` 1,266 / 1,266, `tax.rate` 1,872 / 1,872; 0 wrong. A
+scan of every text column on the source stack found no other column with ambiguous numbers and
+a proof; text columns (names, addresses) are never typed NUMERIC. CI set on the branch after both
+rules: 3,227 passed.

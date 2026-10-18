@@ -37,6 +37,8 @@ from concurrent.futures import ProcessPoolExecutor
 from importlib import resources
 from typing import TYPE_CHECKING, Any
 
+from normalizers.date import column_date_evidence
+from normalizers.numeric import column_decimal_evidence
 from normalizers.postcode_validation import country_from_postcode_format
 from normanalysis.type_detection import suggest_semantic_type
 from normexec.planner import DistinctValuePlanner
@@ -1268,6 +1270,7 @@ def _apply_column(
     region_column: str | None = None,
     confirmed_missing: Collection[str] = (),
     calibrated_abstention: bool = False,
+    proven: Mapping[str, tuple[str, int]] | None = None,
     locale: str | None,
     signals: dict[int, tuple[str, str]] | None,
     country_is_derived: bool,
@@ -1291,6 +1294,7 @@ def _apply_column(
         source=source_id,
         country=country,
         locale=locale,
+        **(proven or {}),
         error_policy=ErrorPolicy.RETURN_ORIGINAL,
         # This loop reads the projections the destination has columns
         # for (`.display`, `.comparison`, the MONEY currency out of
@@ -2117,6 +2121,7 @@ def _normalize_chunk(
                 region_column=region_columns.get(column),
                 confirmed_missing=job.get("confirmed_missing", {}).get(table, {}).get(column, ()),
                 calibrated_abstention=bool(job.get("calibrated_abstention")),
+                proven=_proven(job, table, column),
                 country=country,
                 locale=job.get("locale"),
                 signals=signals if provides_country else None,
@@ -2126,6 +2131,17 @@ def _normalize_chunk(
                 adjudication=adjudication,
                 engine=engine,
             )
+
+
+def _proven(job: Mapping[str, Any], table: str, column: str) -> dict[str, tuple[str, int]]:
+    """The context fields the column's own values prove: a day/month order or a
+    decimal mark, with how many distinct values prove it."""
+    evidence = job.get("column_evidence", {}).get(table, {}).get(column) or {}
+    return {
+        field: (evidence[key], evidence[evidence[key]])
+        for key, field in (("order", "column_date_order"), ("mark", "column_decimal_mark"))
+        if evidence.get(key)
+    }
 
 
 def _group_by_country(
@@ -2409,6 +2425,7 @@ def _normalize_table(
     bounds_columns: dict[str, list[str]] = table_plan.get("bounds_columns", {})
     region_columns: dict[str, str] = table_plan.get("region_columns", {})
     stats = {column: _ColumnStats() for column in configured_columns}
+    _column_evidence(job, source, table, configured_columns)
     # Only this table's own key column matters: a table that does not carry
     # it gets no cross-table country, which is the behaviour without the
     # feature. Empty means off for this table.
@@ -2513,6 +2530,39 @@ def _normalize_table(
 
     job["progress"] = progress
     _save_progress(persistence, job_id, job)
+
+
+_COLUMN_EVIDENCE = {
+    FieldSemanticType.DATE: column_date_evidence,
+    FieldSemanticType.DATETIME: column_date_evidence,
+    FieldSemanticType.NUMERIC: column_decimal_evidence,
+    FieldSemanticType.MONEY: column_decimal_evidence,
+}
+
+
+def _column_evidence(
+    job: dict[str, Any],
+    source: Any,
+    table: str,
+    configured_columns: Mapping[str, FieldSemanticType],
+) -> None:
+    """What each DATE/DATETIME column's values prove about its day/month order
+    and each NUMERIC/MONEY column's about its decimal mark, over every value,
+    before the first row is written. Kept on the job, so a resume reads the
+    same (ADR-008 and ADR-011 amendments)."""
+    evidence = job.setdefault("column_evidence", {})
+    columns = {
+        c: _COLUMN_EVIDENCE[t] for c, t in configured_columns.items() if t in _COLUMN_EVIDENCE
+    }
+    if table in evidence or not columns:
+        return
+    # ponytail: one extra read of these columns, a pushdown SELECT DISTINCT if it costs
+    values: dict[str, set[Any]] = {c: set() for c in columns}
+    for batch in source.read_table(table, columns=list(columns), batch_size=SOURCE_READ_BATCH_ROWS):
+        for row in batch.to_pylist():
+            for c in columns:
+                values[c].add(row.get(c))
+    evidence[table] = {c: prove(values[c]) for c, prove in columns.items()}
 
 
 def _destination_types(

@@ -22,13 +22,13 @@ from __future__ import annotations
 import re
 from decimal import Decimal
 from functools import cache
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import blake3
 import pyarrow as pa
 from babel import Locale, UnknownLocaleError
 from babel.languages import get_official_languages
-from babel.numbers import NumberFormatError, parse_decimal
+from babel.numbers import NumberFormatError, get_decimal_symbol, parse_decimal
 from normcore.context import NormalizationContext
 from normcore.enums import (
     FieldSemanticType,
@@ -42,8 +42,10 @@ from normcore.pii import character_class_mask, content_hash
 from normcore.rules import ComponentVersionInfo, ExplanationText, ValidationOutcome
 from normcore.trace import TraceStep
 
+from normalizers.date import proven_by_column
+
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Iterable, Sequence
 
     from normcore.interfaces import ComponentVersion, Explanation, StepSpec, ValidationResult
 
@@ -95,9 +97,9 @@ class NumericNormalizer:
         if symbol_match:
             leading_symbol, body = symbol_match.group(1), symbol_match.group(2)
 
-        locales = _resolve_locales(ctx)
+        body, locales, mark = _read_by_column(ctx, _resolve_locales(ctx), body)
         if not locales:
-            if _is_ambiguous_number(body):
+            if mark is None and _is_ambiguous_number(body):
                 return _ambiguous(value, ctx)
             # Without a locale, Babel has to be told SOMETHING, and the
             # "en_US" fallback below would silently apply US convention to
@@ -137,10 +139,11 @@ class NumericNormalizer:
         if is_negative_paren:
             decimal_value = -decimal_value
 
-        structured = {
+        structured: dict[str, object] = {
             "canonical_value": str(decimal_value),
             "original_locale": locale,
             "leading_symbol": leading_symbol,
+            **_column_evidence(ctx, mark),
         }
 
         canonical = str(decimal_value)
@@ -240,6 +243,62 @@ def _locales_for_country(country: str) -> tuple[str, ...]:
         for language in get_official_languages(country, de_facto=True)
         if (locale := _known(f"{language}_{country}")) is not None
     )
+
+
+def _read_by_column(
+    ctx: NormalizationContext, locales: list[str], body: str
+) -> tuple[str, list[str], str | None]:
+    """`(body, locales, mark)` once the column's proven decimal mark is applied
+    (ADR-011 amendment): only to an ambiguous value the stated locales do not
+    already agree on. The body is rewritten to `1234.5` form and the locales
+    dropped; when the column contradicts every stated locale, the locales are
+    dropped and the body kept, so the value stays AMBIGUOUS."""
+    if ctx.column_decimal_mark is None or not _is_ambiguous_number(body):
+        return body, locales, None
+    mark = ctx.column_decimal_mark[0]
+    stated = {get_decimal_symbol(locale) for locale in locales}
+    if stated == {mark}:
+        return body, locales, None  # the locale reads it the same way
+    if stated and mark not in stated:
+        return body, [], None
+    return body.replace("," if mark == "." else ".", "").replace(mark, "."), [], mark
+
+
+def _column_evidence(ctx: NormalizationContext, mark: str | None) -> dict[str, object]:
+    if mark is None or ctx.column_decimal_mark is None:
+        return {}
+    return {
+        "column_evidence": {
+            "decimal_mark": mark,
+            "proving_values": ctx.column_decimal_mark[1],
+            "contradicting_values": 0,
+        }
+    }
+
+
+_NUMBER_RE = re.compile(r"[-+]?(?:\d*[.,])*\d+")
+
+
+def column_decimal_evidence(values: Iterable[object]) -> dict[str, Any]:
+    """How many distinct numbers in a column can only have `.` or only `,` as
+    their decimal mark, and the mark they prove (`proven_by_column`). A mark is
+    proven by a decimal use that cannot be grouping (`1.5`, `1,234.56`) or by
+    the other separator grouping (`1,234,567`: `,` groups, so `.` is decimal)."""
+    proofs: dict[str, set[str]] = {".": set(), ",": set()}
+    for value in values:
+        found = isinstance(value, str) and _NUMBER_RE.search(value)
+        if not found:
+            continue
+        body = found[0].lstrip("-+")
+        has = [sep for sep in ".," if sep in body]
+        if len(has) == 2:
+            proofs["," if body.rfind(",") > body.rfind(".") else "."].add(body)
+        elif has and body.count(has[0]) > 1:
+            proofs["." if has[0] == "," else ","].add(body)
+        elif has and not _is_ambiguous_number(body):
+            proofs[has[0]].add(body)
+    counts = {k: len(v) for k, v in proofs.items()}
+    return {**counts, "mark": proven_by_column(counts)}
 
 
 def _is_ambiguous_number(body: str) -> bool:

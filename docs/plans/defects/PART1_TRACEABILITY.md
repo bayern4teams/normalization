@@ -12,7 +12,7 @@ decision, quoted). Evidence: `docs/benchmarks/REPORT.md` (REPORT), section §11 
 
 Branches (merge in this order; the last three are stacked): `fix/confident-wrong` (B1),
 `fix/verdict-identity` (B2), `fix/lineage-and-dates` (B3), `fix/calibration-coverage` (B4,
-on B3), `fix/ci-gates` (B5, on B4).
+on B3), `fix/ci-gates` (B5, on B4), then `fix/column-evidence` (C1, on B5 with B1 and B2 merged in).
 
 ## D1: AMBIGUOUS has an exit path
 
@@ -111,6 +111,7 @@ on B3), `fix/ci-gates` (B5, on B4).
 | N11 | NUMERIC/MONEY raised for country NO; first-language guess | §11.2: 307 MONEY values that raised now parse | done-live |
 | N12 | held-out date findings (no_NO, stated order, time digits) | §11.2 | done-live |
 | N13 | INVALID phone rewritten, its key in the code column | §11.9 | done-live |
+| C1 | a column's own values state its day/month order and decimal mark (from D6.3; user decision "Build now, default on", kept on 2026-10-18), branch `fix/column-evidence` | §11.13: rayyan 320 refused -> 0 (39 intact right, 281 Raha year-first corruptions, as with `country=US`); rating_count 5,494 -> 0, 8,632/8,632 right on three columns | done-live |
 
 ## Workflows, environment, "before" numbers, verified-as-sound
 
