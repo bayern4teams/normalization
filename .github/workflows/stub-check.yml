@@ -1,0 +1,48 @@
+name: stub-check
+
+# C4/K4: no stub markers in shipped source. Cheap (stdlib python3, no deps,
+# no uv sync): inspects only the lines a change ADDS, so pre-existing TODO
+# hits never block; `ponytail:` lines are the allowed exception (C4).
+# Runs on every push and pull request — this project merges locally and
+# pushes, so a PR-only trigger would miss most changes.
+
+on:
+  push:
+    branches-ignore:
+      - "milestone/**" # milestone branches use the heavier gate.yml workflow
+  pull_request:
+
+concurrency:
+  group: stub-check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  stubs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # need history to diff against the base
+
+      - name: Resolve the base of this change
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            base="${{ github.event.pull_request.base.sha }}"
+          else
+            base="${{ github.event.before }}"
+            # an all-zeros (or empty) "before" means the first push of a
+            # branch: fall back to the remote default branch instead.
+            case "$base" in
+              ''|*[!0]*) : ;;
+              *) base="" ;;
+            esac
+            if [ -z "$base" ]; then
+              git fetch --no-tags origin "$GITHUB_DEFAULT_BRANCH"
+              base="$(git rev-parse FETCH_HEAD)"
+            fi
+          fi
+          echo "STUB_BASE=$base" >> "$GITHUB_ENV"
+
+      - name: "No TODO/FIXME/XXX added to shipped source (ponytail: allowed)"
+        run: python3 scripts/check_no_stubs.py "$STUB_BASE"
