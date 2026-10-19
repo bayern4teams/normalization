@@ -6,6 +6,22 @@ name: docs
 # Files that do not exist yet are skipped, not errors.
 
 on:
+  # v1.0.0: this project merges locally and pushes, so doc checks must run on
+  # pushes too — a PR-only trigger would go unnoticed on most changes.
+  push:
+    branches-ignore:
+      - "milestone/**" # milestone branches use the heavier gate.yml workflow
+    paths:
+      - "README.md"
+      - "ARCHITECTURE.md"
+      - "TECHNICAL_IMPLEMENTATION.md"
+      - "GLOSSARY.md"
+      - "AGENTS.md"
+      - ".vale.ini"
+      - ".vale/**"
+      - ".markdownlint-cli2.jsonc"
+      - "scripts/check_mermaid.py"
+      - ".github/workflows/docs.yml"
   pull_request:
     paths:
       - "README.md"
