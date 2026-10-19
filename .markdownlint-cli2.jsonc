@@ -1,0 +1,22 @@
+{
+  // markdownlint-cli2, small config: keep the defaults, disable only what
+  // this repo's docs intentionally differ on. Scope = the five J1 files
+  // (docs/** joins when prompt 2 creates them).
+  "globs": [
+    "README.md",
+    "ARCHITECTURE.md",
+    "TECHNICAL_IMPLEMENTATION.md",
+    "GLOSSARY.md",
+    "AGENTS.md"
+  ],
+  // Rule overrides live under "config" (not "markdownlint" — that key is
+  // for markdownlint factory options like customRules).
+  "config": {
+    // Dense reference tables (graph tool table, level-of-detail table)
+    // cannot wrap to 80 columns without breaking rendering.
+    "MD013": false,
+    // MD060 (markdownlint 0.41) demands one table pipe style; the general
+    // rules block is identical across projects, so the config bends here.
+    "MD060": false
+  }
+}

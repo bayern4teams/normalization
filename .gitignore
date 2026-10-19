@@ -63,6 +63,11 @@ reports/
 # Teammates get their own by running the same commands (see CLAUDE.md).
 graphify-out/
 
+# Vale downloads style packages here on `vale sync` — regenerable, so not
+# committed; the vocabulary under config/ IS committed (it is the truth).
+.vale/styles/*
+!.vale/styles/config/
+
 # Local scratch (graph refresh log)
 .tmp/
 
