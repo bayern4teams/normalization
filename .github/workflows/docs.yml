@@ -62,6 +62,7 @@ jobs:
         # ADVISORY until prompt 2 rewrites the existing README prose (the
         # Google.EmDash/LyHyphens errors are all pre-existing there).
         # Remove continue-on-error in prompt 2, once the prose passes.
+        # C5 exception: approved by user 2026-10-19; review: when prompt 2 runs.
         continue-on-error: true
         run: |
           files=$(for f in README.md ARCHITECTURE.md TECHNICAL_IMPLEMENTATION.md GLOSSARY.md AGENTS.md; do [ -f "$f" ] && echo "$f"; done)
@@ -79,6 +80,7 @@ jobs:
       - name: markdownlint-cli2 (pinned; config .markdownlint-cli2.jsonc)
         # ADVISORY until prompt 2 (README.md:7 lacks a fence language —
         # pre-existing). Remove continue-on-error in prompt 2.
+        # C5 exception: approved by user 2026-10-19; review: when prompt 2 runs.
         continue-on-error: true
         run: npx -y markdownlint-cli2@0.23.3
 
