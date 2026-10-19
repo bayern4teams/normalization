@@ -1,18 +1,23 @@
-"""C4/K4: fail when a change ADDS a TODO/FIXME/XXX marker to shipped source.
+"""C4/K4: fail when a change ADDS a TODO/FIXME marker to shipped source.
 
 Only added lines are checked, so pre-existing markers never block CI (the
-baseline today is 4 grep hits, all `XXX` ISO placeholder codes in comments,
-none added by this rule's first run). Scope is shipped source: packages/,
-services/, ui/src. Tests, docs and tooling files are not source. A
-`ponytail:` comment is explicitly allowed — C4 says the code works and the
-comment names its known limit (decision 2026-10-19, user's words: "TODO /
-FIXME / XXX word tokens only; ponytail: lines exempt").
+baseline in scope is 0 markers: `grep -rnwE 'TODO|FIXME' packages services
+ui/src` finds none, measured 2026-10-19). Scope is shipped source:
+packages/, services/, ui/src. Tests, docs and tooling files are not
+source. A `ponytail:` comment is explicitly allowed — C4 says the code
+works and the comment names its known limit (decision 2026-10-19, user's
+words: "ponytail: lines exempt").
+
+XXX was dropped from the marker list on 2026-10-19 by user decision (F4),
+the user's words: "XXX is also real data (the ISO 4217 code for 'no
+currency'), so a normalizer data line with it would fail CI." Matching is
+TODO/FIXME only.
 
     uv run python scripts/check_no_stubs.py                 # diff vs main (CI base)
     uv run python scripts/check_no_stubs.py --staged        # pre-commit on the index
     uv run python scripts/check_no_stubs.py HEAD~1          # diff vs an explicit base
 
-Word-token match (TODO, FIXME, XXX as standalone words, case-sensitive,
+Word-token match (TODO, FIXME as standalone words, case-sensitive,
 uppercase only), so ordinary prose and lowercase identifiers pass.
 """
 
@@ -25,7 +30,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 SOURCE_DIRS = ("packages/", "services/", "ui/src/")
-_MARKER = re.compile(r"\b(TODO|FIXME|XXX)\b")
+_MARKER = re.compile(r"\b(TODO|FIXME)\b")
 
 # A diff's "new side" line: starts with '+', but not the '+++' file header.
 _ADDED = re.compile(r"^\+(?!\+\+)")
@@ -65,14 +70,14 @@ def main(argv: list[str]) -> int:
     if hits:
         print(
             f"check_no_stubs: {len(hits)} added line(s) in {base_desc} carry a "
-            "TODO/FIXME/XXX marker (C4). Fix: implement the behaviour, or write a "
+            "TODO/FIXME marker (C4). Fix: implement the behaviour, or write a "
             "`ponytail:` comment naming the known limit, or remove the marker.",
             file=sys.stderr,
         )
         for h in hits:
             print(f"  {h}", file=sys.stderr)
         return 1
-    print(f"check_no_stubs: OK — no TODO/FIXME/XXX added in shipped source ({base_desc}).")
+    print(f"check_no_stubs: OK — no TODO/FIXME added in shipped source ({base_desc}).")
     return 0
 
 

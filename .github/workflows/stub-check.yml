@@ -44,5 +44,5 @@ jobs:
           fi
           echo "STUB_BASE=$base" >> "$GITHUB_ENV"
 
-      - name: "No TODO/FIXME/XXX added to shipped source (ponytail: allowed)"
+      - name: "No TODO/FIXME added to shipped source (ponytail: allowed)"
         run: python3 scripts/check_no_stubs.py "$STUB_BASE"
