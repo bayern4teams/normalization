@@ -20,7 +20,7 @@
         ]
       },
       {
-        "matcher": "Bash|mcp__graft__|Read|Grep|Glob",
+        "matcher": "Bash|mcp__graft__|mcp__trail__|Read|Grep|Glob",
         "hooks": [
           {
             "type": "command",
@@ -50,6 +50,15 @@
             "timeout": 8000
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "uv run python \"${CLAUDE_PROJECT_DIR:-.}/scripts/refresh_graphs.py\" --session-start",
+            "timeout": 300
+          }
+        ]
       }
     ],
     "Stop": [
@@ -62,6 +71,17 @@
           }
         ]
       }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PROJECT_DIR:-.}/.claude/helpers/graft-hooks.cjs\" session-end",
+            "timeout": 5000
+          }
+        ]
+      }
     ]
   },
   "footerLinksRegexes": [
@@ -69,6 +89,7 @@
   ],
   "permissions": {
     "allow": [
+      "Bash(trail:*)",
       "Bash(graft:*)",
       "Bash(npx graft:*)",
       "Bash(graft-dev:*)",

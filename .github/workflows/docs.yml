@@ -1,0 +1,99 @@
+name: docs
+
+# J12: CI checks the docs — markdownlint, link check, Mermaid syntax, Vale.
+# Scope (decision): the five J1 files only for now; docs/** joins with
+# prompt 2, when ARCHITECTURE/TECHNICAL_IMPLEMENTATION/GLOSSARY exist.
+# Files that do not exist yet are skipped, not errors.
+
+on:
+  pull_request:
+    paths:
+      - "README.md"
+      - "ARCHITECTURE.md"
+      - "TECHNICAL_IMPLEMENTATION.md"
+      - "GLOSSARY.md"
+      - "AGENTS.md"
+      - ".vale.ini"
+      - ".vale/**"
+      - ".markdownlint-cli2.jsonc"
+      - "scripts/check_mermaid.py"
+      - ".github/workflows/docs.yml"
+
+concurrency:
+  group: docs-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  prose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Vale (official binary, pinned)
+        run: |
+          curl -sSL -o vale.tar.gz https://github.com/errata-ai/vale/releases/download/v3.24.0/vale_3.24.0_Linux_64-bit.tar.gz
+          curl -sSL -o vale_checksums.txt https://github.com/errata-ai/vale/releases/download/v3.24.0/vale_3.24.0_checksums.txt
+          grep 'vale_3.24.0_Linux_64-bit.tar.gz$' vale_checksums.txt | sed 's|vale_3.24.0_Linux_64-bit.tar.gz|vale.tar.gz|' | sha256sum -c -
+          tar xzf vale.tar.gz vale
+          sudo install vale /usr/local/bin/vale
+          vale --version
+
+      - name: Sync style packages (Google)
+        run: vale sync
+
+      - name: Vale (simple English, J5 — errors gate, suggestions advisory)
+        # ADVISORY until prompt 2 rewrites the existing README prose (the
+        # Google.EmDash/LyHyphens errors are all pre-existing there).
+        # Remove continue-on-error in prompt 2, once the prose passes.
+        continue-on-error: true
+        run: |
+          files=$(for f in README.md ARCHITECTURE.md TECHNICAL_IMPLEMENTATION.md GLOSSARY.md AGENTS.md; do [ -f "$f" ] && echo "$f"; done)
+          [ -z "$files" ] && echo "no J1 files present" && exit 0
+          vale --minAlertLevel=error --output=line $files
+
+  markdownlint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+      - name: markdownlint-cli2 (pinned; config .markdownlint-cli2.jsonc)
+        # ADVISORY until prompt 2 (README.md:7 lacks a fence language —
+        # pre-existing). Remove continue-on-error in prompt 2.
+        continue-on-error: true
+        run: npx -y markdownlint-cli2@0.23.3
+
+  links:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install lychee (official binary, pinned)
+        run: |
+          curl -sSL -o lychee.tar.gz https://github.com/lycheeverse/lychee/releases/download/lychee-v0.24.2/lychee-x86_64-unknown-linux-musl.tar.gz
+          curl -sSL -o lychee.tar.gz.sha256 https://github.com/lycheeverse/lychee/releases/download/lychee-v0.24.2/lychee-x86_64-unknown-linux-musl.tar.gz.sha256
+          echo "$(awk '{print $1}' lychee.tar.gz.sha256)  lychee.tar.gz" | sha256sum -c -
+          tar xzf lychee.tar.gz
+          sudo install lychee-x86_64-unknown-linux-musl/lychee /usr/local/bin/lychee
+          lychee --version
+      - name: Link check
+        run: |
+          files=$(for f in README.md ARCHITECTURE.md TECHNICAL_IMPLEMENTATION.md GLOSSARY.md AGENTS.md; do [ -f "$f" ] && echo "$f"; done)
+          [ -z "$files" ] && echo "no J1 files present" && exit 0
+          # lychee 0.24 skips mailto unless --include-mail is passed.
+          lychee --no-progress $files
+
+  mermaid:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+      - name: Render every Mermaid block (fails on an invalid block)
+        # System python3 is enough: scripts/check_mermaid.py is stdlib only.
+        run: python3 scripts/check_mermaid.py

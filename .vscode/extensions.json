@@ -1,0 +1,7 @@
+{
+  "recommendations": [
+    "bierner.markdown-mermaid",
+    "DavidAnson.vscode-markdownlint",
+    "ChrisChinchilla.vale-vscode"
+  ]
+}

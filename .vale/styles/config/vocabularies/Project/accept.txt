@@ -1,0 +1,31 @@
+# One term per line; prompt 2 fills this from GLOSSARY.md (J5).
+# Only terms whose exact casing must be enforced, or which Vale's spelling
+# list lacks. Words that also appear as ordinary lowercase prose (Claude,
+# agents, architecture, ambiguous, ponytail) must NOT go here: Vale.Terms
+# enforces the entry's exact casing and would then flag the prose use.
+CLDR
+GLEIF
+ICU
+ISO
+Mermaid
+README
+GLOSSARY
+graphify
+graft
+markdownlint
+lychee
+Vale
+uv
+PyPI
+PostgreSQL
+repo
+repos
+config
+configs
+DBAs
+ADRs
+callees
+APIs
+lookups
+Splink
+Postgres

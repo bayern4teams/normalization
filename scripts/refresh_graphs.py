@@ -7,6 +7,7 @@ empty index. Same shallow, no-LLM commands as the hook; never `--deep`, never `g
 
     uv run python scripts/refresh_graphs.py              # all three, in order
     uv run python scripts/refresh_graphs.py --if-missing # skip a graph whose output already exists
+    uv run python scripts/refresh_graphs.py --session-start  # E9: freshen what needs it, exit 0
 """
 
 from __future__ import annotations
@@ -31,40 +32,92 @@ GRAPHS: list[tuple[str, list[str], Path]] = [
 ]
 
 
+def _run(tool: str, args: list[str]) -> str | None:
+    """Run one graph build; return None on success, a one-line reason on failure."""
+    exe = shutil.which(tool)
+    if exe is None:
+        return f"{tool} is not on PATH, its graph was NOT built"
+    try:
+        done = subprocess.run(
+            [exe, *args],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            timeout=_TIMEOUT_S,
+            check=False,
+        )
+    except (subprocess.TimeoutExpired, OSError) as exc:
+        return f"{tool} failed: {exc}"
+    if done.returncode != 0:
+        return f"{tool} exit {done.returncode}\n{done.stderr[-800:]}"
+    return None
+
+
 def refresh(*, if_missing: bool = False) -> int:
     missing: list[str] = []
     failed: list[str] = []
     for tool, args, proof in GRAPHS:
-        exe = shutil.which(tool)
-        if exe is None:
-            missing.append(tool)
-            continue
         if if_missing and proof != Path() and proof.exists():
             continue
-        try:
-            done = subprocess.run(
-                [exe, *args],
-                cwd=ROOT,
-                capture_output=True,
-                text=True,
-                timeout=_TIMEOUT_S,
-                check=False,
-            )
-        except (subprocess.TimeoutExpired, OSError) as exc:
-            print(f"refresh_graphs: {tool} failed: {exc}", file=sys.stderr)
-            failed.append(tool)
+        problem = _run(tool, args)
+        if problem is None:
             continue
-        if done.returncode != 0:
-            tail = done.stderr[-800:]
-            print(f"refresh_graphs: {tool} exit {done.returncode}\n{tail}", file=sys.stderr)
+        if problem.startswith(f"{tool} is not on PATH"):
+            missing.append(tool)
+        else:
             failed.append(tool)
-    for tool in missing:
-        print(f"refresh_graphs: {tool} is not on PATH, its graph was NOT built", file=sys.stderr)
+        print(f"refresh_graphs: {problem}", file=sys.stderr)
     if failed or missing:
         return 1
     print("refresh_graphs: all three graphs refreshed")
     return 0
 
 
+def _head_time() -> float:
+    """Commit time of HEAD (epoch seconds, 0.0 outside a repo): the staleness bar."""
+    done = subprocess.run(
+        ["git", "log", "-1", "--format=%ct"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return float(done.stdout) if done.returncode == 0 and done.stdout.strip() else 0.0
+
+
+def _fresh(tool: str, proof: Path) -> bool:
+    """Is this graph current enough to leave alone at session start?"""
+    if tool == "graft":
+        # graft ships its own staleness check (`graft check`, per its --help);
+        # trust it instead of guessing from mtimes.
+        exe = shutil.which(tool)
+        if exe is None or not proof.exists():
+            return False
+        check = subprocess.run([exe, "check"], cwd=ROOT, capture_output=True, check=False)
+        return check.returncode == 0
+    if proof == Path():
+        # codebase-memory-mcp keeps its index outside the repo and exposes no
+        # staleness check; its `index_repository` is incremental, so rebuild.
+        return False
+    return proof.exists() and proof.stat().st_mtime >= _head_time()
+
+
+def refresh_session_start() -> int:
+    """E9: build missing graphs and refresh stale ones; warn only, always exit 0.
+
+    A session must not start on a hard error from a background housekeeping
+    step, so this mode is warning-only (the strict `refresh()` is for CI/setup).
+    """
+    for tool, args, proof in GRAPHS:
+        if _fresh(tool, proof):
+            continue
+        problem = _run(tool, args)
+        if problem is not None:
+            print(f"refresh_graphs --session-start: WARNING {problem}", file=sys.stderr)
+    return 0
+
+
 if __name__ == "__main__":
+    if "--session-start" in sys.argv[1:]:
+        sys.exit(refresh_session_start())
     sys.exit(refresh(if_missing="--if-missing" in sys.argv[1:]))

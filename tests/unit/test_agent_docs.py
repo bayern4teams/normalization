@@ -1,8 +1,9 @@
-"""AGENTS.md and CLAUDE.md are the same document under two names.
+"""AGENTS.md holds every rule; CLAUDE.md is the one-line pointer into it.
 
 Different agents look for different filenames, and the instructions must
-not depend on which one a given tool happens to read. Two copies drift
-silently, so this asserts they cannot.
+not depend on which one a given tool happens to read. Two full copies
+drift silently, so CLAUDE.md is exactly `@AGENTS.md` (Claude Code expands
+it) and this test asserts the pointer, not a copy.
 """
 
 from __future__ import annotations
@@ -23,9 +24,10 @@ def test_both_agent_docs_exist() -> None:
 
 
 @pytest.mark.unit
-def test_the_two_agent_docs_are_identical() -> None:
-    """Fix by copying one over the other: `cp AGENTS.md CLAUDE.md`."""
-    assert _AGENTS.read_text(encoding="utf-8") == _CLAUDE.read_text(encoding="utf-8")
+def test_claude_md_is_the_single_line_pointer() -> None:
+    """Fix by making it exactly `@AGENTS.md` again (K1): all rules live in
+    AGENTS.md and Claude Code expands the pointer when it reads CLAUDE.md."""
+    assert _CLAUDE.read_text(encoding="utf-8") == "@AGENTS.md\n"
 
 
 @pytest.mark.unit
