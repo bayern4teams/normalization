@@ -50,15 +50,13 @@
             "timeout": 8000
           }
         ]
-      }
-    ],
-    "SessionEnd": [
+      },
       {
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PROJECT_DIR:-.}/.claude/helpers/graft-hooks.cjs\" session-end",
-            "timeout": 5000
+            "command": "uv run python \"${CLAUDE_PROJECT_DIR:-.}/scripts/refresh_graphs.py\" --session-start",
+            "timeout": 300
           }
         ]
       }
@@ -70,6 +68,17 @@
             "type": "command",
             "command": "node \"${CLAUDE_PROJECT_DIR:-.}/.claude/helpers/graft-hooks.cjs\" stop",
             "timeout": 8000
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PROJECT_DIR:-.}/.claude/helpers/graft-hooks.cjs\" session-end",
+            "timeout": 5000
           }
         ]
       }
