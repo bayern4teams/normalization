@@ -382,7 +382,8 @@ The last measured CI set is in [REPORT §11.13](docs/benchmarks/REPORT.md) (3,22
 
 Milestones M0 to M8 each passed a gate with three layers: automated CI,
 liveness checks against the running stack, and a signed verification pack in
-[docs/verification/](docs/verification/). The
+[docs/verification/](docs/verification/): [M0](docs/verification/M0-verification-pack.md), [M1](docs/verification/M1-verification-pack.md), [M2](docs/verification/M2-verification-pack.md), [M3](docs/verification/M3-verification-pack.md), [M4](docs/verification/M4-verification-pack.md), [M5](docs/verification/M5-verification-pack.md), [M6](docs/verification/M6-verification-pack.md), [M7](docs/verification/M7-verification-pack.md), [M8](docs/verification/M8-verification-pack.md), and the
+[clone pack](docs/verification/clone-normalize-verification-pack.md). The
 [traceability matrix](docs/traceability-matrix.md) maps each section of the
 original specification to its code and tests.
 
