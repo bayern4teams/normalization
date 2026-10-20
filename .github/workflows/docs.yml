@@ -22,6 +22,7 @@ on:
       - ".vale/**"
       - ".markdownlint-cli2.jsonc"
       - "scripts/check_mermaid.py"
+      - "puppeteer-config.json"
       - ".github/workflows/docs.yml"
   pull_request:
     paths:
@@ -35,6 +36,7 @@ on:
       - ".vale/**"
       - ".markdownlint-cli2.jsonc"
       - "scripts/check_mermaid.py"
+      - "puppeteer-config.json"
       - ".github/workflows/docs.yml"
 
 concurrency:
