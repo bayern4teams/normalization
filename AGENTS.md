@@ -1,8 +1,8 @@
 # Agent guide
 
-<!-- general-rules:start v1.1.0 -->
+<!-- general-rules:start v1.2.0 -->
 
-## 1. How to work (rules A-D, F-I, K)
+## 1. How to work (rules A-D, F-I, K-M)
 
 ### A. Asking, never guessing
 
@@ -134,6 +134,40 @@
   number, a changed meaning raises the major number, a wording fix raises the patch number.
   Why: projects can see which rules they follow.
 
+### L. Tests
+
+- **L1** You MUST NOT edit, weaken, skip or delete a test to make it pass. If a test and the spec
+  disagree, stop and ask. Why: agents have been measured doing this, and a test changed to pass
+  proves nothing.
+- **L2** Expected values come from an independent source: the spec, a standard, or the test's own
+  calculation from its input; never from running the code under test. Why: an expected value
+  copied from the output passes on any bug.
+- **L3** A new test MUST first fail for the expected reason (the missing behaviour), not for a typo,
+  an import or a fixture error; show that failure. D3 applies the same to bug fixes. Why: a test
+  that never failed may test nothing.
+- **L4** Every test checks a real outcome: no test without an assertion, no `assert True`, no empty
+  `except` in a test. Why: such a test always passes.
+- **L5** Mock only at boundaries you do not own (network, clock, paid or external services); never
+  mock the code under test or this project's own modules. Why: a mocked internal tests the mock,
+  not the code.
+- **L6** Random and property-based tests print their seed, and every failure they find is kept as a
+  fixed regression case (for example a Hypothesis `@example`). Why: a failure that cannot be
+  reproduced cannot be fixed.
+- **L7** pytest runs strict: `xfail_strict`, `--strict-markers`, `--strict-config`. Why: an
+  unexpected pass or a mistyped marker must fail, not pass silently.
+
+### M. Repository layout
+
+- **M1** Every file has a fixed home: source, tests, scripts, docs, and `docs/archive/` for
+  superseded documents; downloads and outputs live outside the repo (H1). The root folder holds
+  only an agreed list of files. Why: a file in the wrong place is hard to find and easy to forget.
+- **M2** Generated files, caches and virtual environments are git-ignored; the lockfile is committed.
+  Why: the repo holds sources, and builds stay reproducible.
+- **M3** A superseded document moves to `docs/archive/` and leaves a one-line pointer; deleting one
+  needs a yes. Why: history stays findable and the current docs stay current.
+- **M4** Every import is a declared dependency of its package, and every declared dependency is used.
+  Why: undeclared imports break installs; unused ones cost install time and security updates.
+
 ## 2. Code graphs and ponytail (rules E)
 
 - **E1** Understand code through the graphs first, in order: graphify (concepts, impact) -> graft
@@ -256,6 +290,13 @@ These are not style preferences; each one exists because ignoring it broke somet
   [`docs/archive/plans/defects/PART1_COMPLETE.md`](docs/archive/plans/defects/PART1_COMPLETE.md)
   and `docs/benchmarks/REPORT.md` §11. Why: it is the record of what was verified, not a live
   plan — read it before redoing any of that work.
+
+### Known gaps against general block v1.2.0
+
+User decision 2026-10-20: "Leave `pyproject.toml` unchanged and list L7 as
+'not yet met'... for prompt 4" and "List M1 as 'for prompt 4'". Until then:
+L7 is not met (no strict pytest settings in `pyproject.toml`), M1 is not met
+(root folder holds extra files such as `TODO.md`), and there is no L4 check.
 
 ### Graph tooling details (project-specific; moved out of the general block at v1.1.0)
 

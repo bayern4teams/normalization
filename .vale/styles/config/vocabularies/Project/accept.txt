@@ -86,3 +86,4 @@ FastAPI
 IPs
 Vite
 dev
+lockfile
