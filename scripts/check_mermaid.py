@@ -18,7 +18,14 @@ import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-SCOPE = ["README.md", "ARCHITECTURE.md", "TECHNICAL_IMPLEMENTATION.md", "GLOSSARY.md", "AGENTS.md"]
+SCOPE = [
+    "README.md",
+    "ARCHITECTURE.md",
+    "TECHNICAL_IMPLEMENTATION.md",
+    "GLOSSARY.md",
+    "docs/LESSONS.md",
+    "AGENTS.md",
+]
 _BLOCK = re.compile(r"^```mermaid\n(.*?)^```", re.DOTALL | re.MULTILINE)
 
 

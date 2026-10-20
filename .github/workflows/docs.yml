@@ -16,6 +16,7 @@ on:
       - "ARCHITECTURE.md"
       - "TECHNICAL_IMPLEMENTATION.md"
       - "GLOSSARY.md"
+      - "docs/LESSONS.md" # v1.1.0 (J14); docs/** joins with prompt 2
       - "AGENTS.md"
       - ".vale.ini"
       - ".vale/**"
@@ -28,6 +29,7 @@ on:
       - "ARCHITECTURE.md"
       - "TECHNICAL_IMPLEMENTATION.md"
       - "GLOSSARY.md"
+      - "docs/LESSONS.md" # v1.1.0 (J14); docs/** joins with prompt 2
       - "AGENTS.md"
       - ".vale.ini"
       - ".vale/**"
@@ -65,7 +67,7 @@ jobs:
         # C5 exception: approved by user 2026-10-19; review: when prompt 2 runs.
         continue-on-error: true
         run: |
-          files=$(for f in README.md ARCHITECTURE.md TECHNICAL_IMPLEMENTATION.md GLOSSARY.md AGENTS.md; do [ -f "$f" ] && echo "$f"; done)
+          files=$(for f in README.md ARCHITECTURE.md TECHNICAL_IMPLEMENTATION.md GLOSSARY.md docs/LESSONS.md AGENTS.md; do [ -f "$f" ] && echo "$f"; done)
           [ -z "$files" ] && echo "no J1 files present" && exit 0
           vale --minAlertLevel=error --output=line $files
 
@@ -99,7 +101,7 @@ jobs:
           lychee --version
       - name: Link check
         run: |
-          files=$(for f in README.md ARCHITECTURE.md TECHNICAL_IMPLEMENTATION.md GLOSSARY.md AGENTS.md; do [ -f "$f" ] && echo "$f"; done)
+          files=$(for f in README.md ARCHITECTURE.md TECHNICAL_IMPLEMENTATION.md GLOSSARY.md docs/LESSONS.md AGENTS.md; do [ -f "$f" ] && echo "$f"; done)
           [ -z "$files" ] && echo "no J1 files present" && exit 0
           # lychee 0.24 skips mailto unless --include-mail is passed.
           lychee --no-progress $files
