@@ -4,7 +4,7 @@
 **Author:** Hermes (code-graph audit + nine-track verified research sweep)
 **Status:** Proposal — no code changed
 **Implementation status (2026-10-06):** Part 1 D1-D12 implemented on branch `feat/defects-fixes` from
-[`docs/archive/plans/DEFECTS_IMPLEMENTATION_PLAN.md`](plans/DEFECTS_IMPLEMENTATION_PLAN.md); per-item verdicts in
+[`docs/archive/plans/DEFECTS_IMPLEMENTATION_PLAN.md`](archive/plans/DEFECTS_IMPLEMENTATION_PLAN.md); per-item verdicts in
 [`archive/plans/defects/HANDOFF.md`](archive/plans/defects/HANDOFF.md), before/after numbers in
 [`archive/plans/defects/PHASE4_REPORT.md`](archive/plans/defects/PHASE4_REPORT.md). Where this report and the code differed
 (F1-F7: D5's cast gate already existed, D10's extension was kept in `display`, decision B's verdict key, the

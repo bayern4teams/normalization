@@ -1,9 +1,9 @@
 name: docs
 
 # J12: CI checks the docs — markdownlint, link check, Mermaid syntax, Vale.
-# Scope (decision): the five J1 files only for now; docs/** joins with
-# prompt 2, when ARCHITECTURE/TECHNICAL_IMPLEMENTATION/GLOSSARY exist.
-# Files that do not exist yet are skipped, not errors.
+# Scope (user decision 2026-10-20, "4. a"): Vale, markdownlint and Mermaid
+# lint the five J1 files only (the older docs/** prose is not rewritten);
+# the link check also covers every Markdown file under docs/ (offline).
 
 on:
   # v1.0.0: this project merges locally and pushes, so doc checks must run on
@@ -16,12 +16,13 @@ on:
       - "ARCHITECTURE.md"
       - "TECHNICAL_IMPLEMENTATION.md"
       - "GLOSSARY.md"
-      - "docs/LESSONS.md" # v1.1.0 (J14); docs/** joins with prompt 2
+      - "docs/**"
       - "AGENTS.md"
       - ".vale.ini"
       - ".vale/**"
       - ".markdownlint-cli2.jsonc"
       - "scripts/check_mermaid.py"
+      - "puppeteer-config.json"
       - ".github/workflows/docs.yml"
   pull_request:
     paths:
@@ -29,12 +30,13 @@ on:
       - "ARCHITECTURE.md"
       - "TECHNICAL_IMPLEMENTATION.md"
       - "GLOSSARY.md"
-      - "docs/LESSONS.md" # v1.1.0 (J14); docs/** joins with prompt 2
+      - "docs/**"
       - "AGENTS.md"
       - ".vale.ini"
       - ".vale/**"
       - ".markdownlint-cli2.jsonc"
       - "scripts/check_mermaid.py"
+      - "puppeteer-config.json"
       - ".github/workflows/docs.yml"
 
 concurrency:
@@ -61,11 +63,6 @@ jobs:
         run: vale sync
 
       - name: Vale (simple English, J5 — errors gate, suggestions advisory)
-        # ADVISORY until prompt 2 rewrites the existing README prose (the
-        # Google.EmDash/LyHyphens errors are all pre-existing there).
-        # Remove continue-on-error in prompt 2, once the prose passes.
-        # C5 exception: approved by user 2026-10-19; review: when prompt 2 runs.
-        continue-on-error: true
         run: |
           files=$(for f in README.md ARCHITECTURE.md TECHNICAL_IMPLEMENTATION.md GLOSSARY.md docs/LESSONS.md AGENTS.md; do [ -f "$f" ] && echo "$f"; done)
           [ -z "$files" ] && echo "no J1 files present" && exit 0
@@ -80,10 +77,6 @@ jobs:
         with:
           node-version: lts/*
       - name: markdownlint-cli2 (pinned; config .markdownlint-cli2.jsonc)
-        # ADVISORY until prompt 2 (README.md:7 lacks a fence language —
-        # pre-existing). Remove continue-on-error in prompt 2.
-        # C5 exception: approved by user 2026-10-19; review: when prompt 2 runs.
-        continue-on-error: true
         run: npx -y markdownlint-cli2@0.23.3
 
   links:
@@ -105,6 +98,9 @@ jobs:
           [ -z "$files" ] && echo "no J1 files present" && exit 0
           # lychee 0.24 skips mailto unless --include-mail is passed.
           lychee --no-progress $files
+          # Local links under docs/ (older documents): offline, so a flaky
+          # external site cannot fail a run.
+          lychee --no-progress --offline 'docs/**/*.md'
 
   mermaid:
     runs-on: ubuntu-latest

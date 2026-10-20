@@ -47,6 +47,12 @@ def main(argv: list[str]) -> int:
                         "npx",
                         "-y",
                         "@mermaid-js/mermaid-cli@12.0.0",
+                        # C5 exception: --no-sandbox for Chromium (puppeteer-config.json).
+                        # Reason: Ubuntu 24.04 AppArmor blocks Chromium's sandbox on GitHub
+                        # runners; it renders only this repo's own diagrams.
+                        # Approved by user 2026-10-20; review 2027-04-20.
+                        "-p",
+                        str(ROOT / "puppeteer-config.json"),
                         "-i",
                         str(src),
                         "-o",
