@@ -1,81 +1,176 @@
 # Normalization Engine
 
-Data Normalization & Standardization Engine for the Entity Resolution platform.
+The Normalization Engine cleans and standardizes the values in a database
+(names, phones, dates, addresses, identifiers and more) without guessing. When
+a value has two valid readings, it keeps the original and asks a person.
 
-Sits **before** the Data Discovery & Entity Context Engine, and long before Splink:
+It sits before data discovery and record linkage. It does not find schemas,
+keys or entities, and it does not match records.
 
+```mermaid
+flowchart LR
+    raw[(Your database<br/>Postgres or ClickHouse)] -->|reads| engine[Normalization Engine]
+    engine --> clone[(Normalized copy<br/>same server)]
+    engine --> queue[Review queue<br/>ambiguous values]
+    engine --> report[Quality report<br/>errors, lineage]
+    clone --> next[Data discovery<br/>then record linkage]
 ```
-RAW USER DATABASES → NORMALIZATION ENGINE (this repo) → DATA DISCOVERY → ENTITY-SCOPED CANONICAL DATASET → SPLINK
-```
 
-This repository implements normalization only. It does not implement schema discovery,
-key discovery, entity extraction, canonical dataset construction, or Splink.
+Caption: a normal clone only reads the origin and writes a normalized copy
+next to it. The opt-in in-place mode is the exception (see Limits).
+
+## Why it matters
+
+<!-- verified: 9f27526 -->
+
+- **No silent guesses.** `03/04/2024` is 3 April or 4 March. The engine keeps
+  the original and queues the value. One answer from a person settles it in
+  every later run.
+- **Nothing is lost.** In a normal clone every original stays in the origin.
+  A value that fails keeps its original in a text column, or becomes NULL in a
+  typed column, and gets an error row.
+- **Repeatable.** The same input and the same environment give the same
+  output, byte for byte.
 
 ## Status
 
-All 8 gated milestones (M0–M8) of the original `Source.txt` implementation
-plan are complete — engine, dictionaries, batch execution, analysis, API,
-and UI. See:
+<!-- verified: 9f27526 -->
 
-- [`docs/normalization-architecture.md`](docs/normalization-architecture.md) — system design
-- [`docs/normalization-tool-evaluation.md`](docs/normalization-tool-evaluation.md) — library evaluation matrix
-- [`docs/dependency-inventory.md`](docs/dependency-inventory.md) — license-audited dependency list
-- [`docs/adr/`](docs/adr/) — architecture decision records
-- [`docs/improvement-report.md`](docs/improvement-report.md) — verified defects D1-D12, research, architecture; implemented per [`docs/archive/plans/DEFECTS_IMPLEMENTATION_PLAN.md`](docs/archive/plans/DEFECTS_IMPLEMENTATION_PLAN.md)
-- [`docs/traceability-matrix.md`](docs/traceability-matrix.md) — spec section → implementation mapping
-- [`docs/verification/`](docs/verification/) — signed milestone gate packs
+All milestones M0 to M8 are complete. Part 1 of the improvement report
+(defects D1 to D12) is complete and measured on public data
+([record](docs/archive/plans/defects/PART1_COMPLETE.md)). Postgres and
+ClickHouse are supported for the clone feature. MySQL, Mongo and file sources
+exist as read-only connectors, and the clone feature does not use them
+([ADR-017](docs/adr/ADR-017-clone-normalize-engine-scope.md)).
 
-The full implementation plan (8 gated milestones, 18 phases) lives in the planning
-document that produced this repository; `docs/traceability-matrix.md` is the
-canonical live mapping going forward.
+## Quickstart
 
-### DB-clone-and-normalize
+<!-- verified: 9f27526 -->
 
-A second, separately-scoped feature (not part of `Source.txt`, not in the
-milestone/traceability system above): point the app at a real origin
-database — Postgres or ClickHouse, strictly read-only, never modified —
-and have it build a schema-cloned, normalized-in-place destination next
-to it on the same server, driven from the UI (`Connections`/`Clone` nav
-items), as a background/pollable job with crash-resume. No admin/`CREATE
-DATABASE` rights are required by the app itself.
-
-- [`docs/clone-e2e-guide.md`](docs/clone-e2e-guide.md) — step-by-step: run
-  it against the repo's demo containers or your own real database
-- [`docs/adr/ADR-017-clone-normalize-engine-scope.md`](docs/adr/ADR-017-clone-normalize-engine-scope.md) — why MySQL/Mongo/File are documentation-only for now
-- [`docs/verification/clone-normalize-verification-pack.md`](docs/verification/clone-normalize-verification-pack.md) — evidence it works
-- [`docs/adr/ADR-018-abstention-and-adjudication.md`](docs/adr/ADR-018-abstention-and-adjudication.md),
-  [`ADR-019`](docs/adr/ADR-019-confidence-calibration.md),
-  [`ADR-020`](docs/adr/ADR-020-typed-destination.md) — the review queue for
-  ambiguous values, confidence calibration, and typed destination columns
-  (improvement-report D1-D12; plan and status in `docs/archive/plans/`)
-
-Measuring accuracy (D6/D2): `uv run python -m normcli gold generate --seed 0
---n 30 --out corpus.jsonl`, then `normcli gold score corpus.jsonl` and
-`normcli calibrate corpus.jsonl --cost-ratio <R>` (the cost of a wrong value
-over an abstention has no default: state it).
-
-Requires `NORM_SECRET_KEY` (see `.env.example`) to encrypt saved
-connection passwords at rest.
-
-## Development
-
-Requires [`uv`](https://docs.astral.sh/uv/).
+You need [`uv`](https://docs.astral.sh/uv/), Docker and Node.
 
 ```bash
 uv sync --all-extras
-uv run ruff check .
-uv run mypy packages
-uv run pytest -m "unit or golden or property or contract"
+```
+
+Fetch the address model data once (about 813 MB):
+
+```bash
+bash services/libpostal/_data_cache/download_data.sh
+```
+
+Start the app:
+
+```bash
+docker compose up -d postgres libpostal api
 ```
 
 ```bash
-docker compose up -d
-docker compose ps
+curl -s http://localhost:8080/health
 ```
 
-## Non-goals
+Start the UI:
 
-- No schema/key/relationship discovery
-- No entity extraction or graph construction
-- No Splink, no probabilistic linkage, no record matching
-- No mutation of source systems — this engine is strictly read-only against sources
+```bash
+cd ui && npm install && npm run dev
+```
+
+The compose file sets a fixed development `NORM_SECRET_KEY`. Generate your own
+for any other use. To clone a real database, follow the
+[end-to-end guide](docs/clone-e2e-guide.md).
+
+## Worked example: measure accuracy
+
+<!-- verified: 9f27526 -->
+
+Generate a seeded corpus of dirty values with known truth, then score the
+engine on it.
+
+```bash
+uv run python -m normcli gold generate --seed 0 --n 30 --out corpus.jsonl
+```
+
+```bash
+uv run python -m normcli gold score corpus.jsonl
+```
+
+Result on 2026-10-20, commit `9f27526`:
+
+```text
+gold score: 180 cases from corpus.jsonl
+  correct: 149
+  correct-abstain: 31
+  wrong-confident: 0
+  over-abstain: 0
+  wrong-status: 0
+```
+
+`wrong-confident` is the number to watch: a value the engine answered with
+confidence and got wrong. Then calibrate. The cost ratio has no default,
+because the right value depends on what a wrong answer costs you.
+
+```bash
+uv run python -m normcli calibrate corpus.jsonl --cost-ratio 20
+```
+
+## Results
+
+<!-- verified: 9f27526 -->
+
+Measured on public data. Full tables, environment and reproduction:
+[`docs/benchmarks/REPORT.md`](docs/benchmarks/REPORT.md).
+
+| Measure | Before | After | Source |
+|---|---|---|---|
+| Seeded gold corpus: correct, correct-abstain, wrong-confident, over-abstain, wrong-status | 142, 21, 11, 6, 0 | 149, 31, 0, 0, 0 | REPORT §11.2 |
+| Norway register numbers valid (1,177,617 rows) | 0 | 1,177,617 | REPORT §11.7 |
+| Bare website hosts answered as `https` without evidence | 34,853 | 0 (ambiguous, both schemes listed) | REPORT §11.2 |
+| Refused dates in a column that proves M/D/Y (rayyan, 1,000 cells) | 320 | 0 | REPORT §11.13 |
+| Refused numbers in a column that proves `.` (movies_1, 7,390 cells) | 5,494 | 0 | REPORT §11.13 |
+| Benchmark clones completed, with equal source and destination row counts | not applicable | 16 of 16 | REPORT §11.10 |
+| Largest clone | not applicable | 86,586,082 rows in 1,143.1 s (TPC-H SF10, ClickHouse) | REPORT §11.10 |
+| Two people labelling 60 values: Cohen's kappa | not applicable | 0.830 | REPORT §11.12 |
+
+## Limits
+
+<!-- verified: 9f27526 -->
+
+- Confidence does not separate well-formed wrong input. Across different error
+  generators the calibration guarantee does not hold, so abstention is opt in
+  per job ([REPORT §11.8](docs/benchmarks/REPORT.md)).
+- Postgres and ClickHouse only, and the origin and destination must use the
+  same engine.
+- In-place mode (`in_place`, off by default) replaces the origin's tables with
+  normalized ones. Originals then survive only in the error report. It needs a
+  writable origin login.
+- The app never runs `CREATE DATABASE`. You run it once by hand.
+- Column type autodetect is off by default. It once turned French company
+  numbers into phone numbers ([REPORT](docs/benchmarks/REPORT.md) headline).
+- The API has no authentication in the code. Put it behind your own gateway.
+- Saved connection passwords need `NORM_SECRET_KEY`.
+
+## License
+
+<!-- verified: 9f27526 -->
+
+No license file is in the repository. `pyproject.toml` declares the license
+as `Proprietary`.
+
+## Links
+
+<!-- verified: 9f27526 -->
+
+| Document | For |
+|---|---|
+| [ARCHITECTURE.md](ARCHITECTURE.md) | Deployment, data contract, guarantees, security |
+| [TECHNICAL_IMPLEMENTATION.md](TECHNICAL_IMPLEMENTATION.md) | Code map, algorithms, tests, how to extend |
+| [GLOSSARY.md](GLOSSARY.md) | One fixed term per concept |
+| [docs/LESSONS.md](docs/LESSONS.md) | What was tried and did not work |
+| [docs/adr/](docs/adr/) | Design decisions |
+| [docs/improvement-report.md](docs/improvement-report.md) | Defects D1 to D12, research, the plan behind Part 1 |
+| [docs/normalization-tool-evaluation.md](docs/normalization-tool-evaluation.md) | Library evaluation and rejected candidates |
+| [docs/dependency-inventory.md](docs/dependency-inventory.md) | Dependencies and licenses |
+| [docs/clone-e2e-guide.md](docs/clone-e2e-guide.md) | Run a clone step by step |
+| [docs/verification/](docs/verification/) | Signed milestone packs |
+| [docs/traceability-matrix.md](docs/traceability-matrix.md) | Specification to code mapping |
+| [AGENTS.md](AGENTS.md) | Rules for agents and contributors |

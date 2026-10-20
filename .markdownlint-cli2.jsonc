@@ -1,7 +1,7 @@
 {
   // markdownlint-cli2, small config: keep the defaults, disable only what
   // this repo's docs intentionally differ on. Scope = the five J1 files
-  // (docs/** joins when prompt 2 creates them).
+  // (user decision 2026-10-20: older docs/** prose is not linted).
   "globs": [
     "README.md",
     "ARCHITECTURE.md",
