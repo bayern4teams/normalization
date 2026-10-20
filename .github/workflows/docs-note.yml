@@ -1,0 +1,50 @@
+name: docs-note
+
+# J13/K4: every commit that changes shipped source must carry a `Docs:`
+# line in its message (for example `Docs: none, internal refactor`), so
+# the docs decision is recorded, not left to memory. Cheap (stdlib
+# python3, no deps). Merge commits are skipped; only the pushed range is
+# checked, so existing history never blocks. Runs on every push and pull
+# request — this project merges locally and pushes, so a PR-only trigger
+# would miss most changes.
+
+on:
+  push:
+    branches-ignore:
+      - "milestone/**" # milestone branches use the heavier gate.yml workflow
+  pull_request:
+
+concurrency:
+  group: docs-note-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  docs-note:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # need history to list the pushed commits
+
+      - name: Resolve the base of this change
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            base="${{ github.event.pull_request.base.sha }}"
+          else
+            base="${{ github.event.before }}"
+            # an all-zeros (or empty) "before" means the first push of a
+            # branch: fall back to the remote default branch instead.
+            case "$base" in
+              ''|*[!0]*) : ;;
+              *) base="" ;;
+            esac
+            if [ -z "$base" ]; then
+              git fetch --no-tags origin "$GITHUB_DEFAULT_BRANCH"
+              base="$(git rev-parse FETCH_HEAD)"
+            fi
+          fi
+          echo "DOCS_NOTE_BASE=$base" >> "$GITHUB_ENV"
+
+      - name: "Source commits carry a Docs: line (J13)"
+        run: python3 scripts/check_docs_note.py "$DOCS_NOTE_BASE..HEAD"
