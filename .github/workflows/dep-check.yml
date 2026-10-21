@@ -1,0 +1,28 @@
+name: dep-check
+
+# M4/K4: every declared dependency is used or justified in place, and every
+# [tool.mutmut].also_copy path exists. Cheap (stdlib python3, no deps, no uv
+# sync) — mirrors stub-check.yml's shape. Added by the 2026-10-21 ponytail
+# audit (finding #7): five never-imported deps had accumulated silently.
+# Deliberately NOT added to ci-fast's four-command list (AGENTS.md §5 is the
+# contract for those; a new ci-fast step needs an AGENTS.md update too).
+
+on:
+  push:
+    branches-ignore:
+      - "milestone/**" # milestone branches use the heavier gate.yml workflow
+  pull_request:
+
+concurrency:
+  group: dep-check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deps:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: "Declared deps used or justified (M4); also_copy paths exist"
+        run: python3 scripts/check_declared_deps.py

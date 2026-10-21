@@ -71,6 +71,8 @@ from normcore.models import NormalizedValue
 from normcore.pii import character_class_mask, content_hash
 from normcore.rules import ComponentVersionInfo, ExplanationText, ValidationOutcome
 from normcore.trace import TraceStep
+
+# upstream ships no py.typed/stubs (re-check at milestone gates)
 from publicsuffixlist import PublicSuffixList  # type: ignore[import-untyped]
 
 if TYPE_CHECKING:

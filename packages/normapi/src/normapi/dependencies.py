@@ -19,23 +19,23 @@ if TYPE_CHECKING:
 
 
 def get_store(request: Request) -> InMemoryStore:
-    return request.app.state.store  # type: ignore[no-any-return]
+    return request.app.state.store  # type: ignore[no-any-return]  # starlette's app.state is untyped; create_app() sets exactly these attributes (see create_app)
 
 
 def get_dispatcher(request: Request) -> Dispatcher:
-    return request.app.state.dispatcher  # type: ignore[no-any-return]
+    return request.app.state.dispatcher  # type: ignore[no-any-return]  # starlette's app.state is untyped; create_app() sets exactly these attributes
 
 
 def get_dictionary_loader(request: Request) -> DictionaryLoader:
-    return request.app.state.dictionary_loader  # type: ignore[no-any-return]
+    return request.app.state.dictionary_loader  # type: ignore[no-any-return]  # starlette's app.state is untyped; create_app() sets exactly these attributes
 
 
 def get_custom_dictionary_store(request: Request) -> CustomDictionaryStore:
-    return request.app.state.custom_dictionary_store  # type: ignore[no-any-return]
+    return request.app.state.custom_dictionary_store  # type: ignore[no-any-return]  # starlette's app.state is untyped; create_app() sets exactly these attributes
 
 
 def get_cache(request: Request) -> NormalizationCache:
-    return request.app.state.cache  # type: ignore[no-any-return]
+    return request.app.state.cache  # type: ignore[no-any-return]  # starlette's app.state is untyped; create_app() sets exactly these attributes
 
 
 def get_connections(request: Request) -> PgPersistence:
@@ -54,4 +54,4 @@ def get_connections(request: Request) -> PgPersistence:
             status_code=503,
             detail="Clone feature requires NORM_PG_DSN to be configured.",
         )
-    return persistence  # type: ignore[no-any-return]
+    return persistence  # type: ignore[no-any-return]  # starlette's app.state is untyped; create_app() sets exactly these attributes

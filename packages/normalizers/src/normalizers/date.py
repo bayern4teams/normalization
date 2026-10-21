@@ -519,7 +519,7 @@ def _bound(parsed: object, attribute: str) -> str | None:
 def _struct_to_iso(value: object) -> str | None:
     if value is None:
         return None
-    return f"{value.tm_year:04d}-{value.tm_mon:02d}-{value.tm_mday:02d}"  # type: ignore[attr-defined]
+    return f"{value.tm_year:04d}-{value.tm_mon:02d}-{value.tm_mday:02d}"  # type: ignore[attr-defined]  # edtf (untyped) returns a datetime.struct from its bound accessors; mypy sees `object`
 
 
 class _StaticStepSpec:

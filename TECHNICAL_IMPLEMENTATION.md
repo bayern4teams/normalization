@@ -324,12 +324,12 @@ The license policy is `scripts/license_policy.toml`, enforced by
 
 | Area | Libraries | Standard |
 |---|---|---|
-| Models | `pydantic`, `blake3`, `xxhash`, `structlog` | JSON Schema |
+| Models | `pydantic`, `blake3` | JSON Schema |
 | Unicode | `PyICU`, `ftfy`, `charset-normalizer`, `anyascii`, `regex` | Unicode, CLDR |
 | Names | `nameparser`, `jellyfish`, `phonetics` (`nameparser` is LGPL, dynamic import) | none |
-| Company | `cleanco` | ISO 20275 (GLEIF) |
+| Company | curated `legal-entity-suffixes.common` dictionary (cleanco dropped 2026-10-21: never imported) | ISO 20275 (GLEIF) |
 | Phone, email | `phonenumbers`, `email-validator` | E.164, RFC 3966 |
-| Dates | `dateparser`, `python-dateutil`, `ciso8601`, `Babel` | ISO 8601, EDTF |
+| Dates | `dateparser`, `python-dateutil` (env_id fingerprint input, not imported), `ciso8601`, `Babel` | ISO 8601, EDTF |
 | Country, language | `pycountry`, `Babel`, `lingua-language-detector` | ISO 3166, BCP 47 |
 | Identifiers | `python-stdnum` | national registries |
 | Units | `Pint` | none |
@@ -337,7 +337,7 @@ The license policy is `scripts/license_policy.toml`, enforced by
 | Batch | `polars`, `duckdb`, `pyarrow` | Arrow, Parquet |
 | API | `fastapi`, `uvicorn`, `sqlalchemy`, `psycopg` | OpenAPI |
 | Connectors | `psycopg`, `pymysql`, `pymongo`, `clickhouse-connect`, `openpyxl` | none |
-| Analysis | `rapidfuzz` | none |
+| Analysis | `rapidfuzz` (declared as env_id fingerprint input, not imported) | none |
 
 Rejected libraries: `Unidecode`, `text-unidecode`, `wordfreq`, `abydos`, `deepparse`
 ([LESSONS.md](docs/LESSONS.md)).

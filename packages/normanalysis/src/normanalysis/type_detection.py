@@ -281,9 +281,9 @@ def _parses_cleanly(normalizer: object, value: str, ctx: NormalizationContext) -
     """Valid AND not arrived at by repair. `validate` alone is too weak
     here: URL repairs a bare host, so `report.txt` is "valid" and a column
     of filenames would be rewritten to https://report.txt."""
-    if not normalizer.validate(value, ctx).is_valid:  # type: ignore[attr-defined]
+    if not normalizer.validate(value, ctx).is_valid:  # type: ignore[attr-defined]  # normalizer: object — duck-typed over the registry; every entry exposes validate/normalize (Dispatcher contract)
         return False
-    result = normalizer.normalize(value, ctx)  # type: ignore[attr-defined]
+    result = normalizer.normalize(value, ctx)  # type: ignore[attr-defined]  # same duck-typed registry entry as validate above
     # A value read only as a year states a 4-digit number, not a date: Brreg's
     # postcodes (`0150`) came out DATE once DATETIME stopped tying with DATE
     # (PART1 N2 makes `0150` an hhmm too), and the clone parsed them as years.
@@ -300,7 +300,7 @@ def _discriminates(normalizer: object, ctx: NormalizationContext) -> bool:
     no real type would accept proves nothing by accepting real values
     either, so its verdict is ignored entirely — it neither confirms nor
     demotes."""
-    return not normalizer.validate(_NEGATIVE_CONTROL, ctx).is_valid  # type: ignore[attr-defined]
+    return not normalizer.validate(_NEGATIVE_CONTROL, ctx).is_valid  # type: ignore[attr-defined]  # duck-typed registry entry (see _parses_cleanly)
 
 
 def _flatten_sample(sample_values: Sequence[str | None]) -> list[str]:

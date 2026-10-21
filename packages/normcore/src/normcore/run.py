@@ -60,7 +60,7 @@ class NormalizationRunMetrics(BaseModel):
     p95_latency_ms: float = 0.0
     p99_latency_ms: float = 0.0
 
-    @computed_field  # type: ignore[prop-decorator]
+    @computed_field  # type: ignore[prop-decorator]  # mypy's known limitation: decorators above @property are unsupported (verified with a probe file, 2026-10-21); drop when mypy supports the computed_field-over-property order
     @property
     def cache_hit_ratio(self) -> float:
         total = self.cache_hits + self.cache_misses
