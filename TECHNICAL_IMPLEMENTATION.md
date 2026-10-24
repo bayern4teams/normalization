@@ -327,7 +327,7 @@ The license policy is `scripts/license_policy.toml`, enforced by
 | Models | `pydantic`, `blake3` | JSON Schema |
 | Unicode | `PyICU`, `ftfy`, `charset-normalizer`, `anyascii`, `regex` | Unicode, CLDR |
 | Names | `nameparser`, `jellyfish`, `phonetics` (`nameparser` is LGPL, dynamic import) | none |
-| Company | curated `legal-entity-suffixes.common` dictionary (cleanco dropped 2026-10-21: never imported) | ISO 20275 (GLEIF) |
+| Company | curated `legal-entity-suffixes.common` dictionary; `cleanco` declared but not imported (env_id fingerprint input) | ISO 20275 (GLEIF) |
 | Phone, email | `phonenumbers`, `email-validator` | E.164, RFC 3966 |
 | Dates | `dateparser`, `python-dateutil` (env_id fingerprint input, not imported), `ciso8601`, `Babel` | ISO 8601, EDTF |
 | Country, language | `pycountry`, `Babel`, `lingua-language-detector` | ISO 3166, BCP 47 |

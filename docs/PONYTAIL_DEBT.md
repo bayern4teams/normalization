@@ -123,3 +123,7 @@ One row per `ponytail:` marker in shipped source (`packages/`, `scripts/`).
   - APPLIED #6: deleted local leftover `scripts/ground_truth/` (only `__pycache__`, 0 tracked files).
   - APPLIED #7: added `scripts/check_declared_deps.py` + `.github/workflows/dep-check.yml` (M4 CI check; deliberately outside ci-fast's four-command contract).
 - Skipped by decision: removing `rapidfuzz`/`python-dateutil` (finding #4 removal option) — user's words above.
+- 2026-10-21, PRE-MERGE CORRECTION (user, their words): "dropping cleanco changes env_id. It is still in FINGERPRINTED_PACKAGES ... Restore cleanco as a declared dependency with the same 'KEEP, fingerprint input' note."
+  - #2 partially reverted: `cleanco` restored in root `pyproject.toml` with the fingerprint keep-note (it stays out of `packages/normalizers`, which neither imports nor fingerprints it).
+  - Root cause of the miss: `env_fingerprint.py` DID appear in the "unused" grep; it was misread as a capability probe instead of `FINGERPRINTED_PACKAGES` — the very list that makes a never-imported package load-bearing (ADR-014). Recorded in docs/LESSONS.md (J14).
+  - K4 guard added: `test_every_fingerprinted_package_is_a_declared_dependency` (shown failing on the broken state first, L3).
