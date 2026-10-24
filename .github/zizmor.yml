@@ -1,0 +1,39 @@
+# zizmor allowlist (CI-files check, K4). User decision 2026-10-24 (decision 10): the three
+# template-injections in gate.yml were fixed; every finding below is accepted for now.
+# C5: reason=pre-existing workflows, fixed in a later pass; approved=user, 2026-10-24; review=2027-01-24
+# Next step for each rule: artipacked -> `persist-credentials: false` on checkout;
+# excessive-permissions -> a top-level `permissions: contents: read`; release.yml ->
+# pass `steps.tag.outputs.milestone` through `env:` and set `enable-cache: false` on setup-uv
+# (the release job publishes images, so the cache-poisoning and injection findings matter most).
+rules:
+  artipacked:
+    ignore:
+      - ci-fast.yml
+      - ci-full.yml
+      - docs-note.yml
+      - docs.yml
+      - drift.yml
+      - gate.yml
+      - release.yml
+      - stub-check.yml
+  excessive-permissions:
+    ignore:
+      - ci-fast.yml
+      - ci-full.yml
+      - docs-note.yml
+      - docs.yml
+      - drift.yml
+      - gate.yml
+      - stub-check.yml
+  cache-poisoning:
+    ignore:
+      - release.yml
+  template-injection:
+    ignore:
+      - release.yml
+  superfluous-actions:
+    ignore:
+      - release.yml
+  self-repository:
+    ignore:
+      - gate.yml # `./...` local reusable-workflow ref works; the `$/` syntax is not needed

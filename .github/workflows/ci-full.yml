@@ -7,6 +7,7 @@ name: ci-full
 on:
   pull_request:
     branches: [main]
+  workflow_call: # gate.yml reuses this workflow as its full-suite job
 
 concurrency:
   group: ci-full-${{ github.ref }}
@@ -22,10 +23,10 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v3
+        uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39 # v3.2.4
         with:
           enable-cache: true
 
@@ -59,7 +60,7 @@ jobs:
           --cov-fail-under=90 -q
 
       - name: Upload coverage
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: coverage-${{ matrix.os }}-py${{ matrix.python-version }}
           path: coverage.xml
@@ -68,8 +69,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v3
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39 # v3.2.4
         with:
           enable-cache: true
       - run: uv python install 3.12
@@ -82,7 +83,7 @@ jobs:
         run: uv run pip-audit --strict
 
       - name: Secret scan (gitleaks)
-        uses: gitleaks/gitleaks-action@v2
+        uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2.3.9
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -93,7 +94,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Assert no Splink / record-linkage primitives anywhere in the tree
         run: |
           set -e
@@ -109,8 +110,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v3
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39 # v3.2.4
         with:
           enable-cache: true
       - run: uv python install 3.12
@@ -118,7 +119,7 @@ jobs:
 
       - name: Cache libpostal model data
         id: libpostal-data-cache
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: services/libpostal/_data_cache/*.tar.gz
           # Keyed on the download script's content, not a version number —
