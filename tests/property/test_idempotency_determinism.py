@@ -139,3 +139,22 @@ def test_every_semantic_type_converges_in_one_pass(
     assert second.display == first.display, (
         f"{semantic_type.value}: {value!r} -> {first.display!r} -> {second.display!r}"
     )
+
+
+@pytest.mark.property
+# C5: reason='กา' not idempotent; approved=user, 2026-10-24; review=2026-11-30
+@pytest.mark.xfail(
+    strict=True,
+    reason="L6 regression case found by hypothesis (§71 idempotency): normalize('กา') "
+    "-> 'Ga', normalize('Ga') -> 'Irish' — the second pass resolves the two-letter "
+    "display as the ISO-639 code 'ga'. Fix lands on a code branch; strict xfail "
+    "turns red the moment it does, so the fix cannot be forgotten.",
+)
+def test_language_ga_script_input_converges_in_one_pass(dispatcher: Dispatcher) -> None:
+    ctx = NormalizationContext(
+        field_name="probe", semantic_type=FieldSemanticType.LANGUAGE, country="US", locale="en-US"
+    )
+    first = dispatcher.normalize("กา", FieldSemanticType.LANGUAGE, ctx, SCAFFOLD_PROFILE)
+    assert first.display == "Ga", f"unexpected first pass: {first.display!r}"
+    second = dispatcher.normalize(first.display, FieldSemanticType.LANGUAGE, ctx, SCAFFOLD_PROFILE)
+    assert second.display == first.display, f"'กา' -> {first.display!r} -> {second.display!r}"
