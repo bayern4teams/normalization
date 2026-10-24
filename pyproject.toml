@@ -284,6 +284,11 @@ also_copy = [
 pytest_add_cli_args = ["-m", "unit or golden or property"]
 
 [tool.pytest.ini_options]
+# L7: strict pytest — an unexpected pass or a mistyped marker must fail.
+# User decision 2026-10-24: apply L7 now (supersedes the 2026-10-20
+# "not yet met for prompt 4" deferral in AGENTS.md §4).
+xfail_strict = true
+addopts = "--strict-markers --strict-config"
 markers = [
     "unit: fast isolated unit tests",
     "golden: golden/regression corpus tests",
