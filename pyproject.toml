@@ -9,10 +9,7 @@ license = { text = "Proprietary" }
 dependencies = [
     # --- core / contracts ---
     "pydantic>=2.9,<3",
-    "pydantic-settings>=2.5,<3",
     "blake3>=0.4,<1",
-    "xxhash>=3.5,<4",
-    "structlog>=24.4,<25",
     "opentelemetry-api>=1.27,<2",
     "opentelemetry-sdk>=1.27,<2",
 
@@ -29,6 +26,11 @@ dependencies = [
     "phonetics>=1.0.5,<2",  # MIT; Double Metaphone (D11)
 
     # --- company ---
+    # ponytail (audit finding #4 correction, 2026-10-21): declared KEEP although
+    # never imported — `normexec.env_fingerprint` hashes this installed version
+    # into env_id (FINGERPRINTED_PACKAGES); removing it records "MISSING" and
+    # shifts env_id (ADR-014 identity contract). company.py strips suffixes via
+    # the curated dictionary, not cleanco — the fingerprint role is the use.
     "cleanco>=2.3,<3",
 
     # --- phone / email ---
@@ -37,6 +39,11 @@ dependencies = [
 
     # --- dates ---
     "dateparser>=1.4.2,<2",
+    # ponytail (audit finding #4, user decision 2026-10-21): declared KEEP although
+    # never imported — `normexec.env_fingerprint` hashes this installed version into
+    # env_id (FINGERPRINTED_PACKAGES); removing it silently shifts env_id
+    # (ADR-014 identity contract). Same for rapidfuzz below. Not dead weight;
+    # fingerprint inputs.
     "python-dateutil>=2.9,<3",
     "ciso8601>=2.3,<3",
 
@@ -52,6 +59,7 @@ dependencies = [
     "Pint>=0.24,<1",
 
     # --- fuzzy (analysis only, never core normalization) ---
+    # KEEP although never imported — env_id fingerprint input (see dates note above).
     "rapidfuzz>=3.10,<4",
 
     # --- address ---
@@ -67,8 +75,6 @@ dependencies = [
     "fastapi>=0.115,<1",
     "uvicorn[standard]>=0.31,<1",
     "sqlalchemy>=2.0,<3",
-    "asyncpg>=0.29,<1",
-    "alembic>=1.13,<2",
 
     # --- connectors ---
     "psycopg[binary]>=3.2,<4",
@@ -260,7 +266,6 @@ source_paths = ["src"]
 also_copy = [
     "scripts",
     "data",
-    "Source.txt",
     "docs",
     "conftest.py",
     "packages/normcore/src",

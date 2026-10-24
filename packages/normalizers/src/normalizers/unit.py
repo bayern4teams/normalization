@@ -58,7 +58,7 @@ _PARSE_PARAMS_HASH = blake3.blake3(b"{}").hexdigest()
 # safely compared, mirroring the "construct once, reuse across the whole
 # batch" pattern from normalizers/script.py's language detector.
 # pint.UnitRegistry is generic; not worth pinning the type parameter here.
-_UREG = pint.UnitRegistry()  # type: ignore[var-annotated]
+_UREG = pint.UnitRegistry()  # type: ignore[var-annotated]  # pint's generic Registry needs a param mypy would infer; default unit registry is intentional here
 
 
 class _StaticStepSpec:

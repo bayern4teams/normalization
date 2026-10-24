@@ -162,3 +162,36 @@ def test_vendored_rule_data_moves_the_source_hash(
     assert any(
         p.suffix == ".txt" for p in Path(env_fingerprint.__file__).parents[3].rglob("_bmpm_data/*")
     )
+
+
+@pytest.mark.unit
+def test_every_fingerprinted_package_is_a_declared_dependency() -> None:
+    """K4/M4: every name in FINGERPRINTED_PACKAGES must be declared in the root
+    or a workspace-member pyproject.toml. An undeclared name resolves to
+    "MISSING" in collect_package_versions(), which silently shifts env_id
+    (ADR-014) on any machine that did not install it — the failure a 2026-10-21
+    dependency cleanup hit with `cleanco` (docs/LESSONS.md)."""
+    import re
+    import tomllib
+
+    from normexec.env_fingerprint import FINGERPRINTED_PACKAGES
+
+    repo = Path(__file__).resolve().parents[2]
+    manifests = [repo / "pyproject.toml", *sorted(repo.glob("packages/*/pyproject.toml"))]
+    declared: set[str] = set()
+    for manifest in manifests:
+        data = tomllib.loads(manifest.read_text(encoding="utf-8"))
+        for spec in data.get("project", {}).get("dependencies", []):
+            name = re.split(r"[<>=!~;\[ ]", spec.strip(), maxsplit=1)[0].lower()
+            declared.add(name)
+    missing = sorted(
+        n
+        for n in FINGERPRINTED_PACKAGES
+        if n.lower() not in declared and n.lower().replace("-", "_") not in declared
+    )
+    assert not missing, (
+        f"FINGERPRINTED_PACKAGES entries not declared as dependencies: {missing}. "
+        "Fix: declare them where used (root or the importing package), or remove "
+        "them from FINGERPRINTED_PACKAGES with an ADR — each undeclared name "
+        "records 'MISSING' and changes env_id."
+    )

@@ -15,7 +15,6 @@ dependencies = [
     "nameparser>=2.1.0,<3",
     "jellyfish>=1.1,<2",
     "phonetics>=1.0.5,<2",
-    "cleanco>=2.3,<3",
     "phonenumbers>=8.13,<9",
     "email-validator>=2.2,<3",
     "httpx>=0.27,<1",
