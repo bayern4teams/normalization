@@ -203,11 +203,12 @@ ignore = [
 "tests/integration/test_clone_pipeline.py" = ["PLR0915"]
 
 [tool.deptry]
-# M4/K4: blocking in CI (guards.yml). Scope is the shipped source; caches,
-# the virtualenv, graph caches, spikes (throwaway, pyproject already says
-# why they are exempt from lint) and downloaded data never scanned.
-# First-party: the 8 workspace packages plus the scripts/ modules that
-# tests import by sys.path (env_fingerprint).
+# M4/K4: blocking in CI (dep-check.yml via scripts/run_deptry.sh, every push + PR; user decision
+# 2026-10-24 replacing scripts/check_declared_deps.py). Each ignore below
+# is the same justification the replaced script checked by comment — now
+# in one reviewed place (C5 format for each).
+# Scope: shipped source only; caches, venv, graph caches, spikes (see
+# ruff per-file-ignores above for why) and downloaded data are excluded.
 extend_exclude = [
     "\\.venv",
     "graft",
@@ -225,7 +226,13 @@ extend_exclude = [
     "reports/",
     "spikes/",
     "ui/node_modules",
+    "services/libpostal/",  # sidecar has its own requirements.txt (postal==1.1.10)
+    "packages/",  # each member is scanned against its own pyproject (scripts/run_deptry.sh)
 ]
+# The root is a virtual umbrella (package = false): its dependency list is the
+# union the members declare. "Unused" is judged per member, so DEP002 is off here.
+# C5: reason=umbrella root, unused-ness checked per member; approved=user 2026-10-24 (decision 8); review=2027-10-24
+ignore = ["DEP002"]
 known_first_party = ["normcore", "normalizers", "normdict", "normexec", "normio", "normanalysis", "normapi", "normcli", "env_fingerprint", "refresh_graphs", "defects"]
 
 [tool.mypy]

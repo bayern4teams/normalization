@@ -30,6 +30,7 @@ dependencies = [
     "Pint>=0.24,<1",
     "idna>=3.7,<4",
     "publicsuffixlist>=1.0.2,<2",
+    "blake3>=0.4,<1",
 ]
 
 [tool.uv.sources]
@@ -42,3 +43,9 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/normalizers"]
+
+[tool.deptry.per_rule_ignores]
+# C5: reason=see each comment; approved=user 2026-10-24 (decision 8); review=2027-10-24
+DEP002 = [
+    "python-dateutil",  # env_id fingerprint input (normexec.env_fingerprint.FINGERPRINTED_PACKAGES; ADR-014)
+]

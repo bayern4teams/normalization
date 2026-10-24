@@ -1,11 +1,9 @@
 name: dep-check
 
-# M4/K4: every declared dependency is used or justified in place, and every
-# [tool.mutmut].also_copy path exists. Cheap (stdlib python3, no deps, no uv
-# sync) — mirrors stub-check.yml's shape. Added by the 2026-10-21 ponytail
-# audit (finding #7): five never-imported deps had accumulated silently.
-# Deliberately NOT added to ci-fast's four-command list (AGENTS.md §5 is the
-# contract for those; a new ci-fast step needs an AGENTS.md update too).
+# M4/K4: deptry, blocking. Imports are declared in the workspace member that
+# imports them; each member is scanned against its own pyproject, then the
+# root (scripts/run_deptry.sh). Also: every [tool.mutmut].also_copy path exists.
+# Deliberately NOT in ci-fast's four-command list (AGENTS.md section 5).
 
 on:
   push:
@@ -20,9 +18,26 @@ concurrency:
 jobs:
   deps:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
 
-      - name: "Declared deps used or justified (M4); also_copy paths exist"
-        run: python3 scripts/check_declared_deps.py
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install ICU dev headers (PyICU sdist build requirement on Linux)
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libicu-dev pkg-config
+
+      - name: Sync
+        run: uv sync --all-extras
+
+      - name: "deptry per member + root (M4)"
+        run: scripts/run_deptry.sh
+
+      - name: "mutmut also_copy paths exist"
+        run: uv run python scripts/check_mutmut_paths.py

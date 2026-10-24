@@ -1207,6 +1207,7 @@ source = { editable = "packages/normalizers" }
 dependencies = [
     { name = "anyascii" },
     { name = "babel" },
+    { name = "blake3" },
     { name = "charset-normalizer" },
     { name = "ciso8601" },
     { name = "dateparser" },
@@ -1239,6 +1240,7 @@ dependencies = [
 requires-dist = [
     { name = "anyascii", specifier = ">=0.3.2,<1" },
     { name = "babel", specifier = ">=2.16,<3" },
+    { name = "blake3", specifier = ">=0.4,<1" },
     { name = "charset-normalizer", specifier = ">=3.4,<4" },
     { name = "ciso8601", specifier = ">=2.3,<3" },
     { name = "dateparser", specifier = ">=1.4.2,<2" },
@@ -1272,16 +1274,24 @@ name = "normanalysis"
 version = "0.1.0"
 source = { editable = "packages/normanalysis" }
 dependencies = [
+    { name = "babel" },
     { name = "normcore" },
     { name = "opentelemetry-api" },
     { name = "opentelemetry-sdk" },
+    { name = "phonenumbers" },
+    { name = "pycountry" },
+    { name = "pydantic" },
 ]
 
 [package.metadata]
 requires-dist = [
+    { name = "babel", specifier = ">=2.16,<3" },
     { name = "normcore", editable = "packages/normcore" },
     { name = "opentelemetry-api", specifier = ">=1.27,<2" },
     { name = "opentelemetry-sdk", specifier = ">=1.27,<2" },
+    { name = "phonenumbers", specifier = ">=8.13,<9" },
+    { name = "pycountry", specifier = ">=24.6,<25" },
+    { name = "pydantic", specifier = ">=2.9,<3" },
 ]
 
 [[package]]
@@ -1289,6 +1299,7 @@ name = "normapi"
 version = "0.1.0"
 source = { editable = "packages/normapi" }
 dependencies = [
+    { name = "blake3" },
     { name = "cryptography" },
     { name = "fastapi" },
     { name = "normalizers" },
@@ -1298,12 +1309,17 @@ dependencies = [
     { name = "normexec" },
     { name = "normio" },
     { name = "psycopg", extra = ["binary"] },
+    { name = "pydantic" },
+    { name = "pyicu", version = "2.16.2", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform != 'win32'" },
+    { name = "pyicu", version = "2.16.2", source = { url = "https://github.com/cgohlke/pyicu-build/releases/download/v2.16.2/pyicu-2.16.2-cp312-cp312-win_amd64.whl" }, marker = "python_full_version < '3.13' and sys_platform == 'win32'" },
+    { name = "pyicu", version = "2.16.2", source = { url = "https://github.com/cgohlke/pyicu-build/releases/download/v2.16.2/pyicu-2.16.2-cp313-cp313-win_amd64.whl" }, marker = "python_full_version >= '3.13' and sys_platform == 'win32'" },
     { name = "sqlalchemy" },
     { name = "uvicorn", extra = ["standard"] },
 ]
 
 [package.metadata]
 requires-dist = [
+    { name = "blake3", specifier = ">=0.4,<1" },
     { name = "cryptography", specifier = ">=42,<44" },
     { name = "fastapi", specifier = ">=0.115,<1" },
     { name = "normalizers", editable = "packages/normalizers" },
@@ -1313,6 +1329,10 @@ requires-dist = [
     { name = "normexec", editable = "packages/normexec" },
     { name = "normio", editable = "packages/normio" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.2,<4" },
+    { name = "pydantic", specifier = ">=2.9,<3" },
+    { name = "pyicu", marker = "python_full_version < '3.12' or python_full_version >= '3.14' or sys_platform != 'win32'", specifier = ">=2.14,<3" },
+    { name = "pyicu", marker = "python_full_version == '3.12.*' and sys_platform == 'win32'", url = "https://github.com/cgohlke/pyicu-build/releases/download/v2.16.2/pyicu-2.16.2-cp312-cp312-win_amd64.whl" },
+    { name = "pyicu", marker = "python_full_version == '3.13.*' and sys_platform == 'win32'", url = "https://github.com/cgohlke/pyicu-build/releases/download/v2.16.2/pyicu-2.16.2-cp313-cp313-win_amd64.whl" },
     { name = "sqlalchemy", specifier = ">=2.0,<3" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.31,<1" },
 ]
@@ -1321,11 +1341,29 @@ requires-dist = [
 name = "normcli"
 version = "0.1.0"
 source = { editable = "packages/normcli" }
+dependencies = [
+    { name = "normanalysis" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "normanalysis", editable = "packages/normanalysis" }]
 
 [[package]]
 name = "normcore"
 version = "0.1.0"
 source = { editable = "packages/normcore" }
+dependencies = [
+    { name = "blake3" },
+    { name = "pyarrow" },
+    { name = "pydantic" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "blake3", specifier = ">=0.4,<1" },
+    { name = "pyarrow", specifier = ">=17.0,<18" },
+    { name = "pydantic", specifier = ">=2.9,<3" },
+]
 
 [[package]]
 name = "normdict"
@@ -1350,8 +1388,12 @@ dependencies = [
     { name = "blake3" },
     { name = "duckdb" },
     { name = "normcore" },
+    { name = "phonenumbers" },
     { name = "polars" },
     { name = "pyarrow" },
+    { name = "pyicu", version = "2.16.2", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform != 'win32'" },
+    { name = "pyicu", version = "2.16.2", source = { url = "https://github.com/cgohlke/pyicu-build/releases/download/v2.16.2/pyicu-2.16.2-cp312-cp312-win_amd64.whl" }, marker = "python_full_version < '3.13' and sys_platform == 'win32'" },
+    { name = "pyicu", version = "2.16.2", source = { url = "https://github.com/cgohlke/pyicu-build/releases/download/v2.16.2/pyicu-2.16.2-cp313-cp313-win_amd64.whl" }, marker = "python_full_version >= '3.13' and sys_platform == 'win32'" },
 ]
 
 [package.metadata]
@@ -1359,8 +1401,12 @@ requires-dist = [
     { name = "blake3", specifier = ">=0.4,<1" },
     { name = "duckdb", specifier = ">=1.1,<2" },
     { name = "normcore", editable = "packages/normcore" },
+    { name = "phonenumbers", specifier = ">=8.13,<9" },
     { name = "polars", specifier = ">=1.9,<2" },
     { name = "pyarrow", specifier = ">=17.0,<18" },
+    { name = "pyicu", marker = "python_full_version < '3.12' or python_full_version >= '3.14' or sys_platform != 'win32'", specifier = ">=2.14,<3" },
+    { name = "pyicu", marker = "python_full_version == '3.12.*' and sys_platform == 'win32'", url = "https://github.com/cgohlke/pyicu-build/releases/download/v2.16.2/pyicu-2.16.2-cp312-cp312-win_amd64.whl" },
+    { name = "pyicu", marker = "python_full_version == '3.13.*' and sys_platform == 'win32'", url = "https://github.com/cgohlke/pyicu-build/releases/download/v2.16.2/pyicu-2.16.2-cp313-cp313-win_amd64.whl" },
 ]
 
 [[package]]

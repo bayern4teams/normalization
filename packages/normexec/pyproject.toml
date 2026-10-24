@@ -9,6 +9,8 @@ dependencies = [
     "duckdb>=1.1,<2",
     "pyarrow>=17.0,<18",
     "blake3>=0.4,<1",
+    "PyICU>=2.14,<3",
+    "phonenumbers>=8.13,<9",
 ]
 
 [tool.uv.sources]

@@ -3,7 +3,11 @@ name = "normcore"
 version = "0.1.0"
 description = "normalization-engine :: normcore"
 requires-python = ">=3.12,<3.14"
-dependencies = []
+dependencies = [
+    "pydantic>=2.9,<3",
+    "blake3>=0.4,<1",
+    "pyarrow>=17.0,<18",
+]
 
 [build-system]
 requires = ["hatchling"]
