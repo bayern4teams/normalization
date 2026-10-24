@@ -128,7 +128,6 @@ One row per `ponytail:` marker in shipped source (`packages/`, `scripts/`).
   - Root cause of the miss: `env_fingerprint.py` DID appear in the "unused" grep; it was misread as a capability probe instead of `FINGERPRINTED_PACKAGES` — the very list that makes a never-imported package load-bearing (ADR-014). Recorded in docs/LESSONS.md (J14).
   - K4 guard added: `test_every_fingerprinted_package_is_a_declared_dependency` (shown failing on the broken state first, L3).
 
-
 ## Assertion-less tests (L4), found 2026-10-24
 
 User decision 2026-10-24: "Guard blocks on touch, and list all 27 in docs/PONYTAIL_DEBT.md (file, test name, why it has no assertion) so the next prompt 3 audit reviews them." The count by `scripts/check_test_assertions.py` is 29, not 27 (a miscount in the earlier report; same rule). `scripts/check_test_assertions.py` fails only when one of these changes code. Prompt 3's audit decides: add an assertion, or record why none fits (C5).

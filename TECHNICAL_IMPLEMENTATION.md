@@ -344,7 +344,7 @@ Rejected libraries: `Unidecode`, `text-unidecode`, `wordfreq`, `abydos`, `deeppa
 
 ## Tests and CI
 
-<!-- verified: 9f27526 -->
+<!-- verified: 12c1dd5 -->
 
 | Marker | Where | Needs |
 |---|---|---|
@@ -372,13 +372,72 @@ The last measured CI set is in [REPORT §11.13](docs/benchmarks/REPORT.md) (3,22
 | Workflow | Trigger | Purpose |
 |---|---|---|
 | `ci-fast.yml` | push, except `milestone/**` | ruff, format check, mypy, unit and fast golden tests. |
-| `ci-full.yml` | pull request to `main` | ruff, mypy, tests with a 90 percent coverage floor on `normcore` and `normalizers`, license allow-list, `pip-audit`, secret scan, PII-leak test. |
+| `ci-full.yml` | pull request to `main`, and called by `gate.yml` | ruff, mypy, tests with a 90 percent coverage floor on `normcore` and `normalizers`, license allow-list, `pip-audit`, secret scan, PII-leak test. |
 | `gate.yml` | manual, push to `milestone/**` | Milestone gate. |
 | `docs.yml` | push (except `milestone/**`) and pull request that touch docs | Vale, markdownlint, lychee, Mermaid render. |
 | `docs-note.yml` | push (except `milestone/**`), pull request | A source commit carries a `Docs:` line. |
 | `stub-check.yml` | push (except `milestone/**`), pull request | No `TODO` or `FIXME` for missing behaviour. |
+| `dep-check.yml` | push (except `milestone/**`), pull request | `deptry` on each workspace member and the root, plus the `[tool.mutmut].also_copy` paths exist. |
+| `guards.yml` | push (except `milestone/**`), pull request | The guard scripts below, `gitleaks`, `actionlint`, `zizmor`. |
 | `drift.yml` | manual only | Not scheduled: its pieces were never built. |
 | `release.yml` | tag `milestone/M*` | Release. |
+
+### Guards
+
+Cheap machine checks (K4), all run by `guards.yml` on every push and pull request. The
+test configuration is strict (`xfail_strict`, `--strict-markers`, `--strict-config` in
+`pyproject.toml`), and ruff runs the `PT` and `PGH` groups.
+
+| Rule | Check | What fails |
+|---|---|---|
+| C5 | `scripts/check_c5_exceptions.py` | An added line with `noqa`, `type: ignore`, a skip or an `xfail` that lacks `C5: reason=...; approved=...; review=...`. |
+| L1 | same script | A removed `test_*` function when no commit in the range has a line starting `C5:`. |
+| L4 | `scripts/check_test_assertions.py` | A test whose code changed against the base and has no assertion. The check compares the function as an AST, so a comment or a bystander edit does not count. 29 older tests are listed in `docs/PONYTAIL_DEBT.md`. |
+| M1 | `scripts/check_root_files.py` | A tracked root file that is not on the allow list in that script. |
+| M2 | `scripts/check_gitignore_consistency.py` | A tracked file that `.gitignore` matches. |
+| M4 | `scripts/run_deptry.sh` | A used package that the importing member does not declare, or a declared one that is never imported. `deptry` reads one `pyproject.toml` at a time, so it runs in each member and then in the root (tests and scripts). `DEP002` ignores carry C5 notes in the member's `[tool.deptry.per_rule_ignores]`. |
+| B6 | `gitleaks git` | A secret in any commit. Two old findings are in `.gitleaksignore`. |
+| CI files | `actionlint`, `zizmor` | A broken workflow or an unaccepted audit finding. The accepted ones are in `.github/zizmor.yml` with a review date. |
+
+`scripts/install_tools.sh` installs the pinned `gitleaks` and `actionlint` binaries into
+`.tools/` after a checksum check. `deptry`, `vulture` and `zizmor` come from the dev
+extra. `vulture` is for prompt 3's audit only and never blocks.
+
+Local run before a push (the base is `main`):
+
+```bash
+python3 scripts/check_c5_exceptions.py main && python3 scripts/check_test_assertions.py main && python3 scripts/check_root_files.py && python3 scripts/check_gitignore_consistency.py
+```
+
+```bash
+scripts/run_deptry.sh && .tools/gitleaks git --no-banner . && .tools/actionlint && uv run zizmor .github/workflows
+```
+
+### Mutation testing and the red-team review
+
+Both are by hand, not on every commit (user decision 2026-10-24).
+
+Mutation testing uses `mutmut` on `normcore` and `normalizers`. The settings are in
+`[tool.mutmut]`; the reasons for the flat `src/` bridge are in the comments there. The
+steps are those of the `mutation-testing` job in `gate.yml`, which runs at milestone M8
+with a 0.75 minimum score (`normcli mutation-score-gate`):
+
+```bash
+mkdir -p src && cp -r packages/normcore/src/normcore src/normcore && cp -r packages/normalizers/src/normalizers src/normalizers
+```
+
+```bash
+uv run mutmut run; uv run mutmut results && uv run python -m normcli mutation-score-gate --min-score 0.75
+```
+
+Delete `src/` and `mutants/` afterwards (both are build output). A surviving mutant in a
+core module needs a written reason in a file next to the report. Not run in prompt 4.
+
+The red-team review is a procedure, not a tool. After a change, a fresh agent on the
+strongest model clones the branch into an empty folder, runs the commands in
+[AGENTS.md](AGENTS.md) section 5 and the guard commands above, and checks each claim of the
+author directly. It looks for inputs a fix special-cases and for tests that were weakened.
+It reports and never fixes (I4).
 
 Milestones M0 to M8 each passed a gate with three layers: automated CI,
 liveness checks against the running stack, and a signed verification pack in

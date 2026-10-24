@@ -301,6 +301,21 @@ is `scripts/check_test_assertions.py`. Open: 27 test functions that existed befo
 check have no assertion. User decision 2026-10-24: "Guard blocks on touch, and list all
 27 in docs/PONYTAIL_DEBT.md ... so the next prompt 3 audit reviews them."
 
+### Test guards and heavy parts (prompt 4, user decisions 2026-10-24)
+
+The guards are in TECHNICAL_IMPLEMENTATION.md, "Tests and CI". Choices on the optional
+heavy parts, each with its why (F4):
+
+- **Mutation testing: yes, by hand.** `mutmut` on `normcore` and `normalizers`, run at
+  milestone M8 by `gate.yml` and on request, never per commit. Why: it shows whether the
+  tests notice wrong code, but a run takes too long for every push. The 0.75 minimum score
+  was already in `gate.yml`; it was not changed.
+- **Red-team reviewer: yes, as a procedure.** A fresh strongest-model agent re-runs the
+  commands from a clean clone and reports; it never fixes (I4). Why: a separate reviewer
+  catches what the author's agent explains away.
+- **Locked contract tests: no.** Why: the user chose not to; strict `xfail` with `raises=`
+  plus the L1 guard cover the cheaper part.
+
 ### Graph tooling details (project-specific; moved out of the general block at v1.1.0)
 
 User decision 2026-10-20: "Move them into §4 Project rules, keep content
@@ -361,3 +376,16 @@ uv run ruff check . && uv run ruff format --check . && uv run mypy packages
 ```bash
 ( ulimit -v 16777216; uv run pytest -m "unit or (golden and not slow)" -q )
 ```
+
+CI also runs the guards (`guards.yml`, `dep-check.yml`); run them locally before a push
+(the base is `main`):
+
+```bash
+python3 scripts/check_c5_exceptions.py main && python3 scripts/check_test_assertions.py main && python3 scripts/check_root_files.py && python3 scripts/check_gitignore_consistency.py
+```
+
+```bash
+scripts/run_deptry.sh && .tools/gitleaks git --no-banner . && .tools/actionlint && uv run zizmor .github/workflows
+```
+
+Install the two binaries once with `scripts/install_tools.sh`.
