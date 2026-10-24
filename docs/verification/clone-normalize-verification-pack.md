@@ -17,7 +17,7 @@ the same way the M0-M8 packs are.
 Full decision record: the approved plan's "Decisions already made"
 (13 items, referenced by number below) and `docs/adr/ADR-017-clone-normalize-engine-scope.md`
 (why MySQL/Mongo/File are documentation-only). Live progress ledger:
-`TODO.md`.
+`docs/archive/plans/TODO.md` (archived).
 
 ## 1. Scope recap
 

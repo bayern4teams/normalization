@@ -56,7 +56,7 @@ Normalization* (EDBT 2017) are the entry points — both in the schema file.
 
 ## Mapping: audit gap → the resources that close it
 
-The gaps come from [`../../improvement-audit-notes.md`](../../improvement-audit-notes.md),
+The gaps come from [`../../archive/improvement-audit-notes.md`](../../archive/improvement-audit-notes.md),
 each verified by reading the named source file. Numbers match that document.
 
 | # | Verified gap | Where to look | Highest-leverage item |

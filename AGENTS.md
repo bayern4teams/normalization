@@ -293,10 +293,13 @@ These are not style preferences; each one exists because ignoring it broke somet
 
 ### Known gaps against general block v1.2.0
 
-User decision 2026-10-20: "Leave `pyproject.toml` unchanged and list L7 as
-'not yet met'... for prompt 4" and "List M1 as 'for prompt 4'". Until then:
-L7 is not met (no strict pytest settings in `pyproject.toml`), M1 is not met
-(root folder holds extra files such as `TODO.md`), and there is no L4 check.
+The 2026-10-20 deferrals ("Leave `pyproject.toml` unchanged and list L7 as 'not yet
+met'... for prompt 4", "List M1 as 'for prompt 4'") were closed by prompt 4 on
+2026-10-24: L7 is met (`xfail_strict`, `--strict-markers`, `--strict-config` in
+`pyproject.toml`), M1 is met (`scripts/check_root_files.py`), and the L4 assertion check
+is `scripts/check_test_assertions.py`. Open: 27 test functions that existed before that
+check have no assertion. User decision 2026-10-24: "Guard blocks on touch, and list all
+27 in docs/PONYTAIL_DEBT.md ... so the next prompt 3 audit reviews them."
 
 ### Graph tooling details (project-specific; moved out of the general block at v1.1.0)
 
