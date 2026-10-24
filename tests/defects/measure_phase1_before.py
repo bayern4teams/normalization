@@ -60,7 +60,12 @@ def git_grep(pattern: str, *paths: str) -> list[tuple[str, int]]:
     cmd = ["git", "grep", "-c", "-i", "-E"]
     cmd += ["--untracked", pattern] if AFTER else [pattern, REV]
     out = subprocess.run(
-        [*cmd, "--", *paths], cwd=ROOT, capture_output=True, text=True, check=False
+        # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
+        [*cmd, "--", *paths],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
     ).stdout
     rows = [line.rsplit(":", 1) for line in out.splitlines() if line]
     return [(f.removeprefix(f"{REV}:"), int(n)) for f, n in rows]

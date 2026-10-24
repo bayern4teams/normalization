@@ -55,7 +55,7 @@ def ctx() -> NormalizationContext:
 @pytest.mark.bench
 def test_bench_normalize_single_value(
     benchmark: object, normalizer: GenericTextNormalizer, ctx: NormalizationContext
-) -> None:
+) -> None:  # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
     benchmark(normalizer.normalize, "  José   García, Jr.  ", ctx)  # type: ignore[operator]
 
 
@@ -69,4 +69,5 @@ def test_bench_normalize_mixed_batch_of_1000(
         for value in values:
             normalizer.normalize(value, ctx)
 
+    # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
     benchmark(run)  # type: ignore[operator]

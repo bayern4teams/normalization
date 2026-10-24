@@ -28,6 +28,7 @@ class _CountingNormalizer(PassthroughNormalizer):
     def __init__(self) -> None:
         self.call_count = 0
 
+    # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
     def normalize(self, value, ctx):  # type: ignore[no-untyped-def]
         self.call_count += 1
         return super().normalize(value, ctx)

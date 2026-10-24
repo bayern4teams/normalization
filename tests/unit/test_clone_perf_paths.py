@@ -70,6 +70,7 @@ class _RecordingParser:
         self.single_calls = 0
         self.batch_calls = 0
         if batch:
+            # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
             self.parse_many = self._parse_many  # type: ignore[method-assign]
 
     def parse(self, address: str) -> list[tuple[str, str]]:

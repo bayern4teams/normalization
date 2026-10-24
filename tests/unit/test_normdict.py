@@ -145,5 +145,6 @@ def test_dictionary_model_is_frozen() -> None:
         entries={},
         content_hash="h",
     )
+    # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
     with pytest.raises(Exception, match=r"frozen|Instance is frozen"):
         dictionary.version = "v2"  # type: ignore[misc]

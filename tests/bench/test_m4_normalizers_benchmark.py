@@ -41,6 +41,7 @@ def test_bench_date_normalize_single_value(
     benchmark: object, date_normalizer: DateNormalizer
 ) -> None:
     ctx = NormalizationContext(field_name="date", semantic_type=FieldSemanticType.DATE)
+    # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
     benchmark(date_normalizer.normalize, "2026-08-18", ctx)  # type: ignore[operator]
 
 
@@ -49,6 +50,7 @@ def test_bench_country_normalize_single_value(
     benchmark: object, country_normalizer: CountryNormalizer
 ) -> None:
     ctx = NormalizationContext(field_name="country", semantic_type=FieldSemanticType.COUNTRY)
+    # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
     benchmark(country_normalizer.normalize, "United States", ctx)  # type: ignore[operator]
 
 
@@ -57,6 +59,7 @@ def test_bench_language_normalize_single_value(
     benchmark: object, language_normalizer: LanguageNormalizer
 ) -> None:
     ctx = NormalizationContext(field_name="lang", semantic_type=FieldSemanticType.LANGUAGE)
+    # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
     benchmark(language_normalizer.normalize, "English", ctx)  # type: ignore[operator]
 
 
@@ -65,4 +68,5 @@ def test_bench_script_normalize_single_value(
     benchmark: object, script_normalizer: ScriptNormalizer
 ) -> None:
     ctx = NormalizationContext(field_name="text", semantic_type=FieldSemanticType.SCRIPT)
+    # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
     benchmark(script_normalizer.normalize, "Hello world", ctx)  # type: ignore[operator]

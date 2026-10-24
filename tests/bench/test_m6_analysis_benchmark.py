@@ -30,24 +30,28 @@ def batch(normalizer: GenericTextNormalizer) -> _Batch:
     ctx = NormalizationContext(field_name="name", semantic_type=FieldSemanticType.FREE_TEXT)
     originals = [f"Value {i % (_BATCH_SIZE // 4)}" for i in range(_BATCH_SIZE)]
     results = [normalizer.normalize(v, ctx) for v in originals]
+    # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
     return originals, results  # type: ignore[return-value]
 
 
 @pytest.mark.bench
 def test_bench_compute_impact_1000_values(benchmark: object, batch: _Batch) -> None:
     originals, results = batch
+    # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
     benchmark(compute_impact, "name", originals, results)  # type: ignore[operator]
 
 
 @pytest.mark.bench
 def test_bench_find_collisions_1000_values(benchmark: object, batch: _Batch) -> None:
     originals, results = batch
+    # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
     benchmark(find_collisions, originals, results)  # type: ignore[operator]
 
 
 @pytest.mark.bench
 def test_bench_compare_runs_1000_values(benchmark: object, batch: _Batch) -> None:
     _, results = batch
+    # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
     benchmark(  # type: ignore[operator]
         compare_runs,
         "name",
@@ -61,4 +65,5 @@ def test_bench_compare_runs_1000_values(benchmark: object, batch: _Batch) -> Non
 @pytest.mark.bench
 def test_bench_profile_field_1000_values(benchmark: object, batch: _Batch) -> None:
     _, results = batch
+    # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
     benchmark(profile_field, "name", results)  # type: ignore[operator]

@@ -82,6 +82,7 @@ def _resolve(name: str, country: str) -> ModuleType:
 
 
 def _classify(country: str) -> tuple[str | None, tuple[str, ...]]:
+    # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
     result: tuple[str | None, tuple[str, ...]] = identifier_mod.tax_id_module_for(country)  # type: ignore[attr-defined]
     return result
 

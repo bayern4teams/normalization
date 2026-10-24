@@ -83,6 +83,7 @@ def test_profile_config_for_lookup_and_immutability() -> None:
     # mechanical enforcement behind ADR-014's "immutable once activated"
     # claim (a real code guarantee, not just a policy statement).
     with pytest.raises(Exception, match=r"frozen|Instance is frozen"):
+        # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
         profile.status = ProfileStatus.ACTIVE  # type: ignore[misc]
 
 

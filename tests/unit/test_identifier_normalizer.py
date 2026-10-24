@@ -220,6 +220,7 @@ class TestSiblingModuleAcceptance:
             assert result.validation_status == "UNKNOWN", (cc, sibling)
             assert result.normalization_status is not NormalizationStatus.INVALID
             assert result.structured["verification"] == "unverifiable"
+            # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
             assert sibling in result.structured["candidate_modules"]  # type: ignore[operator]
 
     def test_twin_invalid_everywhere_stays_invalid(self, normalizer: IdentifierNormalizer) -> None:

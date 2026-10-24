@@ -92,6 +92,7 @@ def real_engine(case: Case) -> tuple[NormalizationStatus, str | None]:
     comes back NORMALIZED/VALID, which is exactly the D7 defect).
     """
     sem = FieldSemanticType[case.semantic_type]
+    # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
     ctx = NormalizationContext(field_name="f", semantic_type=sem, **dict(case.context))  # type: ignore[arg-type]
     result = _dispatcher().normalize(case.input, sem, ctx, SCAFFOLD_PROFILE)
     status = result.normalization_status

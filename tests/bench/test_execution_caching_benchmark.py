@@ -63,6 +63,7 @@ def _run_once(
 def test_bench_execute_run_10000_rows_100_distinct_no_cache(benchmark: object) -> None:
     values = _values()
     store, dispatcher, profile_id = _fresh_store_and_dispatcher(with_cache=False)
+    # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
     benchmark(_run_once, store, dispatcher, profile_id, values)  # type: ignore[operator]
 
 
@@ -73,6 +74,7 @@ def test_bench_execute_run_10000_rows_100_distinct_with_cache_cold(benchmark: ob
     close to, not faster than, the no-cache baseline)."""
     values = _values()
     store, dispatcher, profile_id = _fresh_store_and_dispatcher(with_cache=True)
+    # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
     benchmark(_run_once, store, dispatcher, profile_id, values)  # type: ignore[operator]
 
 
@@ -85,6 +87,7 @@ def test_bench_execute_run_10000_rows_100_distinct_with_cache_warm(benchmark: ob
     store, dispatcher, profile_id = _fresh_store_and_dispatcher(with_cache=True)
     _run_once(store, dispatcher, profile_id, values)  # warm the cache once, not timed
 
+    # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
     benchmark(_run_once, store, dispatcher, profile_id, values)  # type: ignore[operator]
 
 
@@ -134,4 +137,5 @@ def test_distinct_value_dedup_reduces_real_normalize_calls(benchmark: object) ->
     def _noop() -> int:
         return counting.calls
 
+    # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
     benchmark(_noop)  # type: ignore[operator]

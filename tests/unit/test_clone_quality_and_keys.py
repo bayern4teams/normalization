@@ -139,6 +139,7 @@ class TestPerColumnQuality:
             stats.record_status(NormalizationStatus.AMBIGUOUS)
         recorder = _Recorder()
         _report_column_findings(
+            # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
             recorder,  # type: ignore[arg-type]
             "job",
             "t",
@@ -161,6 +162,7 @@ class TestIdempotencyGate:
         stats.record_unstable("Acme  Corp", "Acme Corp")
         recorder = _Recorder()
         _report_column_findings(
+            # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
             recorder,  # type: ignore[arg-type]
             "job",
             "t",
@@ -177,6 +179,7 @@ class TestIdempotencyGate:
         stats = _ColumnStats(total=1000, checked_stable=50)
         recorder = _Recorder()
         _report_column_findings(
+            # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
             recorder,  # type: ignore[arg-type]
             "job",
             "t",
@@ -196,6 +199,7 @@ class TestIdempotencyGate:
             return {}
 
         original = clone_executor._normalize_distinct
+        # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
         clone_executor._normalize_distinct = fake_normalize_distinct  # type: ignore[assignment]
         try:
 
@@ -222,6 +226,7 @@ class TestIdempotencyGate:
                 stats=_ColumnStats(),
             )
         finally:
+            # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
             clone_executor._normalize_distinct = original  # type: ignore[assignment]
         # One call, carrying only the value whose display differs from its key.
         assert calls == [["Acme Corp"]]

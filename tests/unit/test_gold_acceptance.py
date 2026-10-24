@@ -174,12 +174,14 @@ class TestScorerNeverGuess:
 
     def test_answering_an_ambiguous_case_is_wrong_even_with_a_plausible_candidate(self) -> None:
         amb = HAND[3]
+        # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
         for guess in amb.candidates:
             r = score([amb], lambda _c, g=guess: ("PARSED", g, 0.6))  # type: ignore[misc]
             assert _outcomes(r, [amb]) == ["wrong-confident"]
 
     def test_abstaining_is_correct_with_or_without_listing_candidates(self) -> None:
         amb = HAND[3]
+        # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
         for value in (None, amb.candidates[0]):
             r = score([amb], lambda _c, v=value: ("AMBIGUOUS", v, None))  # type: ignore[misc]
             assert _outcomes(r, [amb]) == ["correct-abstain"]
@@ -458,6 +460,7 @@ class TestLoader:
         }
         p = tmp_path / "a.jsonl"
         p.write_text(json.dumps(row) + "\n\n", encoding="utf-8")
+        # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
         (c,) = load_cases(p)
         assert c == GoldCase(**{**row, "candidates": tuple(row["candidates"])})  # type: ignore[arg-type]
         assert isinstance(c.candidates, tuple)

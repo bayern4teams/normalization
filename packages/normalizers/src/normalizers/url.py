@@ -72,6 +72,7 @@ from normcore.pii import character_class_mask, content_hash
 from normcore.rules import ComponentVersionInfo, ExplanationText, ValidationOutcome
 from normcore.trace import TraceStep
 
+# C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
 # upstream ships no py.typed/stubs (re-check at milestone gates)
 from publicsuffixlist import PublicSuffixList  # type: ignore[import-untyped]
 

@@ -36,6 +36,7 @@ def _profile() -> NormalizationProfile:
 def _dispatcher(*normalizers: object) -> Dispatcher:
     registry = NormalizerRegistry()
     for normalizer in normalizers:
+        # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
         registry.register(normalizer)  # type: ignore[arg-type]
     return Dispatcher(registry, env_id="e" * 64)
 

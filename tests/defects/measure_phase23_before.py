@@ -24,7 +24,9 @@ from normio import storage_types
 DISPATCHER = build_dispatcher(env_id="phase23-before")
 
 
+# C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
 def norm(text: str | None, sem: F, **ctx: str):  # type: ignore[no-untyped-def]
+    # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
     context = NormalizationContext(field_name="f", semantic_type=sem, **ctx)  # type: ignore[arg-type]
     return DISPATCHER.normalize(text, sem, context, SCAFFOLD_PROFILE)
 

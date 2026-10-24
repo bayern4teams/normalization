@@ -111,6 +111,7 @@ def main() -> None:
             }
         )
     OUT.write_text(json.dumps(rows, ensure_ascii=False, sort_keys=True, indent=0) + "\n")
+    # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
     with_ext = sum(1 for r in rows if r["out"]["structured"].get("extension"))  # type: ignore[index, union-attr]
     print(f"{len(rows)} cases written to {OUT.name}; {with_ext} carry an extension today")
 

@@ -50,6 +50,7 @@ def test_bench_identifier_normalize_single_value(
     benchmark: object, identifier_normalizer: IdentifierNormalizer
 ) -> None:
     ctx = NormalizationContext(field_name="id", semantic_type=FieldSemanticType.IDENTIFIER)
+    # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
     benchmark(identifier_normalizer.normalize, "AB-000123", ctx)  # type: ignore[operator]
 
 
@@ -58,6 +59,7 @@ def test_bench_uuid_normalize_single_value(
     benchmark: object, uuid_normalizer: UuidNormalizer
 ) -> None:
     ctx = NormalizationContext(field_name="uuid", semantic_type=FieldSemanticType.UUID)
+    # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
     benchmark(  # type: ignore[operator]
         uuid_normalizer.normalize, "550E8400-E29B-41D4-A716-446655440000", ctx
     )
@@ -68,6 +70,7 @@ def test_bench_numeric_normalize_single_value(
     benchmark: object, numeric_normalizer: NumericNormalizer
 ) -> None:
     ctx = NormalizationContext(field_name="n", semantic_type=FieldSemanticType.NUMERIC)
+    # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
     benchmark(numeric_normalizer.normalize, "1,234.56", ctx)  # type: ignore[operator]
 
 
@@ -76,6 +79,7 @@ def test_bench_currency_normalize_single_value(
     benchmark: object, currency_normalizer: CurrencyNormalizer
 ) -> None:
     ctx = NormalizationContext(field_name="c", semantic_type=FieldSemanticType.CURRENCY)
+    # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
     benchmark(currency_normalizer.normalize, "USD", ctx)  # type: ignore[operator]
 
 
@@ -84,6 +88,7 @@ def test_bench_unit_normalize_single_value(
     benchmark: object, unit_normalizer: UnitNormalizer
 ) -> None:
     ctx = NormalizationContext(field_name="q", semantic_type=FieldSemanticType.QUANTITY)
+    # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
     benchmark(unit_normalizer.normalize, "5 km", ctx)  # type: ignore[operator]
 
 
@@ -92,4 +97,5 @@ def test_bench_boolean_normalize_single_value(
     benchmark: object, boolean_normalizer: BooleanNormalizer
 ) -> None:
     ctx = NormalizationContext(field_name="b", semantic_type=FieldSemanticType.BOOLEAN)
+    # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
     benchmark(boolean_normalizer.normalize, "yes", ctx)  # type: ignore[operator]

@@ -60,6 +60,7 @@ class NormalizationRunMetrics(BaseModel):
     p95_latency_ms: float = 0.0
     p99_latency_ms: float = 0.0
 
+    # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
     @computed_field  # type: ignore[prop-decorator]  # mypy's known limitation: decorators above @property are unsupported (verified with a probe file, 2026-10-21); drop when mypy supports the computed_field-over-property order
     @property
     def cache_hit_ratio(self) -> float:

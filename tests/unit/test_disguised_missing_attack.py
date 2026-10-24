@@ -165,6 +165,7 @@ def test_huge_counts_exact() -> None:
 
 def test_non_str_keys_and_bad_counts_do_not_raise_or_report() -> None:
     col = {None: 5, 1: 5, b"x": 5, ("a",): 5, "N/A": 3, "2020-01-01": 50, "x": -3, "y": 0}
+    # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
     got = detect_disguised_missing(col, F.DATE)  # type: ignore[arg-type]
     assert [r.value for r in got] == ["N/A"]
 

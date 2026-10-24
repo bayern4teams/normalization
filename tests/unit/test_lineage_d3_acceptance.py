@@ -915,7 +915,7 @@ class TestNoSecretsInAnyPayload:
 
     def test_a_failure_message_that_echoes_the_credentials_does_not_reach_the_payload(
         self, env: _Env, _secret_key: str
-    ) -> None:
+    ) -> None:  # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
         cipher = str(env.persistence.get_connection("dst-conn")["encrypted_password"])  # type: ignore[index]
         boom = RuntimeError(
             f"password authentication failed for user {USERNAME!r}: "
@@ -1388,6 +1388,7 @@ class TestAttackFailurePaths:
                 raise RuntimeError("catalog gone")
             return real(table)
 
+        # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
         env.source.get_columns = flaky  # type: ignore[method-assign]
         env.run(job_id)
         assert env.job(job_id)["status"] == "FAILED"

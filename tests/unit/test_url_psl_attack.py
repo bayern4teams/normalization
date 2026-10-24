@@ -69,6 +69,7 @@ def test_every_psl_rule_agrees_with_independent_algorithm() -> None:
         parts = [
             _a(p) if not r.startswith("!") or i else _a(p[1:]) for i, p in enumerate(r.split("."))
         ]
+        # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
         if any(p is None for p in parts):
             continue
         enc = ".".join(parts)  # type: ignore[arg-type]

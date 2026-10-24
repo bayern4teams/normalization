@@ -828,6 +828,7 @@ class TestEngineReachesTheCastEndToEnd:
 
         def spy(semantic_type: str, value: object, *args: object, **kwargs: object) -> Any:
             seen.append(kwargs.get("engine", args[0] if args else "<default>"))
+            # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
             return real(semantic_type, value, *args, **kwargs)  # type: ignore[arg-type]
 
         monkeypatch.setattr(storage_types, "coerce", spy)

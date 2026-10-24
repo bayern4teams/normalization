@@ -65,6 +65,7 @@ def test_env_id_is_stable_regardless_of_dict_insertion_order() -> None:
         lambda i: i.dictionaries.__setitem__("gleif-elf@2023-09", "d" * 64),
     ],
 )
+# C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
 def test_env_id_changes_when_any_single_input_changes(mutate) -> None:  # type: ignore[no-untyped-def]
     baseline_id = compute_env_id(_baseline())
     mutated = _baseline()

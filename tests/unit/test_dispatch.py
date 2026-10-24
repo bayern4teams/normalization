@@ -42,6 +42,7 @@ def _context(**overrides: object) -> NormalizationContext:
         "semantic_type": FieldSemanticType.PERSON_NAME,
     }
     defaults.update(overrides)
+    # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
     return NormalizationContext(**defaults)  # type: ignore[arg-type]
 
 
@@ -126,6 +127,7 @@ def test_dispatcher_applies_every_error_policy_on_normalizer_failure(
     policy: ErrorPolicy, expected_status: NormalizationStatus, expected_value: str | None
 ) -> None:
     registry = NormalizerRegistry()
+    # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
     registry.register(_AlwaysFailsNormalizer())  # type: ignore[arg-type]
     dispatcher = Dispatcher(registry, env_id="e" * 64)
 
@@ -177,6 +179,7 @@ def test_dispatcher_rejects_context_hash_mismatch_from_a_buggy_normalizer() -> N
             return None
 
     registry = NormalizerRegistry()
+    # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
     registry.register(_BuggyNormalizer())  # type: ignore[arg-type]
     dispatcher = Dispatcher(registry, env_id="e" * 64)
 
@@ -202,6 +205,7 @@ class TestMissingSentinels:
     def _dispatcher(**kwargs: object) -> Dispatcher:
         registry = NormalizerRegistry()
         registry.register(PassthroughNormalizer())
+        # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
         return Dispatcher(registry, env_id="test-env", **kwargs)  # type: ignore[arg-type]
 
     @classmethod

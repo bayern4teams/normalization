@@ -36,6 +36,7 @@ def _blocked_socket(*_args: object, **_kwargs: object) -> None:
 def demo_no_network_access() -> None:
     print("=== Determinism: check_deliverability=False must never touch the network ===")
     original_socket = socket.socket
+    # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
     socket.socket = _blocked_socket  # type: ignore[assignment]
     try:
         result = validate_email("john.smith@example.com", check_deliverability=False)

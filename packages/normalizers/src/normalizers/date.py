@@ -519,6 +519,7 @@ def _bound(parsed: object, attribute: str) -> str | None:
 def _struct_to_iso(value: object) -> str | None:
     if value is None:
         return None
+    # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
     return f"{value.tm_year:04d}-{value.tm_mon:02d}-{value.tm_mday:02d}"  # type: ignore[attr-defined]  # edtf (untyped) returns a datetime.struct from its bound accessors; mypy sees `object`
 
 

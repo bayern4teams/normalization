@@ -45,6 +45,7 @@ def test_bench_name_normalize_single_value(
     benchmark: object, name_normalizer: NameNormalizer
 ) -> None:
     ctx = NormalizationContext(field_name="full_name", semantic_type=FieldSemanticType.PERSON_NAME)
+    # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
     benchmark(name_normalizer.normalize, "Dr. John Michael Smith Jr.", ctx)  # type: ignore[operator]
 
 
@@ -53,6 +54,7 @@ def test_bench_company_normalize_single_value(
     benchmark: object, company_normalizer: CompanyNormalizer
 ) -> None:
     ctx = NormalizationContext(field_name="company", semantic_type=FieldSemanticType.COMPANY_NAME)
+    # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
     benchmark(company_normalizer.normalize, "Acme Corp Inc.", ctx)  # type: ignore[operator]
 
 
@@ -61,6 +63,7 @@ def test_bench_phone_normalize_single_value(
     benchmark: object, phone_normalizer: PhoneNormalizer
 ) -> None:
     ctx = NormalizationContext(field_name="phone", semantic_type=FieldSemanticType.PHONE)
+    # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
     benchmark(phone_normalizer.normalize, "+1 415-555-2671", ctx)  # type: ignore[operator]
 
 
@@ -69,4 +72,5 @@ def test_bench_email_normalize_single_value(
     benchmark: object, email_normalizer: EmailNormalizer
 ) -> None:
     ctx = NormalizationContext(field_name="email", semantic_type=FieldSemanticType.EMAIL)
+    # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
     benchmark(email_normalizer.normalize, "John.Smith+tag@Example.com", ctx)  # type: ignore[operator]

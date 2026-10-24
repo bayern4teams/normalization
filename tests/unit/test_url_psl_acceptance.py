@@ -33,6 +33,7 @@ from importlib.metadata import version as pkg_version
 from pathlib import Path
 from typing import Any
 
+# C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
 import pytest
 from normalizers.url import URLNormalizer
 from normcore.context import NormalizationContext

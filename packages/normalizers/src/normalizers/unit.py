@@ -58,6 +58,7 @@ _PARSE_PARAMS_HASH = blake3.blake3(b"{}").hexdigest()
 # safely compared, mirroring the "construct once, reuse across the whole
 # batch" pattern from normalizers/script.py's language detector.
 # pint.UnitRegistry is generic; not worth pinning the type parameter here.
+# C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
 _UREG = pint.UnitRegistry()  # type: ignore[var-annotated]  # pint's generic Registry needs a param mypy would infer; default unit registry is intentional here
 
 

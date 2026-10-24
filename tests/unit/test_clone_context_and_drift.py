@@ -150,6 +150,7 @@ def _report(
     ceiling: float | None = None,
 ) -> None:
     _report_column_findings(
+        # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
         p,  # type: ignore[arg-type]
         "job",
         "Company",

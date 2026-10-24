@@ -188,6 +188,7 @@ class TestDistinctValuesAreRememberedAcrossChunks:
             calls += 1
             return real(*a, **k)
 
+        # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
         dispatcher.normalize = counting  # type: ignore[method-assign]
         job = _job()
         _normalize_table(

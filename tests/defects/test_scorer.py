@@ -66,6 +66,7 @@ class TestClassify:
     def test_every_status_gets_an_outcome(self) -> None:
         for case in (CLEAN, ABSTAIN, INVALID):
             for status in S:
+                # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
                 assert classify(case, status, None) in set(Outcome.__args__)  # type: ignore[attr-defined]
 
 

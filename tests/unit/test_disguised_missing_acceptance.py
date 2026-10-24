@@ -57,6 +57,7 @@ def dm() -> Any:
     return importlib.import_module("normanalysis.disguised_missing")
 
 
+# C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
 def detect(counts: Mapping[str, int], sem: Any, context: Any = None) -> list[Any]:
     return dm().detect_disguised_missing(counts, sem, context)  # type: ignore[no-any-return]
 
@@ -94,6 +95,7 @@ class TestModuleShape:
             assert isinstance(r.value, str)
             assert isinstance(r.count, int) and not isinstance(r.count, bool)
             assert r.hint is None or isinstance(r.hint, MissingKind)
+        # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
         with pytest.raises(dataclasses.FrozenInstanceError):
             out[0].count = 0  # type: ignore[misc]
 
