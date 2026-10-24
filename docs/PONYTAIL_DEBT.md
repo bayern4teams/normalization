@@ -127,3 +127,40 @@ One row per `ponytail:` marker in shipped source (`packages/`, `scripts/`).
   - #2 partially reverted: `cleanco` restored in root `pyproject.toml` with the fingerprint keep-note (it stays out of `packages/normalizers`, which neither imports nor fingerprints it).
   - Root cause of the miss: `env_fingerprint.py` DID appear in the "unused" grep; it was misread as a capability probe instead of `FINGERPRINTED_PACKAGES` — the very list that makes a never-imported package load-bearing (ADR-014). Recorded in docs/LESSONS.md (J14).
   - K4 guard added: `test_every_fingerprinted_package_is_a_declared_dependency` (shown failing on the broken state first, L3).
+
+
+## Assertion-less tests (L4), found 2026-10-24
+
+User decision 2026-10-24: "Guard blocks on touch, and list all 27 in docs/PONYTAIL_DEBT.md (file, test name, why it has no assertion) so the next prompt 3 audit reviews them." The count by `scripts/check_test_assertions.py` is 29, not 27 (a miscount in the earlier report; same rule). `scripts/check_test_assertions.py` fails only when one of these changes code. Prompt 3's audit decides: add an assertion, or record why none fits (C5).
+
+| file | test | why it has no assertion |
+|---|---|---|
+| `tests/bench/test_execution_caching_benchmark.py` | `test_bench_execute_run_10000_rows_100_distinct_no_cache` | pytest-benchmark timing: `benchmark(...)` runs the call and records time; no outcome is checked |
+| `tests/bench/test_execution_caching_benchmark.py` | `test_bench_execute_run_10000_rows_100_distinct_with_cache_cold` | pytest-benchmark timing: `benchmark(...)` runs the call and records time; no outcome is checked |
+| `tests/bench/test_execution_caching_benchmark.py` | `test_bench_execute_run_10000_rows_100_distinct_with_cache_warm` | pytest-benchmark timing: `benchmark(...)` runs the call and records time; no outcome is checked |
+| `tests/bench/test_generic_text_benchmark.py` | `test_bench_normalize_single_value` | pytest-benchmark timing: `benchmark(...)` runs the call and records time; no outcome is checked |
+| `tests/bench/test_generic_text_benchmark.py` | `test_bench_normalize_mixed_batch_of_1000` | pytest-benchmark timing: `benchmark(...)` runs the call and records time; no outcome is checked |
+| `tests/bench/test_identity_normalizers_benchmark.py` | `test_bench_name_normalize_single_value` | pytest-benchmark timing: `benchmark(...)` runs the call and records time; no outcome is checked |
+| `tests/bench/test_identity_normalizers_benchmark.py` | `test_bench_company_normalize_single_value` | pytest-benchmark timing: `benchmark(...)` runs the call and records time; no outcome is checked |
+| `tests/bench/test_identity_normalizers_benchmark.py` | `test_bench_phone_normalize_single_value` | pytest-benchmark timing: `benchmark(...)` runs the call and records time; no outcome is checked |
+| `tests/bench/test_identity_normalizers_benchmark.py` | `test_bench_email_normalize_single_value` | pytest-benchmark timing: `benchmark(...)` runs the call and records time; no outcome is checked |
+| `tests/bench/test_m4_normalizers_benchmark.py` | `test_bench_date_normalize_single_value` | pytest-benchmark timing: `benchmark(...)` runs the call and records time; no outcome is checked |
+| `tests/bench/test_m4_normalizers_benchmark.py` | `test_bench_country_normalize_single_value` | pytest-benchmark timing: `benchmark(...)` runs the call and records time; no outcome is checked |
+| `tests/bench/test_m4_normalizers_benchmark.py` | `test_bench_language_normalize_single_value` | pytest-benchmark timing: `benchmark(...)` runs the call and records time; no outcome is checked |
+| `tests/bench/test_m4_normalizers_benchmark.py` | `test_bench_script_normalize_single_value` | pytest-benchmark timing: `benchmark(...)` runs the call and records time; no outcome is checked |
+| `tests/bench/test_m5_normalizers_benchmark.py` | `test_bench_identifier_normalize_single_value` | pytest-benchmark timing: `benchmark(...)` runs the call and records time; no outcome is checked |
+| `tests/bench/test_m5_normalizers_benchmark.py` | `test_bench_uuid_normalize_single_value` | pytest-benchmark timing: `benchmark(...)` runs the call and records time; no outcome is checked |
+| `tests/bench/test_m5_normalizers_benchmark.py` | `test_bench_numeric_normalize_single_value` | pytest-benchmark timing: `benchmark(...)` runs the call and records time; no outcome is checked |
+| `tests/bench/test_m5_normalizers_benchmark.py` | `test_bench_currency_normalize_single_value` | pytest-benchmark timing: `benchmark(...)` runs the call and records time; no outcome is checked |
+| `tests/bench/test_m5_normalizers_benchmark.py` | `test_bench_unit_normalize_single_value` | pytest-benchmark timing: `benchmark(...)` runs the call and records time; no outcome is checked |
+| `tests/bench/test_m5_normalizers_benchmark.py` | `test_bench_boolean_normalize_single_value` | pytest-benchmark timing: `benchmark(...)` runs the call and records time; no outcome is checked |
+| `tests/bench/test_m6_analysis_benchmark.py` | `test_bench_compute_impact_1000_values` | pytest-benchmark timing: `benchmark(...)` runs the call and records time; no outcome is checked |
+| `tests/bench/test_m6_analysis_benchmark.py` | `test_bench_find_collisions_1000_values` | pytest-benchmark timing: `benchmark(...)` runs the call and records time; no outcome is checked |
+| `tests/bench/test_m6_analysis_benchmark.py` | `test_bench_compare_runs_1000_values` | pytest-benchmark timing: `benchmark(...)` runs the call and records time; no outcome is checked |
+| `tests/bench/test_m6_analysis_benchmark.py` | `test_bench_profile_field_1000_values` | pytest-benchmark timing: `benchmark(...)` runs the call and records time; no outcome is checked |
+| `tests/unit/test_confident_wrong.py` | `test_norway_never_raises` | "never raises" smoke: passes if `_norm` does not raise; the outcome (status/value) is not checked |
+| `tests/unit/test_confident_wrong.py` | `test_unknown_locale_never_raises` | "never raises" smoke: passes if `_norm` does not raise; the outcome (status/value) is not checked |
+| `tests/unit/test_connector_schema.py` | `test_tables_present_is_simply_allowed` | passes if `_require_tables` does not raise; "allowed" is not asserted |
+| `tests/unit/test_followups.py` | `test_enough_space_passes` | passes if `check_spool_space` does not raise |
+| `tests/unit/test_name_d11_acceptance.py` | `test_report_must_fix_pairs` | prints a report by design (docstring: "Reported, not asserted") |
+| `tests/unit/test_robustness.py` | `test_an_abandoned_read_stops_and_cleans_up` | closes a generator; the claimed clean-up is not asserted |
