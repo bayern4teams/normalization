@@ -38,7 +38,7 @@ SOURCE_DIRS = ("packages/", "services/", "scripts/", "tests/", "spikes/")
 
 # Built from parts so this file's own regex literals never trip the guard.
 _MARKERS = re.compile(
-    r"(\b" + "noqa\b" + r"|type:" + r"\s*ignore|pytest\.skip\(|pytest\.mark\.skip|xfail\()"
+    r"(\b" + r"noqa\b" + r"|type:" + r"\s*ignore|pytest\.skip\(|pytest\.mark\.skip|xfail\()"
 )
 _C5 = re.compile(
     r"C5:\s*reason=.+?;\s*approved=.+?,\s*\d{4}-\d{2}-\d{2};\s*review=\d{4}-\d{2}-\d{2}"
