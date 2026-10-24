@@ -280,14 +280,14 @@ class _Env:
 
 
 @pytest.fixture(autouse=True)
-def _secret_key(monkeypatch: pytest.MonkeyPatch) -> str:
+def secret_key(monkeypatch: pytest.MonkeyPatch) -> str:
     key = Fernet.generate_key().decode()
     monkeypatch.setenv("NORM_SECRET_KEY", key)
     return key
 
 
 @pytest.fixture
-def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, _secret_key: str) -> _Env:
+def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, secret_key: str) -> _Env:
     return _Env(tmp_path, monkeypatch)
 
 
@@ -902,7 +902,7 @@ class TestEventsAreDurableAndReadableOverHttp:
 @pytest.mark.unit
 class TestNoSecretsInAnyPayload:
     def test_a_connection_holding_a_password_leaks_nothing(
-        self, env: _Env, _secret_key: str
+        self, env: _Env, secret_key: str
     ) -> None:
         job_id = env.new_job()
         env.run(job_id)
@@ -911,10 +911,10 @@ class TestNoSecretsInAnyPayload:
         assert env.persistence.get_connection("src-conn") is not None
         assert raw, "harness: stored rows must be readable"
         for text in (routed, raw):
-            assert_no_secrets(text, env, _secret_key)
+            assert_no_secrets(text, env, secret_key)
 
     def test_a_failure_message_that_echoes_the_credentials_does_not_reach_the_payload(
-        self, env: _Env, _secret_key: str
+        self, env: _Env, secret_key: str
     ) -> None:  # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
         cipher = str(env.persistence.get_connection("dst-conn")["encrypted_password"])  # type: ignore[index]
         boom = RuntimeError(
@@ -927,7 +927,7 @@ class TestNoSecretsInAnyPayload:
         assert kinds(of_table(events, TABLE_B))["FAIL"] == 1
         _, raw = env.stored()
         for text in (json.dumps(events), raw):
-            assert_no_secrets(text, env, _secret_key)
+            assert_no_secrets(text, env, secret_key)
             assert cipher not in text
 
 
@@ -1058,7 +1058,7 @@ class TestForwarding:
             server.shutdown()
 
     def test_events_are_forwarded_when_the_url_is_set_and_they_equal_the_stored_ones(
-        self, env: _Env, monkeypatch: pytest.MonkeyPatch, _secret_key: str, spec: _Spec
+        self, env: _Env, monkeypatch: pytest.MonkeyPatch, secret_key: str, spec: _Spec
     ) -> None:
         server, handler = _serve(200)
         try:
@@ -1077,7 +1077,7 @@ class TestForwarding:
         assert sorted(json.dumps(e, sort_keys=True) for e in sent) == sorted(
             json.dumps(e, sort_keys=True) for e in env.lineage(job_id)
         )
-        assert_no_secrets(b"\n".join(handler.bodies).decode(), env, _secret_key)
+        assert_no_secrets(b"\n".join(handler.bodies).decode(), env, secret_key)
 
     def test_with_the_variable_unset_no_connection_is_attempted(
         self, env: _Env, monkeypatch: pytest.MonkeyPatch
