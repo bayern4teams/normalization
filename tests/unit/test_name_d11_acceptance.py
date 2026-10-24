@@ -469,11 +469,17 @@ def _runtime_dependencies(text: str) -> set[str]:
 
 def test_added_dependencies_are_fingerprinted() -> None:
     """ADR-014: a package that can change a normalizer's answer moves env_id."""
-    added: set[str] = set()
-    for rel in ("pyproject.toml", "packages/normalizers/pyproject.toml"):
-        added |= _runtime_dependencies((ROOT / rel).read_text()) - _runtime_dependencies(
-            _git("show", f"main:{rel}")
-        )
+    # User decision 2026-10-24 (L1: second test edit, approved in chat): "added" means no
+    # manifest on main declares it. A member that starts declaring an import it already
+    # used (deptry, M4) is not a new package. Compare unions of all manifests.
+    rels = ["pyproject.toml", *sorted(p.relative_to(ROOT).as_posix() for p in ROOT.glob("packages/*/pyproject.toml"))]
+    on_main: set[str] = set()
+    for rel in rels:
+        on_main |= _runtime_dependencies(_git("show", f"main:{rel}"))
+    now: set[str] = set()
+    for rel in rels:
+        now |= _runtime_dependencies((ROOT / rel).read_text())
+    added = now - on_main
     missing = {a for a in added if a not in FINGERPRINTED_PACKAGES and a != "normcore"}
     assert not missing, f"added but not in FINGERPRINTED_PACKAGES: {sorted(missing)}"
 
