@@ -236,11 +236,11 @@ class TestClassifyMatrix:
         assert classify(self._case("AMBIGUOUS", None), status, None) != "correct-abstain"
 
     def test_a_clean_truth_without_a_value_is_rejected(self) -> None:
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match=r"needs an expected_value"):
             self._case("PARSED", None)
 
     def test_unknown_status_string_raises_instead_of_being_scored(self) -> None:
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match=r"not a valid NormalizationStatus"):
             classify(self._case("PARSED", "v"), "BOGUS", "v")
 
     def test_pairs_only_for_clean_answers_with_a_stated_confidence(self) -> None:
@@ -340,7 +340,7 @@ class TestLoader:
     def test_csv_semantic_type_is_never_guessed(self, tmp_path: Path) -> None:
         p = tmp_path / "t.csv"
         p.write_text("dirty,clean\n1,2\n")
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match=r"no semantic_type column"):
             load_cases(p)
 
 
@@ -461,11 +461,11 @@ class TestAgreement:
         assert krippendorff_alpha([[0, 1], [1, 0]]) == pytest.approx(-0.5)
 
     def test_bad_shapes_raise(self) -> None:
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match=r"shorter than argument 1|uneven"):
             krippendorff_alpha([[1, 2], [1]])
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match=r"equal-length, non-empty"):
             cohen_kappa([], [])
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match=r"equal-length, non-empty"):
             cohen_kappa([1], [1, 2])
 
 

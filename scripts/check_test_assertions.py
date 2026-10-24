@@ -71,9 +71,12 @@ def main(argv: list[str]) -> int:
             bad.append(f"{rel}: unparseable ({exc})")
             continue
         for node in ast.walk(tree):
-            if isinstance(node, ast.FunctionDef) and node.name.startswith("test_"):
-                if not _has_check(node):
-                    bad.append(f"{rel}:{node.lineno}: {node.name} has no assertion")
+            if (
+                isinstance(node, ast.FunctionDef)
+                and node.name.startswith("test_")
+                and not _has_check(node)
+            ):
+                bad.append(f"{rel}:{node.lineno}: {node.name} has no assertion")
     if bad:
         print(
             f"check_test_assertions: {len(bad)} test function(s) in {base_desc} "

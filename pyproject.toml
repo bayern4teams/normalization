@@ -194,6 +194,32 @@ ignore = ["PLR0913", "PLR2004"]
 # that is the thing under test.
 "tests/integration/test_clone_pipeline.py" = ["PLR0915"]
 
+[tool.deptry]
+# M4/K4: blocking in CI (guards.yml). Scope is the shipped source; caches,
+# the virtualenv, graph caches, spikes (throwaway, pyproject already says
+# why they are exempt from lint) and downloaded data never scanned.
+# First-party: the 8 workspace packages plus the scripts/ modules that
+# tests import by sys.path (env_fingerprint).
+extend_exclude = [
+    "\\.venv",
+    "graft",
+    "graphify-out",
+    "\\.tools",
+    "\\.tmp",
+    "\\.vale",
+    "\\.mypy_cache",
+    "\\.ruff_cache",
+    "\\.pytest_cache",
+    "\\.hypothesis",
+    "data/",
+    "docs/",
+    "research_notes/",
+    "reports/",
+    "spikes/",
+    "ui/node_modules",
+]
+known_first_party = ["normcore", "normalizers", "normdict", "normexec", "normio", "normanalysis", "normapi", "normcli", "env_fingerprint", "refresh_graphs", "defects"]
+
 [tool.mypy]
 python_version = "3.12"
 strict = true

@@ -38,9 +38,7 @@ def main() -> int:
         ["git", "ls-files"], cwd=ROOT, capture_output=True, text=True, check=True
     ).stdout
     extra = [
-        f
-        for f in out.splitlines()
-        if "/" not in f and f not in ALLOWED and not f.startswith(".")
+        f for f in out.splitlines() if "/" not in f and f not in ALLOWED and not f.startswith(".")
     ]
     if extra:
         print(

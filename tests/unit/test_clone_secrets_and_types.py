@@ -10,7 +10,7 @@ failure against a real database).
 from __future__ import annotations
 
 import pytest
-from cryptography.fernet import Fernet
+from cryptography.fernet import Fernet, InvalidToken
 from normio.connectors.clickhouse_destination import PASSTHROUGH_CH_TYPE, SEMANTIC_TYPE_TO_CH_TYPE
 from normio.connectors.postgres_destination import PASSTHROUGH_PG_TYPE, SEMANTIC_TYPE_TO_PG_TYPE
 
@@ -37,8 +37,7 @@ def test_encrypt_decrypt_round_trips(secret_key: str) -> None:
 def test_decrypt_fails_with_wrong_key(secret_key: str, monkeypatch: pytest.MonkeyPatch) -> None:
     ciphertext = secrets.encrypt("some-password")
     monkeypatch.setenv("NORM_SECRET_KEY", Fernet.generate_key().decode())
-    # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
-    with pytest.raises(Exception):  # noqa: B017 - cryptography.fernet.InvalidToken
+    with pytest.raises(InvalidToken):
         secrets.decrypt(ciphertext)
 
 

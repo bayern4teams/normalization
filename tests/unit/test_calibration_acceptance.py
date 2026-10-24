@@ -188,12 +188,14 @@ class TestReliability:
     @pytest.mark.parametrize("bad", [0, -3, [0.5, 0.2, 1.0], [0.2, 0.5], [0.0, 0.5]])
     def test_bad_bins_are_rejected(self, bad: Any) -> None:
         # edges must increase and span [0, 1]; a bin count must be positive.
-        with pytest.raises(ValueError):
+        with pytest.raises(
+            ValueError, match=r"bins must be positive|bin edges must (span|increase)"
+        ):
             reliability([(0.5, True)], bins=bad)
 
     @pytest.mark.parametrize("bad", [1.2, -0.1])
     def test_a_confidence_outside_unit_interval_is_an_error_not_clamped(self, bad: float) -> None:
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match=r"outside \[0, 1\]"):
             reliability([(bad, True)])
 
     def test_overconfident_predictor_is_flagged_and_the_bin_is_named(self) -> None:
@@ -239,7 +241,7 @@ class TestReliability:
         assert rel.ece == pytest.approx(reliability(pairs).ece)  # pooled result unaffected
 
     def test_groups_must_have_one_label_per_pair(self) -> None:
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match=r"group labels for"):
             reliability([(0.5, True), (0.6, False)], groups=["a"])
 
 
@@ -327,7 +329,7 @@ class TestChowThreshold:
 
     @pytest.mark.parametrize("bad", [0, 0.0, -1.0, -5])
     def test_non_positive_ratio_is_an_error(self, bad: float) -> None:
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match=r"cost_ratio must be positive and finite"):
             chow_threshold(self.TOY, bad)
 
     def test_no_data_means_no_threshold_claimed(self) -> None:

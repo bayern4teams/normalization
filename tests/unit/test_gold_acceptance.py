@@ -571,7 +571,7 @@ class TestKappa:
         assert cohen_kappa(*mapped) == pytest.approx(cohen_kappa(a, b))
 
     def test_unequal_lengths_are_refused(self) -> None:
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match=r"equal-length, non-empty"):
             cohen_kappa([1, 2, 3], [1, 2])
 
 
@@ -611,7 +611,7 @@ class TestKrippendorffAlpha:
         assert krippendorff_alpha(data) == pytest.approx(1.0)
 
     def test_unknown_level_is_refused_not_defaulted(self) -> None:
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match=r"unsupported level"):
             krippendorff_alpha([[1, 2], [1, 2]], level="no-such-level")
 
 

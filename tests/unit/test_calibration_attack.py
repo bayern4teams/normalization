@@ -215,22 +215,22 @@ def test_calibrated_predictor_rarely_exceeds_tolerance_or_is_flagged(law, n):
 
 def test_confidence_edges():
     for bad in (math.nan, math.inf, -0.1, 1.0000000000000002):
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match=r"outside \[0, 1\]"):
             reliability([(bad, True)])
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match=r"outside \[0, 1\]"):
             chow_threshold([(bad, True)], 2)
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match=r"outside \[0, 1\]"):
             risk_coverage([(bad, True)])
     assert reliability([(-0.0, False)]).bins[0].count == 1
 
 
 def test_bool_confidence_is_rejected():
-    with pytest.raises((ValueError, TypeError)):
+    with pytest.raises(ValueError, match=r"outside \[0, 1\]"):
         reliability([(True, 0.8)])
 
 
 def test_nan_bin_edge_is_rejected():
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"bin edges must span"):
         reliability(P4, bins=(0, math.nan, 1))
 
 
@@ -245,9 +245,9 @@ def test_groups_single_case_and_alignment():
         sub = [p for p, g in zip(pairs, labels, strict=True) if g == label]
         assert rel.groups[label].ece == reliability(sub).ece
     assert rel.ece == reliability(pairs).ece  # grouping does not change the pooled number
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"group labels for"):
         reliability(pairs, groups=labels[:-1])
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"group labels for"):
         reliability(pairs, groups=[*labels, "x"])
 
 
