@@ -28,6 +28,7 @@ def address_normalizer() -> AddressNormalizer:
     try:
         client.health()
     except Exception as exc:
+        # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
         pytest.skip(f"libpostal sidecar not reachable at {_LIBPOSTAL_URL}: {exc}")
     normalizer = AddressNormalizer(client)
     yield normalizer
@@ -86,6 +87,7 @@ def test_postal_code_validation_across_countries(
     per-country (not one universal regex, §32)."""
     rules = i18naddress.get_validation_rules({"country_code": country})
     if not rules.postal_code_matchers:
+        # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
         pytest.skip(f"{country} has no postal-code matchers in this dataset")
     matched = any(m.match(postcode.upper()) for m in rules.postal_code_matchers)
     assert matched is expect_valid, f"{country}/{postcode}: expected valid={expect_valid}"

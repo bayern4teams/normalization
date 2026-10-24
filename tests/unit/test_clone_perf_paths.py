@@ -145,7 +145,7 @@ def test_parallel_and_serial_produce_identical_results(dispatcher: Dispatcher) -
         None, planner, values, semantic_type=st, context=ctx, profile=SCAFFOLD_PROFILE
     )
     pool = clone_executor._make_pool(dispatcher.env_id)
-    if pool is None:
+    if pool is None:  # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
         pytest.skip("process pool disabled or unavailable in this environment")
     try:
         parallel = clone_executor._normalize_distinct(

@@ -21,6 +21,7 @@ def libpostal_client() -> LibpostalClient:
     try:
         client.health()
     except Exception as exc:
+        # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
         pytest.skip(f"libpostal sidecar not reachable at {_LIBPOSTAL_URL}: {exc}")
     yield client
     client.close()

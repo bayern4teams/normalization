@@ -226,6 +226,7 @@ class TestAdversarialInputs:
     ) -> None:
         """Never raises, never a raw string, never a value the column cannot hold."""
         if isinstance(value, int) and not isinstance(value, bool) and value.bit_length() > 100000:
+            # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
             pytest.skip("covered by test_huge_int_does_not_raise")
         _assert_clean(semantic_type, engine, value)
 
@@ -315,6 +316,7 @@ class TestOverflowIsACastFailure:
         truncated to its low digits, not turned into a float or a string."""
         int_digits, _ = _limits(semantic_type, engine)
         if int_digits is None:
+            # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
             pytest.skip("unbounded column")
         cast, error = _coerce(semantic_type, "1" + "0" * (int_digits + 5), engine)
         assert cast is None
@@ -333,6 +335,7 @@ class TestBoundary:
     ) -> None:
         int_digits, _ = _limits(semantic_type, engine)
         if int_digits is None:
+            # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
             pytest.skip("unbounded column: see TestPostgresHardCeiling")
         assert int_digits >= 1
         fits = sign + _digits(int_digits)
@@ -350,6 +353,7 @@ class TestBoundary:
     ) -> None:
         int_digits, _ = _limits(semantic_type, engine)
         if int_digits is None:
+            # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
             pytest.skip("unbounded column")
         assert _coerce(semantic_type, f"1e{int_digits - 1}", engine)[1] is None
         cast, error = _coerce(semantic_type, f"1e{int_digits}", engine)
@@ -364,6 +368,7 @@ class TestBoundary:
     def test_widest_value_with_a_full_fraction_fits(self, semantic_type: str, engine: str) -> None:
         int_digits, scale = _limits(semantic_type, engine)
         if int_digits is None or scale is None:
+            # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
             pytest.skip("unbounded column")
         text = _digits(int_digits) + "." + _digits(scale)
         cast, error = _coerce(semantic_type, text, engine)
@@ -380,6 +385,7 @@ class TestBoundary:
         looked in range. Either reject it, or return a value that fits after rounding."""
         int_digits, scale = _limits(semantic_type, engine)
         if int_digits is None or scale is None:
+            # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
             pytest.skip("unbounded column")
         text = _digits(int_digits) + "." + _digits(scale + 1)
         _assert_clean(semantic_type, engine, text)
@@ -400,6 +406,7 @@ class TestBoundary:
         if engine == "postgres" and "e-999999999" in text:
             # Lead, after the attack round: real PG 16.14 rejects more than 16383
             # fractional digits, typmod or not (TestPostgresScaleCeiling covers it).
+            # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
             pytest.skip("beyond Postgres' 16383 fractional digits")
         cast, error = _coerce(semantic_type, text, engine)
         if decimal.Decimal(text).is_zero():
@@ -438,6 +445,7 @@ class TestPostgresHardCeiling:
 
     def test_the_documented_ceiling_itself_fits(self) -> None:
         if _limits("NUMERIC", "postgres")[0] is not None:
+            # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
             pytest.skip("Postgres NUMERIC is bounded in this build")
         text = _digits(PG_NUMERIC_MAX_INT_DIGITS)
         cast, error = _coerce("NUMERIC", text, "postgres")
@@ -757,6 +765,7 @@ class TestSection24Grep:
                 check=True,
             ).stdout
         except (OSError, subprocess.CalledProcessError):
+            # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
             pytest.skip("git or branch main unavailable")
         source = (ROOT / STORAGE_TYPES_PY).read_text()
         found = _violations(source, _added_line_numbers(diff))
@@ -807,6 +816,7 @@ class TestPostgresScaleCeiling:
     @pytest.mark.parametrize("text", [f"1e-{PG_NUMERIC_MAX_SCALE}", f"0e-{PG_NUMERIC_MAX_SCALE}"])
     def test_the_stored_scale_itself_still_fits(self, semantic_type: str, text: str) -> None:
         if semantic_type == "MONEY" and not decimal.Decimal(text).is_zero():
+            # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
             pytest.skip("finer than NUMERIC(38,4): NULL plus an error row since fix/robustness")
         cast, error = _coerce(semantic_type, text, "postgres")
         assert error is None

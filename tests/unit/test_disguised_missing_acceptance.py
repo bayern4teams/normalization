@@ -377,7 +377,12 @@ def _module_code_lines(path: Path) -> list[str]:
 def _git(*args: str) -> str:
     try:
         return subprocess.run(
-            ["git", *args], cwd=ROOT, capture_output=True, text=True, check=True
+            # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
+            ["git", *args],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
         ).stdout
     except (OSError, subprocess.CalledProcessError):
         pytest.skip("git unavailable")

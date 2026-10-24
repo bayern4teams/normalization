@@ -385,6 +385,7 @@ def _rule_data_files() -> list[Path]:
 def test_rule_data_files_carry_a_licence_notice() -> None:
     data = _rule_data_files()
     if not data:
+        # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
         pytest.skip("no rule data file in the tree: an installed library supplies the rules")
     rules = [f for f in data if f.suffix == ".txt"]
     assert rules, "rule data present but no .txt rule files"
@@ -413,6 +414,7 @@ def test_vendored_rule_files_match_the_upstream_jar() -> None:
     """Byte-identical to the upstream release the NOTICE names (set D11_COMMONS_CODEC_JAR)."""
     jar = os.environ.get("D11_COMMONS_CODEC_JAR")
     if not jar or not Path(jar).exists():
+        # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
         pytest.skip("set D11_COMMONS_CODEC_JAR to a commons-codec-1.17.1.jar to compare")
     data = [f for f in _rule_data_files() if f.name.startswith("gen_") and f.suffix == ".txt"]
     notice = (data[0].parent / "NOTICE").read_text(encoding="utf-8")

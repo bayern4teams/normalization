@@ -225,6 +225,7 @@ def test_many_distinct_recurring_invalid_values_not_all_reported() -> None:
     assert len(detect_disguised_missing(col, F.DATE)) < 300  # reports all 300 today
 
 
+# C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
 @pytest.mark.xfail(
     strict=True,
     reason="D4 attack: DateNormalizer.validate costs ~11-430 ms per FAILING value (dateparser), "

@@ -261,7 +261,7 @@ def test_several_candidate_modules_are_unverifiable_and_listed() -> None:
     """Never the first match: where the discovery returns (None, candidates) with len > 1, the
     result lists all candidates and is unverifiable even for a number valid under one of them."""
     multi = [(cc, _classify(cc)[1]) for cc in _stdnum_countries() if _is_multi(cc)]
-    if not multi:
+    if not multi:  # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
         pytest.skip("this stdnum/term list yields no multi-candidate country (property vacuous)")
     for cc, cands in multi:
         r = _run(F.TAX_ID, TAX_NUMBERS["PT"][0], cc)

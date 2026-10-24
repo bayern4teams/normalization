@@ -365,6 +365,7 @@ class TestSection24Grep:
                 text=True,
                 check=True,
             ).stdout
+        # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
         except (OSError, subprocess.CalledProcessError):
             pytest.skip("git or branch main unavailable")
         added = [ln for ln in diff.splitlines() if ln.startswith("+") and not ln.startswith("+++")]

@@ -70,6 +70,7 @@ def test_nfc_inverse_round_trips_through_forward_operation(
 ) -> None:
     nfc_output, changed = text_ops.unicode_normalize(value, UnicodeForm.NFC)
     if not changed:
+        # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
         pytest.skip(f"{value!r} was already NFC-normalized, nothing to invert")
 
     inverted = normalizer.inverse("unicode_normalize_nfc", nfc_output)
@@ -90,6 +91,7 @@ def test_nfd_inverse_round_trips_through_forward_operation(
 ) -> None:
     nfd_output, changed = text_ops.unicode_normalize(value, UnicodeForm.NFD)
     if not changed:
+        # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
         pytest.skip(f"{value!r} was already NFD-normalized, nothing to invert")
 
     inverted = normalizer.inverse("unicode_normalize_nfd", nfd_output)
