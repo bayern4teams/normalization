@@ -152,8 +152,16 @@ src = ["packages", "tests", "scripts", "spikes"]
 extend-exclude = ["packages/normalizers/src/normalizers/_cldr_*_names.py"]
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B", "C4", "SIM", "PL", "RUF"]
-ignore = ["PLR0913", "PLR2004"]
+# PT: flake8-pytest-style (L4 test quality). PGH004: blanket `# noqa` with
+# no rule codes — always a silent exception (C5). Both added 2026-10-24.
+select = ["E", "F", "I", "UP", "B", "C4", "SIM", "PL", "RUF", "PT", "PGH"]
+ignore = [
+    "PLR0913",
+    "PLR2004",
+    # C5: reason=PT018 (composite assertions) is style only — no strength gain;
+    # approved=user, 2026-10-24; review=2027-10-24
+    "PT018",
+]
 
 [tool.ruff.lint.per-file-ignores]
 # spikes/ are throwaway M0 scripts proving risky integrations work (see
