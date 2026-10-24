@@ -443,16 +443,35 @@ def test_gpl_abydos_is_not_a_dependency() -> None:
         assert "abydos" not in path.read_text(encoding="utf-8").lower()
 
 
+def _runtime_dependencies(text: str) -> set[str]:
+    """Dependency names from the [project] dependencies array only.
+
+    User decision 2026-10-24 (L1: test scope changed with approval, not to
+    make it pass): dev-extra tools (deptry, vulture, zizmor, ...) cannot
+    change a normalizer's answer, so they are outside ADR-014's contract;
+    the old line-regex over the whole file scanned them as if they could.
+    """
+    m = re.search(r"(?ms)^\[project\]\n(.+?)(?=^\[|\Z)", text)
+    if not m:
+        return set()
+    arr = re.search(r"(?ms)^dependencies\s*=\s*\[(.*?)^\]", m.group(1))
+    if not arr:
+        return set()
+    return {
+        n.lower().replace("_", "-")
+        for n in re.findall(
+            r'"([A-Za-z0-9_.\-]+)\s*(?:\[[^\]]*\])?\s*(?:[<>=~!]=|[><])', arr.group(1)
+        )
+    }
+
+
 def test_added_dependencies_are_fingerprinted() -> None:
     """ADR-014: a package that can change a normalizer's answer moves env_id."""
-    diff = _git("diff", "main", "--", "pyproject.toml", "packages/normalizers/pyproject.toml")
-    added = {
-        m.group(1).lower().replace("_", "-")
-        for line in diff.splitlines()
-        if line.startswith("+")
-        and not line.startswith("+++")
-        and (m := re.match(r'\+\s*"([A-Za-z0-9_.-]+)\s*[<>=~!]', line))
-    }
+    added: set[str] = set()
+    for rel in ("pyproject.toml", "packages/normalizers/pyproject.toml"):
+        added |= _runtime_dependencies((ROOT / rel).read_text()) - _runtime_dependencies(
+            _git("show", f"main:{rel}")
+        )
     missing = {a for a in added if a not in FINGERPRINTED_PACKAGES and a != "normcore"}
     assert not missing, f"added but not in FINGERPRINTED_PACKAGES: {sorted(missing)}"
 
