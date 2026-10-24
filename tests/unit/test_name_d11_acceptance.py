@@ -472,7 +472,10 @@ def test_added_dependencies_are_fingerprinted() -> None:
     # User decision 2026-10-24 (L1: second test edit, approved in chat): "added" means no
     # manifest on main declares it. A member that starts declaring an import it already
     # used (deptry, M4) is not a new package. Compare unions of all manifests.
-    rels = ["pyproject.toml", *sorted(p.relative_to(ROOT).as_posix() for p in ROOT.glob("packages/*/pyproject.toml"))]
+    rels = [
+        "pyproject.toml",
+        *sorted(p.relative_to(ROOT).as_posix() for p in ROOT.glob("packages/*/pyproject.toml")),
+    ]
     on_main: set[str] = set()
     for rel in rels:
         on_main |= _runtime_dependencies(_git("show", f"main:{rel}"))
