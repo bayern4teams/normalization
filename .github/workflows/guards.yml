@@ -1,0 +1,78 @@
+name: guards
+
+# K4: the cheap machine checks for rules C5, L1, L4, M1, M2, B6 and the CI files.
+# Every push and pull request, because this project merges locally and pushes.
+# Each script is described in AGENTS.md section 4; deptry is in dep-check.yml.
+
+on:
+  push:
+    branches-ignore:
+      - "milestone/**" # milestone branches use the heavier gate.yml workflow
+  pull_request:
+
+concurrency:
+  group: guards-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  guards:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0 # need history to diff against the base and to scan for secrets
+          persist-credentials: false
+
+      - name: Resolve the base of this change
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            base="$PR_BASE_SHA"
+          else
+            base="$PUSH_BEFORE"
+            # an all-zeros (or empty) "before" means the first push of a
+            # branch: fall back to the remote default branch instead.
+            case "$base" in
+              ''|*[!0]*) : ;;
+              *) base="" ;;
+            esac
+            if [ -z "$base" ]; then
+              git fetch --no-tags origin "$GITHUB_DEFAULT_BRANCH"
+              base="$(git rev-parse FETCH_HEAD)"
+            fi
+          fi
+          echo "GUARD_BASE=$base" >> "$GITHUB_ENV"
+
+      - name: "C5 + L1: new exceptions carry a C5 comment; removed tests carry a C5: commit line"
+        run: python3 scripts/check_c5_exceptions.py "$GUARD_BASE"
+
+      - name: "L4: changed tests assert something"
+        run: python3 scripts/check_test_assertions.py "$GUARD_BASE"
+
+      - name: "M1: root folder holds only allowed files"
+        run: python3 scripts/check_root_files.py
+
+      - name: "M2: no tracked file matches .gitignore"
+        run: python3 scripts/check_gitignore_consistency.py
+
+      - name: Install pinned binaries (checksummed)
+        run: scripts/install_tools.sh
+
+      - name: "B6: gitleaks over the full history"
+        run: .tools/gitleaks git --no-banner .
+
+      - name: "CI files: actionlint"
+        run: .tools/actionlint
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39 # v3.2.4
+
+      - name: "CI files: zizmor (version pinned as in pyproject.toml)"
+        run: uvx zizmor@1.31.1 .github/workflows

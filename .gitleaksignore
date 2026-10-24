@@ -1,0 +1,5 @@
+# gitleaks allowlist (B6). User decision 2026-10-24 (decision 9). One fingerprint per line.
+# C5: reason=dev-only Fernet key fixed in compose.yaml for local runs (the file says so; real deployments generate one); approved=user, 2026-10-24; review=2027-10-24
+6ae91d595be2ce6a26d4170f917667159306edf5:compose.yaml:generic-api-key:61
+# C5: reason=false positive, an nginx proxy_pass URL (host:port), not a secret; the file is no longer in the tree; approved=user, 2026-10-24; review=2027-10-24
+0dd13b0fa1a9a6aa30bf1452e6c9825106878dc3:ui/nginx.conf:generic-api-key:12

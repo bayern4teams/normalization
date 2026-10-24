@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Install the pinned guard binaries locally with checksum verification (K4,
 # user decision 2026-10-24: project-local, never global). Binaries land in
-# .tools/ (git-ignored). CI uses the pinned GitHub Actions instead — this
-# script is so `./.tools/gitleaks` and `./.tools/actionlint` work locally.
+# .tools/ (git-ignored). CI runs this same script (guards.yml) — it also
+# makes `./.tools/gitleaks` and `./.tools/actionlint` work locally.
 #
 # Python guard tools are NOT here: deptry, vulture and zizmor come from the
 # dev extra (`uv sync --all-extras`, run via `uv run ...`), pinned in
