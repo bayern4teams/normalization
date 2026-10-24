@@ -17,11 +17,11 @@ from tests.unit.test_lineage_d3_acceptance import (  # noqa: F401 - fixtures
     TABLE_A,
     TABLE_B,
     _Env,
-    _secret_key,
     _Spec,
     assert_valid,
     env,
     facets_of,
+    secret_key,
     spec,
 )
 
