@@ -14,6 +14,7 @@ classification in `OPERATIONS` (below) auditable in one place.
 # ZWSP/ZWJ/ZWNJ, ...) — ruff's RUF001 "ambiguous character, did you mean
 # ASCII X" is exactly backwards here: these ARE the intended, correctly-
 # typed characters, not typos.
+# C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
 # ruff: noqa: RUF001
 
 from __future__ import annotations
@@ -304,6 +305,7 @@ _spoof_checker: icu.SpoofChecker | None = None
 
 
 def _get_spoof_checker() -> icu.SpoofChecker:
+    # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
     global _spoof_checker  # noqa: PLW0603 - module-level lazy singleton, ICU object is expensive to construct
     if _spoof_checker is None:
         checker = icu.SpoofChecker()

@@ -44,6 +44,7 @@ CLEAN = {"NORMALIZED", "UNCHANGED", "REPAIRED", "PARSED"}
 Engine = Callable[[GoldCase], tuple[str, str | None, float | None]]
 
 
+# C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
 def _case(  # noqa: PLR0917
     sem: str,
     inp: str,

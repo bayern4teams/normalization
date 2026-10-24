@@ -16,4 +16,5 @@ is safe, without every individual submodule having to get its own
 internal import order exactly right.
 """
 
+# C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
 import icu  # noqa: F401 - see module docstring; must stay the first import

@@ -134,6 +134,7 @@ def score(cases: Iterable[GoldCase], engine: Engine) -> GoldReport:
 
 @cache
 def _dispatcher() -> Any:
+    # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
     # Lazy: normapi imports normanalysis, so a top-level import here would be a cycle.
     from normapi.app import build_dispatcher  # noqa: PLC0415
 
@@ -148,6 +149,7 @@ def default_engine(case: GoldCase) -> Answer:
     status is UNKNOWN/AMBIGUOUS is reported as the abstention it is (same rule as the D1-D12
     scorer in tests/defects/scorer.py).
     """
+    # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
     from normapi.scaffold_profile import SCAFFOLD_PROFILE  # noqa: PLC0415
 
     sem = FieldSemanticType[case.semantic_type]
@@ -528,10 +530,13 @@ def generate_corpus(seed: int, n_per_injector: int) -> list[GoldCase]:
 @cache
 def _missing_value_tokens() -> frozenset[str]:
     """The engine's own missing-value table (the dictionary the Dispatcher loads), casefolded."""
+    # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
+    # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
     # Lazy: normapi imports normanalysis (a top-level import would be a cycle).
     from normalizers.generic_text import load_missing_value_sentinels  # noqa: PLC0415
     from normapi.app import _DEFAULT_DICTIONARIES_DIR  # noqa: PLC0415
 
+    # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
     from normdict import DictionaryLoader  # noqa: PLC0415
 
     return frozenset(load_missing_value_sentinels(DictionaryLoader(_DEFAULT_DICTIONARIES_DIR)))

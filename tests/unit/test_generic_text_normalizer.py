@@ -7,6 +7,7 @@ for.
 """
 
 # One test below deliberately contains a Cyrillic confusable character.
+# C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
 # ruff: noqa: RUF001, RUF003
 
 from __future__ import annotations

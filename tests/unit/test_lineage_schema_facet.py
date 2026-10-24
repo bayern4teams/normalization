@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
+# C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
 import pytest
 from tests.unit.test_lineage_d3_acceptance import (  # noqa: F401 - fixtures
     COLUMNS,
@@ -31,6 +32,7 @@ def _schema_names(dataset: dict[str, Any]) -> list[str]:
     return [f["name"] for f in facets_of(dataset)["schema"]["fields"]]
 
 
+# C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
 def test_inputs_and_outputs_carry_their_fields(env: _Env, spec: _Spec) -> None:  # noqa: F811
     job_id = env.new_job()
     env.run(job_id)
@@ -53,6 +55,7 @@ def test_inputs_and_outputs_carry_their_fields(env: _Env, spec: _Spec) -> None: 
     assert_valid(spec, events)
 
 
+# C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
 def test_input_fields_name_the_dataset_not_its_facets(env: _Env) -> None:  # noqa: F811
     job_id = env.new_job()
     env.run(job_id)

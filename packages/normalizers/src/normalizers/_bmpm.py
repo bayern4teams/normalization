@@ -67,6 +67,7 @@ def _unquote(token: str) -> str:
 def _context(regex: str) -> re.Pattern[str]:
     """A rule context, compiled exactly as Commons Codec's `Rule.pattern` does."""
     # ponytail: upstream treats bracket-less contexts as literals, so e.g.
+    # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
     # `(а|е|о|и|у)` never fires; 4/131 Cyrillic names lose alternatives.  # noqa: RUF003
     # Upgrade path: follow upstream if Commons Codec fixes it; re-vendor the rule files.
     start, end = regex.startswith("^"), regex.endswith("$")

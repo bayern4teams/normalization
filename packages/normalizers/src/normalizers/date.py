@@ -541,6 +541,7 @@ class DateNormalizer:
     def can_handle(self, field_type: FieldSemanticType, ctx: NormalizationContext) -> bool:
         return field_type in self.supported_types
 
+    # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
     def normalize(  # noqa: PLR0911 - one early return per refusal, each named
         self, value: str | None, ctx: NormalizationContext
     ) -> NormalizedValue:

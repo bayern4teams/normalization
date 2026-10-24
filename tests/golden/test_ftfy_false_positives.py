@@ -10,6 +10,7 @@ positive, corrupting good data.
 
 # This corpus deliberately contains non-Latin script samples and an
 # em-dash literal as test fixtures, not typos.
+# C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
 # ruff: noqa: RUF001
 
 from __future__ import annotations

@@ -89,6 +89,8 @@ def _context(args: argparse.Namespace) -> dict[str, str]:
 
 
 def _run_calibrate(args: argparse.Namespace) -> int:
+    # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
+    # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
     from normanalysis.calibration import _DELTA, calibration_table, report  # noqa: PLC0415
     from normanalysis.gold import default_engine, load_cases, score  # noqa: PLC0415
 
@@ -129,6 +131,7 @@ def _run_calibrate(args: argparse.Namespace) -> int:
 
 
 def _run_gold(args: argparse.Namespace) -> int:
+    # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
     # Imported here, not at module top: gold pulls in babel, phonenumbers and the whole engine,
     # which the other (gate) subcommands must not need.
     from normanalysis.gold import (  # noqa: PLC0415

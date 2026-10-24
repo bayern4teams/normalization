@@ -11,6 +11,7 @@ from test_url_normalizer import _ctx
 
 pytestmark = pytest.mark.unit
 
+# C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
 import publicsuffixlist  # noqa: E402
 
 
@@ -18,6 +19,7 @@ def _load() -> tuple[list[tuple[str, bool]], ...]:
     path = os.path.join(os.path.dirname(publicsuffixlist.__file__), "public_suffix_list.dat")
     rules: list[tuple[str, bool]] = []
     icann = False
+    # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
     for raw in open(path, encoding="utf-8"):  # noqa: SIM115
         line = raw.strip()
         if "BEGIN ICANN DOMAINS" in line:

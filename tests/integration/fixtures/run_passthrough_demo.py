@@ -15,6 +15,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+# C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
 # Explicit, non-negotiable-by-isort import: MUST execute before `pyarrow`
 # is imported anywhere in this process, or PyICU's and PyArrow's bundled
 # native DLLs conflict on Windows (segfault) — see

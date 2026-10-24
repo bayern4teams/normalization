@@ -160,7 +160,9 @@ class TestKilledMidRunResumesExactly:
                     f"INSERT INTO {ch_q(src)}.t SELECT number, "
                     f"if(number % 3 = 2, 'not money', concat(toString(number), '.00')) "
                     f"FROM numbers({part * ROWS // 3}, {ROWS // 3})"
+                    # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
                 )
+            # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
             # Phase 1's DDL for this table (its MergeTree settings).
             from normio.connector import ColumnInfo  # noqa: PLC0415
             from normio.connectors.clickhouse_destination import (  # noqa: PLC0415
@@ -232,6 +234,7 @@ class TestPostgresReadOrderIsStable:
         of shared_buffers), so a resumed job, whose killed predecessor's scan
         was still in flight, read the table from the middle: on UK Price Paid
         406,000 rows were written twice and 406,000 never."""
+        # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
         from normio.connectors import PostgresConnector  # noqa: PLC0415
 
         with psycopg.connect(_pg_dsn(pg_db), autocommit=True) as conn:

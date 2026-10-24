@@ -20,6 +20,7 @@ second normalize() call on its own `display` output.
 # Arabic, Hebrew, Han, Hiragana/Katakana, Hangul, Devanagari, ...) and
 # includes intentional confusable/mixed-script fixtures — none of this is
 # a typo.
+# C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
 # ruff: noqa: RUF001, RUF003
 
 from __future__ import annotations

@@ -19,6 +19,7 @@ from normdict import Dictionary, DictionaryLoader, DictionaryNotFoundError
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
+# C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
 from env_fingerprint import collect_dictionary_hashes  # noqa: E402
 
 

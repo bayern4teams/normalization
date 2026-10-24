@@ -427,6 +427,7 @@ class TestFourDigitColumnsAreNotGuessedDates:
     clone 3 hours of date parsing; on main only a DATE/DATETIME tie hid it."""
 
     def test_postcodes_alone_suggest_no_date(self) -> None:
+        # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
         from normanalysis.type_detection import suggest_semantic_type  # noqa: PLC0415
 
         values = ["0150", "5003", "9990", "1430", "2050", "0171", "3511", "7010"] * 3
@@ -440,6 +441,7 @@ class TestFourDigitColumnsAreNotGuessedDates:
         assert best.semantic_type not in (FieldSemanticType.DATE, FieldSemanticType.DATETIME)
 
     def test_a_year_column_named_so_is_still_found(self) -> None:
+        # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
         from normanalysis.type_detection import suggest_semantic_type  # noqa: PLC0415
 
         best = suggest_semantic_type(

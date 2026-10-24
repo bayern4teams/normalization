@@ -619,8 +619,10 @@ def test_registry_maps_24_of_25_types_to_a_real_normalizer() -> None:
 
 def test_code_idempotent_and_tax_id_unchanged_through_dispatcher() -> None:
     """The dispatcher (the real path) sees the same split."""
+    # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
     from normapi.scaffold_profile import SCAFFOLD_PROFILE  # noqa: PLC0415
 
+    # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
     from defects.scorer import _dispatcher  # noqa: PLC0415
 
     good, bad = TAX_NUMBERS["PT"]

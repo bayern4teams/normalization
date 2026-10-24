@@ -129,6 +129,7 @@ _COMMA_PROOFS = ["1,5", "12,25", "3.456.789", "1.234,56", "0,75", "7.000.000"]
 
 
 def _num(value: str, **kw: object) -> object:
+    # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
     from normalizers.numeric import NumericNormalizer  # noqa: PLC0415
 
     ctx = NormalizationContext(field_name="n", semantic_type=T.NUMERIC, **kw)
@@ -137,6 +138,7 @@ def _num(value: str, **kw: object) -> object:
 
 class TestDecimalEvidence:
     def test_six_agreeing_proofs_state_the_mark(self) -> None:
+        # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
         from normalizers.numeric import column_decimal_evidence  # noqa: PLC0415
 
         assert column_decimal_evidence([*_DOT_PROOFS, "1,234", "42", None]) == {
@@ -147,6 +149,7 @@ class TestDecimalEvidence:
         assert column_decimal_evidence(_COMMA_PROOFS)["mark"] == ","
 
     def test_fewer_or_contradicted_states_nothing(self) -> None:
+        # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
         from normalizers.numeric import column_decimal_evidence  # noqa: PLC0415
 
         assert column_decimal_evidence(_DOT_PROOFS[:5])["mark"] is None
@@ -176,6 +179,7 @@ class TestDecimalEvidence:
         assert _num("1,5", column_decimal_mark=(".", 9)).display == "1.5"
 
     def test_money_reads_its_amount_with_the_column_mark(self) -> None:
+        # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
         from normalizers.money import MoneyNormalizer  # noqa: PLC0415
 
         ctx = NormalizationContext(
@@ -202,6 +206,7 @@ class TestDecimalClone:
 
 
 def test_neither_proof_moves_a_verdict_key() -> None:
+    # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
     from normapi.adjudication import verdict_key  # noqa: PLC0415
 
     plain = NormalizationContext(field_name="n", semantic_type=T.NUMERIC)

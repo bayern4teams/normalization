@@ -526,6 +526,7 @@ class TestQuantityNeverRaises:
     def test_any_printable_character_anywhere_gives_a_result(self, base: str) -> None:
         """pint's unit parser raised AssertionError (`12# kg`, `12 kg*`) and
         tokenize.TokenError (`12" kg`) out of the normalizer, failing the job."""
+        # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
         from normalizers.unit import UnitNormalizer  # noqa: PLC0415
 
         normalizer, ctx = UnitNormalizer(), _ctx(FieldSemanticType.QUANTITY, None)

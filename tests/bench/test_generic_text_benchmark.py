@@ -10,6 +10,7 @@ test for them to actually execute against.
 
 # One sample value below deliberately contains a Cyrillic confusable
 # character, matching the mixed-script case a real workload would see.
+# C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
 # ruff: noqa: RUF001
 
 from __future__ import annotations

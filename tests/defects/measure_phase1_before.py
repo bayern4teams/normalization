@@ -24,6 +24,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tests"))
 
+# C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
+# C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
+# C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
+# C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
+# C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
+# C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
 import pycountry  # noqa: E402
 import stdnum  # noqa: E402
 from normapi.scaffold_profile import SCAFFOLD_PROFILE  # noqa: E402
@@ -31,6 +37,8 @@ from normcore.context import NormalizationContext  # noqa: E402
 from normcore.enums import FieldSemanticType  # noqa: E402
 from normcore.models import NormalizedValue  # noqa: E402
 
+# C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
+# C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
 from defects import fixtures_phase1 as fx  # noqa: E402
 from defects.scorer import Case, _dispatcher, real_engine, score  # noqa: E402
 

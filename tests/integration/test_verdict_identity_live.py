@@ -25,8 +25,11 @@ from tests.integration.test_followups_live import (
     CH_PORT,
     ROWS,
     _pg_dsn,
+    # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
     ch,  # noqa: F401 - fixture
+    # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
     ch_db,  # noqa: F401 - fixture
+    # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
     pg_db,  # noqa: F401 - fixture
 )
 
@@ -45,6 +48,7 @@ _RUN_QUEUED = _RUN.replace(
 _AMBIGUOUS = "03/04/2024"
 
 
+# C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
 def test_a_restarted_clickhouse_table_is_counted_once(ch: Any, ch_db: str, pg_db: str) -> None:  # noqa: F811
     assert "adjudication=Adjudication(" in _RUN_QUEUED
     src = f"{ch_db}_src"

@@ -181,6 +181,7 @@ def collect_source_hashes() -> dict[str, str]:
 
 def collect_icu_versions() -> tuple[str | None, str | None, str | None]:
     try:
+        # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
         import icu  # PyICU  # noqa: PLC0415 - optional capability probe
     except ImportError:
         return None, None, None
@@ -189,6 +190,7 @@ def collect_icu_versions() -> tuple[str | None, str | None, str | None]:
 
 def collect_phonenumbers_metadata_version() -> str | None:
     try:
+        # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
         import phonenumbers  # noqa: PLC0415 - optional capability probe
 
         return getattr(phonenumbers, "__version__", None) or pkg_version("phonenumbers")

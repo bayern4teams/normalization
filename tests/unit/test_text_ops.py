@@ -6,8 +6,10 @@ of the trace/NormalizedValue assembly machinery in generic_text.py.
 
 # This file deliberately contains non-Latin and visually-confusable
 # characters (Cyrillic, fullwidth digits, curly quotes, ...) as literal
+# C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
 # test fixtures, not typos — see text_ops.py's own module-level noqa for
 # the same reasoning.
+# C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
 # ruff: noqa: RUF001, RUF003
 
 from __future__ import annotations

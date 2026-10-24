@@ -456,6 +456,7 @@ class _Spec:
             return False
         return True
 
+    # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
     def errors(  # noqa: PLR0912 - one branch per JSON Schema keyword
         self, inst: Any, schema: dict[str, Any], doc: str, path: str = "$"
     ) -> list[str]:

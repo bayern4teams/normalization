@@ -12,4 +12,5 @@ belt-and-suspenders since collection order across `tests/unit` and
 `tests/integration` is not something we control or want to depend on.
 """
 
+# C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
 import icu  # noqa: F401

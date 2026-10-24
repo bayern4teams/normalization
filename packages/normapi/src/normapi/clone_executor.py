@@ -1146,7 +1146,9 @@ def _init_clone_worker(env_id: str) -> None:
     carrying a second copy of that logic. Imported inside the function
     because it is only ever needed in a worker.
     """
+    # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
     global _worker_planner  # noqa: PLW0603 - the pool initializer contract is a module global
+    # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
     from normapi.app import build_dispatcher  # noqa: PLC0415 - worker-only import
 
     _worker_planner = DistinctValuePlanner(build_dispatcher(env_id=env_id), None)

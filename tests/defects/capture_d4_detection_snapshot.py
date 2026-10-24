@@ -19,6 +19,7 @@ from normapi.app import build_normalizer_registry
 ROOT = Path(__file__).parents[2]
 sys.path.insert(0, str(ROOT / "tests"))
 
+# C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
 from defects import fixtures_phase23 as fx  # noqa: E402
 
 # Field names chosen so the name layer alone, the name+values layer and the values-only layer

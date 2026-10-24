@@ -30,6 +30,7 @@ from phonenumbers import PhoneNumberFormat as Fmt
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tests"))  # tests/ is not a package; the planted fixtures live there
 
+# C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
 from defects import fixtures_phase23 as fx  # noqa: E402
 
 BASELINE = ROOT / "tests" / "defects" / "phone_d10_baseline.json"

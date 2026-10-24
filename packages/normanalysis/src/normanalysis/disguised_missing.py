@@ -75,10 +75,13 @@ class DisguisedMissing:
 
 @cache
 def _defaults() -> tuple[NormalizerRegistry, dict[str, str]]:
+    # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
+    # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
     # Lazy: normapi depends on normanalysis, so an import at module load is a cycle.
     from normalizers.generic_text import load_missing_value_sentinels  # noqa: PLC0415
     from normapi.app import _DEFAULT_DICTIONARIES_DIR, build_normalizer_registry  # noqa: PLC0415
 
+    # C5: reason=pre-guard baseline; approved=user, 2026-10-24; review=2027-10-24
     from normdict import DictionaryLoader  # noqa: PLC0415
 
     loader = DictionaryLoader(_DEFAULT_DICTIONARIES_DIR)
