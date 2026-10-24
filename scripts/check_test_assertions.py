@@ -9,9 +9,12 @@ contains no `assert` statement, no `pytest.raises`/`pytest.warns`/
 driven body that calls one. Why: a test without an assertion always passes
 (L4).
 
-Whole-file scope on added/edited files: a test function whose def line is
-untouched but whose only assertion was deleted sits in an edited file and
-must still fail.
+Scope: a test function whose code changed, compared as an AST against the
+base version (comments and formatting do not count). A function whose only
+assertion was deleted has changed code and still fails. User decision
+2026-10-24: tests that were already assertion-less are listed in
+docs/PONYTAIL_DEBT.md and block only when their own code changes; a bystander
+edit elsewhere in the file, or a comment added to the test, does not.
 
     uv run python scripts/check_test_assertions.py            # diff vs main (CI base via arg)
     uv run python scripts/check_test_assertions.py --staged
@@ -35,6 +38,22 @@ def _diff(base_or_flag: list[str]) -> list[str]:
     cmd = ["git", "diff", *base_or_flag, "--name-only", "--diff-filter=AM", "--", *TEST_GLOBS]
     done = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True, check=True)
     return [f for f in done.stdout.splitlines() if f.endswith(".py")]
+
+
+def _base_dumps(rel: str, ref: str) -> dict[str, set[str]]:
+    """AST dump of every test function in the base version of `rel` (empty if new)."""
+    done = subprocess.run(
+        ["git", "show", f"{ref}:{rel}"], cwd=ROOT, capture_output=True, text=True, check=False
+    )
+    try:
+        tree = ast.parse(done.stdout)
+    except SyntaxError:
+        return {}
+    out: dict[str, set[str]] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name.startswith("test_"):
+            out.setdefault(node.name, set()).add(ast.dump(node))
+    return out
 
 
 def _has_check(node: ast.FunctionDef) -> bool:
@@ -62,6 +81,7 @@ def main(argv: list[str]) -> int:
     files = _diff(["--cached"] if staged else [base])
     bad: list[str] = []
     for rel in files:
+        old = _base_dumps(rel, "HEAD" if staged else base)
         path = ROOT / rel
         if not path.exists():
             continue
@@ -75,6 +95,7 @@ def main(argv: list[str]) -> int:
                 isinstance(node, ast.FunctionDef)
                 and node.name.startswith("test_")
                 and not _has_check(node)
+                and ast.dump(node) not in old.get(node.name, set())
             ):
                 bad.append(f"{rel}:{node.lineno}: {node.name} has no assertion")
     if bad:
