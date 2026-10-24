@@ -126,6 +126,11 @@ dev = [
     "pip-audit>=2.7,<3",
     "playwright>=1.47,<2",
     "types-python-dateutil",
+    # Guard tools (K4), pinned exactly — prompt "tests-and-housekeeping",
+    # user decision 2026-10-24: project-local via the dev extra, never global.
+    "deptry==0.25.1",   # M4: declared deps used / imports declared
+    "vulture==2.16",    # dead-code audit — advisory only (prompt 3), never CI-blocking
+    "zizmor==1.31.1",   # CI workflow security audit
 ]
 
 [tool.uv]
