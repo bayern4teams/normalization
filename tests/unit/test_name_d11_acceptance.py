@@ -476,9 +476,12 @@ def test_added_dependencies_are_fingerprinted() -> None:
         "pyproject.toml",
         *sorted(p.relative_to(ROOT).as_posix() for p in ROOT.glob("packages/*/pyproject.toml")),
     ]
+    base = next((b for b in ("main", "origin/main") if _git("show", f"{b}:pyproject.toml")), None)
+    if base is None:
+        return  # no main ref (shallow CI checkout, fresh clone): nothing to compare, as before
     on_main: set[str] = set()
     for rel in rels:
-        on_main |= _runtime_dependencies(_git("show", f"main:{rel}"))
+        on_main |= _runtime_dependencies(_git("show", f"{base}:{rel}"))
     now: set[str] = set()
     for rel in rels:
         now |= _runtime_dependencies((ROOT / rel).read_text())
