@@ -35,10 +35,11 @@ jobs:
         uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39 # v3.2.4
       - run: uv python install 3.12
       - run: uv sync --all-extras
-      - run: >
-          uv run python scripts/check_signoff.py
-          --milestone $(python3 -c "m='${{ steps.tag.outputs.milestone }}'; import re; n=int(re.findall(r'\d+', m)[0]); print(f'M{n+1}' if n < 8 else 'M8')")
-          --no-commit-check
+      - env:
+          TAG_MILESTONE: ${{ steps.tag.outputs.milestone }}
+        run: |
+          next=$(python3 -c "import re,sys; n=int(re.findall(r'\d+', sys.argv[1])[0]); print(f'M{n+1}' if n < 8 else 'M8')" "$TAG_MILESTONE")
+          uv run python scripts/check_signoff.py --milestone "$next" --no-commit-check
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
