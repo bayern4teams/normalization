@@ -66,8 +66,8 @@ jobs:
         run: |
           files=$(for f in README.md ARCHITECTURE.md TECHNICAL_IMPLEMENTATION.md GLOSSARY.md docs/LESSONS.md AGENTS.md; do [ -f "$f" ] && echo "$f"; done)
           [ -z "$files" ] && echo "no J1 files present" && exit 0
-          # shellcheck disable=SC2086 # C5: reason=file names are fixed, no spaces, word splitting intended; approved=user, 2026-10-25 (CI-files check); review=2027-10-24
-          vale --minAlertLevel=error --output=line $files
+          read -ra list <<< "$files"
+          vale --minAlertLevel=error --output=line "${list[@]}"
 
   markdownlint:
     runs-on: ubuntu-latest
@@ -98,8 +98,8 @@ jobs:
           files=$(for f in README.md ARCHITECTURE.md TECHNICAL_IMPLEMENTATION.md GLOSSARY.md docs/LESSONS.md AGENTS.md; do [ -f "$f" ] && echo "$f"; done)
           [ -z "$files" ] && echo "no J1 files present" && exit 0
           # lychee 0.24 skips mailto unless --include-mail is passed.
-          # shellcheck disable=SC2086 # C5: reason=file names are fixed, no spaces, word splitting intended; approved=user, 2026-10-25 (CI-files check); review=2027-10-24
-          lychee --no-progress $files
+          read -ra list <<< "$files"
+          lychee --no-progress "${list[@]}"
           # Local links under docs/ (older documents): offline, so a flaky
           # external site cannot fail a run.
           lychee --no-progress --offline 'docs/**/*.md'
