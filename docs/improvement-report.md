@@ -638,9 +638,8 @@ Rules for the build:
 - **The other pages go** (R19): Overview, Profiles, Fields, Rules, Preview, Warnings,
   Collisions, Dictionaries, Settings and the mode switch. Their API routes stay.
 
-**Still open**
-
-- **A screenshot audit** of the current UI, once the owner has started the stack (R25).
+**Still open:** a screenshot audit of the current UI, once the owner has started the stack
+(R25).
 
 ---
 
