@@ -316,6 +316,16 @@ heavy parts, each with its why (F4):
 - **Locked contract tests: no.** Why: the user chose not to; strict `xfail` with `raises=`
   plus the L1 guard cover the cheaper part.
 
+User decisions 2026-10-25 on two guard details (F4):
+
+- ADR-014 test `test_added_dependencies_are_fingerprinted` returns when no `main` ref
+  exists. User: "ADR-014 test edit 3 (return when no main ref): approved; it keeps the
+  original behaviour. Also close the gap that this test checks nothing in CI: in
+  ci-fast.yml, fetch main before the tests." So `ci-fast.yml` fetches `main`, and under
+  `CI` the test fails instead of returning when the ref is missing.
+- L4 guard scope. User: "L4 guard scope (checked when the test function's code changes):
+  approved, as my 'blocks on touch' applied per test."
+
 ### Graph tooling details (project-specific; moved out of the general block at v1.1.0)
 
 User decision 2026-10-20: "Move them into §4 Project rules, keep content

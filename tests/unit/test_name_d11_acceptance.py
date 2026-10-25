@@ -478,7 +478,11 @@ def test_added_dependencies_are_fingerprinted() -> None:
     ]
     base = next((b for b in ("main", "origin/main") if _git("show", f"{b}:pyproject.toml")), None)
     if base is None:
-        return  # no main ref (shallow CI checkout, fresh clone): nothing to compare, as before
+        # CI fetches main (ci-fast.yml), so a missing ref there is a broken setup, not a skip.
+        assert not os.environ.get("CI"), (
+            "CI must fetch main: git fetch --no-tags --depth=1 origin main"
+        )
+        return  # fresh local clone without a main ref: nothing to compare, as before
     on_main: set[str] = set()
     for rel in rels:
         on_main |= _runtime_dependencies(_git("show", f"{base}:{rel}"))
