@@ -32,6 +32,7 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
           PUSH_BEFORE: ${{ github.event.before }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
           if [ "$EVENT_NAME" = "pull_request" ]; then
             base="$PR_BASE_SHA"
@@ -44,8 +45,8 @@ jobs:
               *) base="" ;;
             esac
             if [ -z "$base" ]; then
-              git fetch --no-tags origin "$GITHUB_DEFAULT_BRANCH"
-              base="$(git rev-parse FETCH_HEAD)"
+              # fetch-depth 0 already holds origin/<default>; no credentials needed
+              base="$(git rev-parse "origin/$DEFAULT_BRANCH")"
             fi
           fi
           echo "GUARD_BASE=$base" >> "$GITHUB_ENV"
