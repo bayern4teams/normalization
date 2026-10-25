@@ -410,6 +410,10 @@ second column.
 | R19 | The other current pages | "25. a": drop them from the UI; their API routes stay. |
 | R20 | Quality report | "26. a": a live page only. |
 | R21 | Job progress | "27. a": a job list and one job's detail, both surviving a reload. |
+| R22 | Queue size | "hundreds of distinct ambiguous values per run": a plain list; no server paging. |
+| R23 | The raw value in review | "a": the review screen shows the raw value and its candidate readings; logs, traces and error reports stay masked. |
+| R24 | Build order | "yes": D15, then D14, then D13, then U1 (Phase 5). |
+| R25 | Screenshot audit of the current UI | "start stack later": the audit waits until the stack runs. |
 
 ---
 
@@ -621,23 +625,22 @@ Rules for the build:
 - **Offline.** No CDN, no web fonts, no telemetry. FastAPI's default `/docs` loads Swagger
   from a CDN; serve those assets locally.
 - **Speed.** The NN/g response-time limits are the budget: 0.1 s for a key press in the review
-  screen, 1 s for a page. Use server paging (keyset), not offset, if the queue is long.
+  screen, 1 s for a page. Hundreds of distinct values per run (R22) fit one list; no server
+  paging.
+- **The raw value is shown in the review screen only** (R23). Today
+  `AdjudicationQueueEntry.safe_preview` is a hash plus a character-class mask
+  (`packages/normcore/src/normcore/pii.py::safe_preview`), from which a person cannot decide
+  `03/04/2020`. The review route returns the raw value and its candidate readings; every
+  other response, log, trace and error report stays masked. The verdict already records who
+  decided and when. Not checked: whether the candidate readings in `detail` are masked today.
 - **English only; no login, no WCAG target, no dark mode** (R10). Native HTML controls and
   Mantine's defaults still give a keyboard-usable base.
 - **The other pages go** (R19): Overview, Profiles, Fields, Rules, Preview, Warnings,
   Collisions, Dictionaries, Settings and the mode switch. Their API routes stay.
 
-**Open for the owner**
+**Still open**
 
-- **Queue size.** The owner answered "hundreds" (2026-10-25). Whether that means hundreds or
-  hundreds of thousands of distinct values decides between a plain list and server paging
-  with a virtualized list. Asked again.
-- **The raw value.** `AdjudicationQueueEntry` returns a masked `safe_preview`. The raw value
-  stays in the metadata database and is never in a response (the error report's PII rule).
-  A reviewer may not be able to decide from a masked value. Should the review screen show
-  the raw value, given that the app is local only after D15?
-- **A screenshot audit** of the current UI waits until the owner turns the stack back on
-  (answer to question 17).
+- **A screenshot audit** of the current UI, once the owner has started the stack (R25).
 
 ---
 
