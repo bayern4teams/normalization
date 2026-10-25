@@ -430,7 +430,7 @@ mkdir -p src && cp -r packages/normcore/src/normcore src/normcore && cp -r packa
 uv run mutmut run; uv run mutmut results && uv run python -m normcli mutation-score-gate --min-score 0.75
 ```
 
-Delete `src/` and `mutants/` afterwards (both are build output). A surviving mutant in a
+Delete `src/` and `mutants/` afterwards (both are build output). Do not add them to `.gitignore`: hatchling reads it, and a root `/src/` rule hides every member's `src` from the wheel build. A surviving mutant in a
 core module needs a written reason in a file next to the report. Not run in prompt 4.
 
 The red-team review is a procedure, not a tool. After a change, a fresh agent on the

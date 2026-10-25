@@ -78,7 +78,3 @@ data/benchmarks/
 # scripts/install_tools.sh with checksum verification; CI uses the pinned
 # GitHub Actions instead. Local convenience, never committed.
 .tools/
-
-# mutmut by-hand run (TECHNICAL_IMPLEMENTATION.md, Tests and CI): flat src/ bridge and sandbox
-/src/
-/mutants/
