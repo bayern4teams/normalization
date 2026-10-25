@@ -290,6 +290,9 @@ These are not style preferences; each one exists because ignoring it broke somet
   [`docs/archive/plans/defects/PART1_COMPLETE.md`](docs/archive/plans/defects/PART1_COMPLETE.md)
   and `docs/benchmarks/REPORT.md` §11. Why: it is the record of what was verified, not a live
   plan — read it before redoing any of that work.
+- Part 1, round 2 (D13-D15 and the UI, U1) is planned, not built:
+  [`docs/improvement-report.md`](docs/improvement-report.md), "Part 1, round 2", with the
+  owner's decisions of 2026-10-25. Why: it is the live plan; build from it, not from memory.
 
 ### Known gaps against general block v1.2.0
 

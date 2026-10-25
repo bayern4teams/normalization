@@ -38,7 +38,9 @@ next to it. The opt-in in-place mode is the exception (see Limits).
 
 All milestones M0 to M8 are complete. Part 1 of the improvement report
 (defects D1 to D12) is complete and measured on public data
-([record](docs/archive/plans/defects/PART1_COMPLETE.md)). Postgres and
+([record](docs/archive/plans/defects/PART1_COMPLETE.md)). Round 2 of Part 1
+(D13 to D15 and a new UI, U1) is researched and planned, not built
+([report](docs/improvement-report.md#part-1-round-2-2026-10-25--found-after-d1-d12-were-closed)). Postgres and
 ClickHouse are supported for the clone feature. MySQL, Mongo and file sources
 exist as read-only connectors, and the clone feature does not use them
 ([ADR-017](docs/adr/ADR-017-clone-normalize-engine-scope.md)).
@@ -167,7 +169,7 @@ as `Proprietary`.
 | [GLOSSARY.md](GLOSSARY.md) | One fixed term per concept |
 | [docs/LESSONS.md](docs/LESSONS.md) | What was tried and did not work |
 | [docs/adr/](docs/adr/) | Design decisions |
-| [docs/improvement-report.md](docs/improvement-report.md) | Defects D1 to D12, research, the plan behind Part 1 |
+| [docs/improvement-report.md](docs/improvement-report.md) | Defects D1 to D15 and the UI (U1), research, the plan behind Part 1 |
 | [docs/normalization-tool-evaluation.md](docs/normalization-tool-evaluation.md) | Library evaluation and rejected candidates |
 | [docs/dependency-inventory.md](docs/dependency-inventory.md) | Dependencies and licenses |
 | [docs/clone-e2e-guide.md](docs/clone-e2e-guide.md) | Run a clone step by step |

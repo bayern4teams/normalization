@@ -18,6 +18,16 @@ Read this page to find the right file. Read the file to find the resource.
 | Dates, money, units, locale | [`_raw-dates-money-units-locale.md`](_raw-dates-money-units-locale.md) | 90 | Where does CLDR say what `1,234` means in this locale? |
 | Schema normal forms | [`_raw-schema-normal-forms.md`](_raw-schema-normal-forms.md) | 87 | 1NF–6NF, FD/UCC/IND discovery — the *other* meaning of "normalize a database" |
 
+**Round 2 (2026-10-25): 274 entries in 4 files**, each URL fetched in that round, for
+improvement-report items D13-D15 and U1.
+
+| Track | File | Entries | Answers the question |
+|---|---|---|---|
+| Language codes | [`_raw-language-idempotency.md`](_raw-language-idempotency.md) | 45 | How do others keep a language code apart from its display name? |
+| In-place writes | [`_raw-in-place-writes.md`](_raw-in-place-writes.md) | 23 | Does anyone rewrite source values in place, and what do they keep? |
+| Local network only | [`_raw-local-network-only.md`](_raw-local-network-only.md) | 56 | How does a local app refuse outside callers and outside database targets? |
+| UI and UX | [`_raw-ui-ux.md`](_raw-ui-ux.md) | 150 | Which UI technology and which review-screen design for one internal reviewer? |
+
 Domain concentration of the 1,130 URLs: github.com 265, pypi.org 73,
 arxiv.org 73, unicode.org 28, rfc-editor.org 20, iso.org 14, vldb.org 14,
 gleif.org 13.

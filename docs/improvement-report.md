@@ -9,6 +9,8 @@
 [`archive/plans/defects/PHASE4_REPORT.md`](archive/plans/defects/PHASE4_REPORT.md). Where this report and the code differed
 (F1-F7: D5's cast gate already existed, D10's extension was kept in `display`, decision B's verdict key, the
 `confidence=` counts, `ptype`'s availability), the plan's §8 "Pre-findings" records what the code says.
+**Round 2 (2026-10-25):** D13-D15 and U1 added to Part 1, with their research in Part 2 and
+four new resource files (Appendix G). Proposal only; no code changed.
 **Scope confirmed with project owner** (Q&A round, 2026-09-30)
 
 ---
@@ -18,6 +20,7 @@
 - [0. Confirmed constraints](#0-confirmed-constraints)
 - [0.1 Correction to the earlier audit](#01-correction-to-the-earlier-audit)
 - [Part 1 — Defects and fixes to apply now](#part-1--defects-and-fixes-to-apply-now)
+  - [Part 1, round 2 (2026-10-25)](#part-1-round-2-2026-10-25--found-after-d1-d12-were-closed)
 - [Part 2 — Research, cited](#part-2--research-cited)
 - [Part 3 — Architecture](#part-3--architecture)
 - [Part 4 — Appendices](#part-4--appendices)
@@ -366,6 +369,278 @@ status that nothing can ever produce is a lie in the type system.
 
 ---
 
+## Part 1, round 2 (2026-10-25) — found after D1-D12 were closed
+
+D1-D12 are implemented and merged
+([`archive/plans/defects/PART1_COMPLETE.md`](archive/plans/defects/PART1_COMPLETE.md)).
+The items below were found later: D13 by the property tests that prompt 4 added, D14 by the
+docs rewrite (prompt 2), D15 by the research for this round, and U1 at the owner's request.
+**Nothing here is implemented yet.** The research is in Part 2, "Round 2"; the sources are in
+the four `_raw-*` files that Appendix G lists under round 2.
+
+The zizmor findings on the CI workflow files are not part of this report. They are CI
+hygiene, not normalization, and the fix for each is already written in
+`.github/zizmor.yml` (review date 2027-01-24). User decision 2026-10-25: "2. a".
+
+### Owner decisions for round 2
+
+Asked and answered on 2026-10-25. The owner's words are quoted; the meaning is in the
+second column.
+
+| # | Question | Answer |
+|---|---|---|
+| R1 | Where do the new items go? | "1. a": Part 1, round 2, numbered D13 on. |
+| R2 | zizmor findings in the report? | "2. a": no, a small CI task before 2027-01-24. |
+| R3 | LANGUAGE research depth? | "3. a": short track. |
+| R4 | In-place mode? | "Q4: A": remove it; the origin is always read-only. |
+| R5 | Who uses the UI? | "only me". |
+| R6 | The UI's jobs | "yes this suggestion is perfect": connect a database, start a clone, watch progress, review the `AMBIGUOUS` queue, see the quality report. |
+| R7 | What is wrong with the UI? | "looks, navigation, too many pages, wording, speed". Replace it, not patch it. |
+| R8 | UI technology freedom | "8. a": open; the research compares; then "22. 1": React + Mantine, served by the API. |
+| R9 | Network scope | "1: a and b, 2 not 3": only this machine and the private local network may reach the UI and API; the app refuses a database outside the local network; outbound internet is not in scope. "16. b": localhost and private addresses are both always allowed. |
+| R10 | Other UI requirements | No login, no WCAG target, no dark mode. "it only should be on english". |
+| R11 | What must a second pass keep stable (D13)? | "12. a": the language code; the name is display only. |
+| R12 | A short value that is both a code and a name (D13) | "13. a, but note that it should understand and get help from other parts of row for example country country code phone code": `AMBIGUOUS` unless row or column evidence settles it. |
+| R13 | Same second-pass test for other code types? | "14. yes". |
+| R14 | VPN / CGNAT `100.64.0.0/10` | "18. a": not local by default; a deployer setting can add ranges. |
+| R15 | A host name with several addresses | "19. a": every address must be private, and the app connects to the checked address. |
+| R16 | The other published services | "20. a": libpostal and the database ports bind to `127.0.0.1` too. |
+| R17 | Reverse proxy | "21. a": no proxy; the direct peer address is the caller. |
+| R18 | Review screen | "24. a": keyboard first, buttons too, no reading pre-selected. |
+| R19 | The other current pages | "25. a": drop them from the UI; their API routes stay. |
+| R20 | Quality report | "26. a": a live page only. |
+| R21 | Job progress | "27. a": a job list and one job's detail, both surviving a reload. |
+
+---
+
+## D13 — LANGUAGE answers change on a second pass, and some are confident and wrong 🟠 HIGH
+
+**Verified state.** A pinned strict-xfail test shows the symptom:
+`tests/property/test_idempotency_determinism.py::test_language_ga_script_input_converges_in_one_pass`.
+Run directly on 2026-10-25:
+
+| Input | Status | `display` | `comparison` | What is wrong |
+|---|---|---|---|---|
+| `กา` | NORMALIZED | `Ga` | `gaa` | nothing yet |
+| `Ga` | NORMALIZED | `Irish` | `ga` | the second pass names another language |
+| `Kuku-Yalanji` | NORMALIZED | `Kuku` | `ukv` | confident and wrong: cut at the hyphen |
+| `Judeo-Arabic` | INVALID | `Judeo-Arabic` | — | a real language refused |
+| `Mon` | NORMALIZED | `Mongolian` | `mn` | `Mon` is also the Mon language (`mnw`): a guess |
+| `Dan` | NORMALIZED | `Danish` | `da` | `Dan` is also a language (`dnj`): a guess |
+
+**Causes** (from the code):
+
+1. `packages/normalizers/src/normalizers/language.py::_resolve_language` tries a 2-letter input
+   as an ISO 639-1 code, and a 3-letter input as an ISO 639-2/3 code, before any name. That
+   order was chosen on purpose, so that `En` means English and not the language named "En".
+   It also means that a name which looks like a code is never read as a name.
+2. `language.py::_split_language_tag` treats any value containing `-` or `_` as a BCP 47 tag
+   and keeps only the first piece. 384 pycountry language names contain `-`.
+3. `display` is pycountry's English name. 13 of those names are another language's 2-letter
+   code (`Ga`, `En`, `Ko`, `Ha`, `Hu`, `Sa`, `Wa`, `Na`, `To`, `As`, `Ak`, `Ho`, `Ik`), and more
+   are another language's 3-letter code (`Dan`, `Mon`, `Ron`, `Fas`, `Kur`, `Mal`).
+4. The normalizer reads neither row evidence nor column evidence. The clone already finds a
+   row's country from its country, phone or postcode column
+   (`packages/normapi/src/normapi/clone_executor.py::_country_from_country`,
+   `_country_from_phone`, `_country_from_postcode`), and seven normalizers use it. LANGUAGE
+   does not.
+
+**Measured** (a probe over all 7,910 pycountry languages, from their codes): feeding the
+`comparison` code back changes 0. Feeding the `display` name back changes 440 (5.6%): 208
+become a different language and 232 become INVALID through cause 2. The same probe found all
+249 countries stable. CURRENCY, SCRIPT and the other code-based types were not probed.
+
+**Why it matters.** Under Q16 a wrong value is catastrophic. `Kuku-Yalanji` → `Kuku` and
+`Mon` → `Mongolian` are the same class of confident-wrong answer that round 1 (branch
+`fix/confident-wrong`) removed elsewhere. The second-pass change is the smaller problem: per
+R11 the stored code is what must be stable, and it already is.
+
+**Fix** (owner decisions R11-R13; not built):
+
+1. **The contract is the code.** `comparison` (the ISO 639 code) must be a fixed point:
+   normalizing it again gives the same code. `display` is output only and is never parsed
+   again. This is how FHIR `Coding`, ICU, Java `Locale`, `Intl.DisplayNames`, Babel and
+   libphonenumber separate the two (Part 2, round 2, "Code versus display"). The pinned test
+   moves to `comparison`; rule L1 means the owner approves that edit.
+2. **A value that is both a code and a name is `AMBIGUOUS`**, unless evidence settles it:
+   - the row's country, read from its country, phone or postcode column, and the languages
+     CLDR lists for that territory (`Mon` in a Myanmar or Thailand row is `mnw`)
+   - the column's own values, the way date order and decimal marks already work (ADR-008 and
+     ADR-011 amendments): a column of 2-letter codes reads `Ga` as a code, and a column of
+     names reads it as a name
+
+   langcodes `find()` refuses to guess on the same kind of collision, which is the field
+   precedent.
+3. **A hyphen splits a value only when the pieces parse as a BCP 47 tag** (a valid language
+   subtag followed by valid script, region or variant subtags). Otherwise the whole value is
+   looked up as a name, so `Kuku-Yalanji` and `Judeo-Arabic` resolve.
+4. **The same second-pass property test runs for every code-based type**: country, currency,
+   script, unit (R13).
+
+Not checked: whether any production path feeds a stored `display` back into the normalizer;
+whether CLDR's English name for `gaa` is also `Ga`.
+
+---
+
+## D14 — In-place mode drops the original 🟠 HIGH
+
+**Verified state.** `in_place` is an opt-in field on
+`packages/normapi/src/normapi/schemas.py::CloneJobCreateRequest`, added in commit `b748f06`
+(2026-09-24) to save disk space. The job writes each normalized table under a staging name and
+swaps it in: two renames in one transaction on Postgres
+(`packages/normio/src/normio/connectors/postgres_destination.py::PostgresDestination.swap_table`),
+`EXCHANGE TABLES` on ClickHouse
+(`packages/normio/src/normio/connectors/clickhouse_destination.py::ClickHouseDestination.swap_table`).
+**Both then drop the original at once.** After that, an original value survives only where it
+failed and went to the error report. The UI never sets `in_place`; only the API does.
+
+**Why it matters.**
+
+- Q16: a wrong value overwrites the only copy of the right one. Nothing can undo it.
+- Q13: once the original is gone, nobody can show what a cell said before.
+- The project's own documents disagree: `docs/clone-e2e-guide.md` and
+  `docs/verification/clone-normalize-verification-pack.md` say the origin stays strictly
+  read-only, and "Verified as already sound" below lists read-only sources as structural.
+  In-place mode reaches the origin through a writer built from the source connection.
+
+**Fix** (owner decision R4; not built). Remove in-place mode. The origin is always read-only,
+and every clone writes a separate copy. What goes:
+
+- the `in_place` field, its validator and the empty-destination case in
+  `CloneJobCreateRequest`
+- the `in_place` branches in `packages/normapi/src/normapi/clone_executor.py` and
+  `packages/normapi/src/normapi/routes.py`, `staging_name`, and both `swap_table` methods
+- the writable origin login in `tests/integration/fixtures/postgres-init/01-init.sql`, if
+  nothing else uses it
+- the in-place tests (`tests/unit/test_in_place_clone.py` and the in-place cases in
+  `test_clone_pipeline.py`, `test_lineage_d3_acceptance.py`, `test_adjudication_acceptance.py`,
+  `test_clone_routes.py`, `test_followups.py`, `test_followups_live.py`,
+  `test_typed_destination_d5_acceptance.py` and `test_robustness.py`). Rule L1: removing a
+  feature's tests with the feature needs a `C5:` line in the commit message with the owner's
+  approval.
+- the in-place text in README.md, ARCHITECTURE.md and GLOSSARY.md
+
+The cost is disk space: a clone needs room for a full copy. That is the trade the owner chose.
+How published tools treat a destructive rewrite is in Part 2, round 2, "In-place writes".
+
+---
+
+## D15 — The app answers any network, and connects to any address 🟠 HIGH
+
+**Verified state** (code read on 2026-10-25):
+
+- **Who can call the app.** `packages/normapi/src/normapi/main.py` listens on `NORM_API_HOST`,
+  default `0.0.0.0`; the Dockerfile `CMD` uses `--host 0.0.0.0`. No code checks the caller's
+  address or the `Host` header. CORS (`packages/normapi/src/normapi/app.py::create_app`) lists
+  fixed localhost origins but allows every method and header; CORS does not stop a
+  non-browser caller.
+- **What compose publishes.** Every port in `compose.yaml` has no host address, so each binds
+  every interface: api 8080, libpostal 8081, postgres 5535 and the demo databases 5434, 3307,
+  27018 and 8124. Docker's documentation says published ports bypass a ufw `INPUT` rule.
+- **Which databases it connects to.** `schemas.py::ConnectionCreateRequest.host` is a plain
+  string. Nothing resolves or checks it, and `routes.py::_resolve_connection` accepts an
+  inline host as well. Every use goes through two builders in `clone_executor.py`:
+  `build_source_connector` and `build_destination_writer`.
+- **A connection string built by hand.** The Postgres DSN is an f-string,
+  `postgresql://{username}:{password}@{host}:{port}/{database}`, with no escaping. A host or
+  password containing `@`, `/`, `,` or `?` changes which server and which options libpq uses.
+- **A committed key.** `compose.yaml` commits a fixed `NORM_SECRET_KEY`, the key that
+  encrypts saved connection passwords. gitleaks does not flag it. Rule B6 says secrets are
+  never committed.
+
+**Why it matters.** The app holds database passwords and can read and write databases. Today
+anyone on any network that reaches the machine can call it. A web page in the owner's browser
+can reach it through DNS rebinding: Ollama (CVE-2024-28224) and Vite (CVE-2025-24010) were
+both attacked this way while they listened only locally.
+
+**Fix** (owner decisions R9 and R14-R17; not built):
+
+1. **Listen and publish locally.** Every port in compose binds `127.0.0.1` (R16). The API
+   accepts callers from loopback and the private ranges: RFC 1918, IPv6 unique local
+   `fc00::/7`, and the Docker bridge, which is RFC 1918 (R9). VPN and CGNAT `100.64.0.0/10`
+   are refused unless a deployer setting adds them (R14). Docker Engine before 28.0 and 28.3.3
+   leaked loopback-published ports to neighbouring hosts, so the stack needs a current
+   engine.
+2. **Check the caller in the app.** A small ASGI middleware refuses a peer address outside the
+   allowed set. With no proxy (R17), `X-Forwarded-For` is ignored.
+3. **Check the `Host` header** against an allowlist (Starlette `TrustedHostMiddleware`). This
+   is the DNS-rebinding defence; a source-address check does not stop rebinding, because the
+   browser's request comes from this machine.
+4. **Check every database address.** Parse literal addresses strictly, refusing decimal,
+   octal and hex forms and unwrapping `::ffff:`. Resolve a host name and require **every**
+   address to be private (R15). Then connect to the checked address, so DNS cannot switch it
+   between the check and the connection: libpq supports this with `hostaddr`. For
+   clickhouse-connect no pinning option is documented, so that half needs a check of the
+   installed version. Refuse unix-socket paths and multi-host strings. Check both when a
+   connection is saved and each time it is used.
+5. **Build the Postgres DSN with a parser** (psycopg `make_conninfo`), not an f-string.
+6. **Remove the committed `NORM_SECRET_KEY`**; compose reads it from an uncommitted `.env`.
+   Rule B6.
+7. **Pin the Python minor version.** `ipaddress.is_private` changed in Python 3.13 and in
+   backports. A test with a fixed table of addresses guards the classification.
+
+Out of scope (R9): outbound internet. `NORM_OPENLINEAGE_URL` is an outbound address, so it
+stays as it is.
+
+---
+
+## U1 — Replace the UI 🟠 HIGH
+
+**Verified state** (code read on 2026-10-25). `ui/` is React 19, Vite, TanStack Query and
+react-router, with no component library. It has 18 page files (2,426 lines) and 13 navigation
+items, plus a three-way "normal / expert / admin" mode switch (`ui/src/app/Nav.tsx`). **No
+page shows the review queue.** The API has it (`GET /adjudication/queue`, `GET
+/adjudication/queue/{key}`, `POST /adjudication/queue/{key}/verdicts`, ADR-018), so the human
+decision that Q14 requires can be made only by calling the API by hand. The owner's verdict
+(R7): looks, navigation, too many pages, wording and speed are all wrong.
+
+**Why it matters.** Q14 and Q15 make a person the decider for every `AMBIGUOUS` value. Round 1
+built the queue and the verdict path (D1); without a screen, that path is not usable.
+
+**Target** (owner decisions R5-R8, R10 and R18-R21; not built):
+
+| Screen | What it does | Field precedent |
+|---|---|---|
+| Connections | Add a Postgres or ClickHouse server; **Test connection** before **Save**; D15's address check shows its error at the field | DBeaver, Metabase, Airbyte connection forms |
+| New clone | Pick tables and columns, set semantic types, then a check-answers page before **Start** | GOV.UK check answers; Airbyte stream selection |
+| Jobs | A job list filterable by state, and one job's detail with progress and errors; both survive a reload | Airflow, Dagster, Prefect run views |
+| Review | One distinct ambiguous value at a time with its count and candidate readings; one key each for accept, other value, keep ambiguous and undo, plus buttons; no reading pre-selected | Argilla focus view, Prodigy keys, OpenRefine facets and clusters |
+| Quality | A run's quality report as a live page | Great Expectations Data Docs, ydata-profiling |
+
+Rules for the build:
+
+- **Technology** (R8): React + Mantine (MIT; one published advisory; no telemetry found in a
+  code search). The build is served by the API itself, so there is one port and no CORS. The
+  existing API client, types and Playwright tests carry over.
+- **Review distinct values, not rows.** The queue entry already carries `occurrences`. Raha
+  and CrowdER report that a few labels on the right values go a long way. Order the queue by
+  occurrences.
+- **No pre-selected reading.** Studies found that people accept a suggestion more often
+  whether it is right or wrong, and correct less when correcting costs more effort. So
+  "other value" and "keep ambiguous" must cost one key, like "accept".
+- **Offline.** No CDN, no web fonts, no telemetry. FastAPI's default `/docs` loads Swagger
+  from a CDN; serve those assets locally.
+- **Speed.** The NN/g response-time limits are the budget: 0.1 s for a key press in the review
+  screen, 1 s for a page. Use server paging (keyset), not offset, if the queue is long.
+- **English only; no login, no WCAG target, no dark mode** (R10). Native HTML controls and
+  Mantine's defaults still give a keyboard-usable base.
+- **The other pages go** (R19): Overview, Profiles, Fields, Rules, Preview, Warnings,
+  Collisions, Dictionaries, Settings and the mode switch. Their API routes stay.
+
+**Open for the owner**
+
+- **Queue size.** The owner answered "hundreds" (2026-10-25). Whether that means hundreds or
+  hundreds of thousands of distinct values decides between a plain list and server paging
+  with a virtualized list. Asked again.
+- **The raw value.** `AdjudicationQueueEntry` returns a masked `safe_preview`. The raw value
+  stays in the metadata database and is never in a response (the error report's PII rule).
+  A reviewer may not be able to decide from a masked value. Should the review screen show
+  the raw value, given that the app is local only after D15?
+- **A screenshot audit** of the current UI waits until the owner turns the stack back on
+  (answer to question 17).
+
+---
+
 ## Verified as already sound — do not touch
 
 These were checked and found correct. They are listed so that later work
@@ -373,7 +648,8 @@ does not "fix" them.
 
 - **Read-only source enforcement at the interface level** (ADR-013): the
   `SourceConnector` protocol has no write method at all. Read-only is
-  structural, not a convention.
+  structural, not a convention. **Round 2:** in-place mode bypasses this by building a writer
+  from the source connection; see D14.
 - **The seven-view value model** — original / repaired / display /
   comparison / search / ascii / structured, plus status, confidence, flags,
   trace, lossiness, `profile_version`, `env_id`, `semantic_type`,
@@ -518,6 +794,102 @@ Arrow · Polars categoricals with `StringCache` · `pyahocorasick` ·
 Desbordante · Papenbrock & Naumann, *Data-driven Schema Normalization*
 (EDBT 2017) · HyFD · Pyro. Full entries in
 [`_raw-schema-normal-forms.md`](research/resources/_raw-schema-normal-forms.md).
+
+---
+
+## Round 2 (2026-10-25)
+
+Four tracks for D13-D15 and U1, in the four round-2 files of Appendix G. Every URL was
+fetched in this round. Cited here are only the sources behind a decision.
+
+### Code versus display (D13)
+
+| Source | URL | Relevance |
+|---|---|---|
+| RFC 5646, *Tags for Identifying Languages* (BCP 47) | `https://www.rfc-editor.org/rfc/rfc5646` | A registry description is not a localized name; a name is never a subtag |
+| UTS #35 Part 2, Locale Display Names | `https://www.unicode.org/reports/tr35/tr35-general.html` | Display names are for menus, and two distinct codes must not share one |
+| W3C, *Choosing a Language Tag* | `https://www.w3.org/International/questions/qa-choosing-language-tags` | Look the name up, then use the code |
+| SIL, ISO 639-3 `gaa` | `https://iso639-3.sil.org/code/gaa` | `gaa` is Ga and has no 639-1 code; `ga` is Irish |
+| ICU user guide, Locale | `https://unicode-org.github.io/icu/userguide/locale/` | Identifiers are "not meant for display"; display is a separate call |
+| MDN, `Intl.DisplayNames` | `https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Intl/DisplayNames` | The platform maps code to name and offers no name-to-code call |
+| langcodes | `https://github.com/rspeer/langcodes` | `find()` returns no match on an interlingual name collision: the `AMBIGUOUS` precedent |
+| HL7 FHIR, `Coding` | `https://hl7.org/fhir/datatypes.html#Coding` | `system`, `code` and `display` are three fields; the code carries the meaning |
+| libphonenumber FAQ | `https://github.com/google/libphonenumber/blob/master/FAQ.md` | Store the normalized form, format only for display |
+| UAX #15, Normalization Forms | `https://unicode.org/reports/tr15/` | A canonical form is idempotent by specification |
+| Hypothesis, *The Encode/Decode invariant* | `https://hypothesis.works/articles/encode-decode-invariant/` | Round-trip and fixed-point properties as tests |
+
+### Local network only (D15)
+
+| Source | URL | Relevance |
+|---|---|---|
+| Docker, Packet filtering and firewalls | `https://docs.docker.com/engine/network/packet-filtering-firewalls/` | Published ports bypass ufw's `INPUT` chain |
+| Docker Compose, services `ports` | `https://docs.docker.com/reference/compose-file/services/` | `"127.0.0.1:8080:8080"` limits the interface |
+| Docker Engine 28 release notes | `https://docs.docker.com/engine/release-notes/28/` | 28.0.0 and 28.3.3 fixed leaks of loopback-published ports |
+| Python `ipaddress` | `https://docs.python.org/3/library/ipaddress.html` | `is_private` semantics, IPv4-mapped handling, the 3.13 changes |
+| CPython issue 113171 | `https://github.com/python/cpython/issues/113171` | The private list was wrong both ways; results differ across patch versions |
+| Starlette middleware | `https://starlette.dev/middleware/` | `TrustedHostMiddleware` refuses an unknown `Host` header |
+| MCP specification, Transports | `https://modelcontextprotocol.io/specification/2025-06-18/basic/transports` | Local HTTP servers must validate `Origin` and should bind to 127.0.0.1 |
+| NCC Group, Ollama DNS rebinding (CVE-2024-28224) | `https://www.nccgroup.com/research/technical-advisory-ollama-dns-rebinding-attack-cve-2024-28224/` | A local-only API attacked from a web page |
+| Vite advisory GHSA-vg6x-rcgg-rjx6 (CVE-2025-24010) | `https://github.com/vitejs/vite/security/advisories/GHSA-vg6x-rcgg-rjx6` | The same attack on a dev server that listened only locally |
+| OWASP, SSRF Prevention Cheat Sheet | `https://cheatsheetseries.owasp.org/cheatsheets/Server_Side_Request_Forgery_Prevention_Cheat_Sheet.html` | Allowlists over denylists; check the resolved IP and connect to it |
+| PostgreSQL, libpq connection parameters | `https://www.postgresql.org/docs/current/libpq-connect.html` | `hostaddr` pins the IP; multi-host strings; a `/` host is a unix socket |
+| psycopg 3, conninfo helpers | `https://www.psycopg.org/psycopg3/docs/api/conninfo.html` | `make_conninfo()` builds the string from parts |
+| WHATWG URL Standard | `https://url.spec.whatwg.org/` | Decimal, octal and hex IPv4 forms all parse |
+| OpenProject, SSRF protection | `https://www.openproject.org/docs/installation-and-operations/configuration/ssrf-protection/` | A host name resolving to a blocked address is blocked too; the allowlist lives in deployment config |
+
+No published data tool found has an "only private database hosts" setting (Metabase,
+Superset, Redash, Grafana). Tools that guard outbound connections block private targets
+instead; their structure (deployer-set lists, a check on the resolved address) carries over.
+
+### UI for one internal reviewer (U1)
+
+| Source | URL | Relevance |
+|---|---|---|
+| Mantine | `https://mantine.dev/` | The chosen library: MIT, forms, progress, layout |
+| Mantine `use-hotkeys` | `https://mantine.dev/hooks/use-hotkeys/` | Single-key review actions |
+| TanStack Virtual | `https://tanstack.com/virtual/latest` | A long distinct-value list without rendering every row |
+| FastAPI static files | `https://fastapi.tiangolo.com/tutorial/static-files/` | Serve the built UI from the API: one port, no CORS |
+| FastAPI, self-hosting the docs UI assets | `https://fastapi.tiangolo.com/how-to/custom-docs-ui-assets/` | `/docs` loads from a CDN by default |
+| Streamlit `config.toml` | `https://docs.streamlit.io/develop/api-reference/configuration/config.toml` | `gatherUsageStats` defaults to true (why Streamlit was not chosen) |
+| Appsmith telemetry | `https://docs.appsmith.com/product/telemetry` | Pings even with telemetry off (why the builders were not chosen) |
+| Argilla, annotate datasets | `https://docs.argilla.io/latest/how_to_guides/annotate/` | Focus view that auto-advances, bulk view, number-key shortcuts |
+| Prodigy web application | `https://prodi.gy/docs/api-web-app` | One key each for accept, reject, ignore, undo |
+| OpenRefine, facets | `https://openrefine.org/docs/manual/facets` | Distinct values with counts |
+| OpenRefine, cluster and edit | `https://openrefine.org/docs/manual/cellediting` | One decision applied to many rows |
+| Raha and Baran (CIDR 2021) | `https://vldb.org/cidrdb/2021/semi-supervised-data-cleaning-with-raha-and-baran.html` | A few labels on representative values go a long way |
+| CrowdER | `https://arxiv.org/abs/1208.1927` | People review only the uncertain candidates |
+| Bansal et al., CHI 2021 | `https://arxiv.org/abs/2006.14779` | Explanations raised acceptance of AI advice whether right or wrong |
+| *Bias in the Loop* | `https://arxiv.org/abs/2509.08514` | People corrected less when correcting cost more effort |
+| NN/g, Response Time Limits | `https://www.nngroup.com/articles/response-times-3-important-limits/` | The 0.1 s / 1 s / 10 s budget |
+| NN/g, Progress Indicators | `https://www.nngroup.com/articles/progress-indicators/` | Spinner, percent done, "item 3 of 50" |
+| GOV.UK, Check answers | `https://design-system.service.gov.uk/patterns/check-answers/` | Review a job's plan before **Start** |
+| DBeaver, create connection | `https://dbeaver.com/docs/dbeaver/Create-Connection/` | Test the connection before saving it |
+| Dagster webserver and UI | `https://dagster.io/docs/guides/operate/webserver` | A runs list by state, a run detail, logs |
+| Use The Index, Luke: no offset | `https://use-the-index-luke.com/no-offset` | Keyset paging for a long queue |
+
+No published, measured speed comparison of the UI frameworks was found, only vendor and blog
+opinions.
+
+### In-place writes (D14)
+
+| Source | URL | Relevance |
+|---|---|---|
+| gh-ost command-line flags | `https://github.com/github/gh-ost/blob/master/doc/command-line-flags.md` | Keeps the old table unless `--ok-to-drop-table` is given |
+| Percona pt-online-schema-change | `https://docs.percona.com/percona-toolkit/pt-online-schema-change.html` | Drops by default, offers `--no-drop-old-table`, and warns that a failure after the drop is permanent |
+| pgroll | `https://github.com/xataio/pgroll` | Old and new versions side by side; the old one goes only on an explicit `complete` |
+| dbt materializations | `https://docs.getdbt.com/docs/build/materializations` | Swap-then-drop is used for derived models, never on the source |
+| OpenRefine, starting a project | `https://openrefine.org/docs/manual/starting` | "won't modify your original data source"; it works on a copy |
+| OpenRefine, history and undo | `https://openrefine.org/docs/manual/running` | Every change is an undoable step in a saved history |
+| Google Cloud Dataprep, recipes | `https://cloud.google.com/dataprep/docs/concepts/recipes` | A recipe runs on the source data "without modifying the source" |
+| Databricks, medallion architecture | `https://learn.microsoft.com/en-us/azure/databricks/lakehouse/medallion` | The raw layer keeps the source's original state for reprocessing and audit |
+| ClickHouse, UNDROP | `https://clickhouse.com/docs/sql-reference/statements/undrop` | A dropped table is restorable only for `database_atomic_delay_before_drop_table_sec` (8 minutes by default) |
+| ClickHouse, EXCHANGE | `https://clickhouse.com/docs/sql-reference/statements/exchange` | Atomic per pair; several pairs can half-apply |
+| FDA, Data Integrity and Compliance With Drug CGMP (2018) | `https://www.fda.gov/media/119267/download` | Records must be "original or a true copy", with a trail that reconstructs changes |
+| W3C PROV-O | `https://www.w3.org/TR/prov-o/` | `wasDerivedFrom` links a result to its source entity |
+
+The tools that rewrite tables in place (gh-ost, pt-online-schema-change, pg_repack) change
+structure, not values, and still keep or offer to keep the old table. The data-cleaning tools
+(OpenRefine, Dataprep, dbt) never write back to the source.
 
 ---
 
@@ -858,6 +1230,16 @@ live lookups on the hot path: they make runs unreproducible, they break the
 | [`_raw-schema-normal-forms.md`](research/resources/_raw-schema-normal-forms.md) | 87 | 1NF–6NF, FD/UCC/IND discovery, Desbordante — **deferred project** |
 | **Total** | **1,130 unique URLs** | |
 
+Round 2 (2026-10-25), fetched in that round:
+
+| File | Entries | Domain |
+|---|---|---|
+| [`_raw-language-idempotency.md`](research/resources/_raw-language-idempotency.md) | 45 | D13: language codes versus display names, idempotence, the computed collisions |
+| [`_raw-in-place-writes.md`](research/resources/_raw-in-place-writes.md) | 23 | D14: table-rewrite tools, cleaning tools that never write back, audit rules |
+| [`_raw-local-network-only.md`](research/resources/_raw-local-network-only.md) | 56 | D15: binding, Docker publishing, private ranges, DNS rebinding, database-target checks |
+| [`_raw-ui-ux.md`](research/resources/_raw-ui-ux.md) | 150 | U1: UI technology families, review-queue tools, UX guidance, HITL studies |
+| **Round 2 total** | **274 entries** | |
+
 ---
 
 # Recommended sequence
@@ -896,6 +1278,15 @@ Only after the SLA in Q20 is measured against real volume and actually
 missed. The research is catalogued and ready; spending effort here first
 would optimize a system whose correctness is not yet measurable.
 
+## Phase 5 — Round 2 (2026-10-25)
+
+11. **D15** — local-network-only access and database-address checks. First: today any
+    network can call the app, and the Postgres connection string is built by hand.
+12. **D14** — remove in-place mode. Before U1, so the new UI never offers it.
+13. **D13** — the language code as the contract, `AMBIGUOUS` with row and column evidence,
+    the hyphen fix, and the second-pass test for every code-based type.
+14. **U1** — the new UI, after D15 (it is served by the API) and D14.
+
 ---
 
 ## Next deliverable
@@ -908,3 +1299,7 @@ Per Q25 (**ADRs first, then the roadmap**), the three ADRs to draft are:
 
 Each records the decision, the reason, the architectural impact, and the
 alternatives deferred — matching the format of ADR-001 through ADR-017.
+
+Round 2 (proposed, not written): an amendment to ADR-010 for D13; amendments to ADR-013 and
+ADR-017 for D14 (the origin is always read-only); a new ADR for D15 (network and database-
+address policy); a new ADR for U1 (UI scope and technology).
