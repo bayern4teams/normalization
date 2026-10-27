@@ -61,6 +61,13 @@ Fetch the address model data once (about 813 MB):
 bash services/libpostal/_data_cache/download_data.sh
 ```
 
+Create your settings file. Set `NORM_SECRET_KEY` (the file says how to generate one) and
+`NORM_BIND_ADDR` (this host's private LAN address):
+
+```bash
+cp .env.example .env
+```
+
 Start the app:
 
 ```bash
@@ -68,7 +75,7 @@ docker compose up -d postgres libpostal api
 ```
 
 ```bash
-curl -s http://localhost:8080/health
+curl -s http://$NORM_BIND_ADDR:8080/health
 ```
 
 Start the UI:
@@ -77,8 +84,8 @@ Start the UI:
 cd ui && npm install && npm run dev
 ```
 
-The compose file sets a fixed development `NORM_SECRET_KEY`. Generate your own
-for any other use. To clone a real database, follow the
+The compose file has no secret key; it reads `NORM_SECRET_KEY` from your `.env`.
+To clone a real database, follow the
 [end-to-end guide](docs/clone-e2e-guide.md).
 
 ## Worked example: measure accuracy
@@ -148,7 +155,9 @@ Measured on public data. Full tables, environment and reproduction:
 - The app never runs `CREATE DATABASE`. You run it once by hand.
 - Column type autodetect is off by default. It once turned French company
   numbers into phone numbers ([REPORT](docs/benchmarks/REPORT.md) headline).
-- The API has no authentication in the code. Put it behind your own gateway.
+- The API has no authentication in the code. It answers only callers on the local network
+  (loopback, private ranges) and refuses database hosts outside it
+  ([ADR-022](docs/adr/ADR-022-network-and-database-address-policy.md)).
 - Saved connection passwords need `NORM_SECRET_KEY`.
 
 ## License

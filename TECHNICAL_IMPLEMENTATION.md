@@ -356,6 +356,12 @@ Rejected libraries: `Unidecode`, `text-unidecode`, `wordfreq`, `abydos`, `deeppa
 | `e2e` | declared, no Python test uses it. UI specs are Playwright files in `ui/e2e`. | running stack |
 | `bench` | `tests/bench` | nothing |
 
+`tests/conftest.py` gives every Starlette `TestClient` a loopback peer and the `localhost` host,
+because the app refuses the client's default peer (`testclient`) and host (`testserver`) under
+[ADR-022](docs/adr/ADR-022-network-and-database-address-policy.md). The policy itself is never
+replaced. Address rules live in `packages/normapi/src/normapi/address_policy.py`; the fixed
+address table that guards them is `tests/unit/test_address_policy.py`.
+
 `tests/defects` holds the scorer and the captured before-snapshots for the
 defect fixes. The default test paths are in `pyproject.toml` under
 `[tool.pytest.ini_options]`.

@@ -74,6 +74,11 @@ port 8080, `/health` check).
 
 Port 5535 is deliberate: other local stacks often hold 5433.
 
+Ports bind addresses ([ADR-022](docs/adr/ADR-022-network-and-database-address-policy.md)): the API
+binds `NORM_BIND_ADDR`, the host's private LAN address from `.env`. libpostal and every database
+bind `127.0.0.1`. The API answers only callers inside loopback, RFC 1918 and `fc00::/7`, checks the
+`Host` header, and refuses database hosts that resolve outside that set.
+
 ### Configuration
 
 All settings are environment variables. The default is the value in code.
@@ -82,7 +87,10 @@ All settings are environment variables. The default is the value in code.
 | Variable | Default | Effect |
 |---|---|---|
 | `NORM_PG_DSN` | none (`compose`: the `postgres` service) | Metadata database. Required for clone jobs. |
-| `NORM_SECRET_KEY` | none | Fernet key that encrypts saved connection passwords. Required to save a connection. |
+| `NORM_SECRET_KEY` | none (`compose`: required, from `.env`) | Fernet key that encrypts saved connection passwords. Required to save a connection. |
+| `NORM_BIND_ADDR` | none (`compose`: required, from `.env`) | Host address the API port is published on. Use the private LAN address. |
+| `NORM_ALLOWED_HOSTS` | empty | Extra `Host` header names. `localhost`, `127.0.0.1`, `[::1]` and `NORM_BIND_ADDR` are always allowed. |
+| `NORM_ALLOWED_NETWORKS` | empty | Extra networks (CIDR) allowed as callers and database targets, for example `100.64.0.0/10`. |
 | `NORM_LIBPOSTAL_URL` | `http://localhost:8081` (`compose`: `http://libpostal:8081`) | Address parsing service. |
 | `NORM_CACHE_PATH` | `:memory:` (`compose`: `/data/sidecar/cache.duckdb`) | DuckDB file for the value cache. |
 | `NORM_LIBPOSTAL_MODEL_SHA256` | unset | Hash of the libpostal model data. It feeds `env_id`. |
@@ -91,7 +99,7 @@ All settings are environment variables. The default is the value in code.
 | `NORM_MAX_RUN_ROWS` | 40,000 | Row limit for one `POST /runs`. |
 | `NORM_CORS_ORIGINS` | empty | Extra allowed browser origins. The Vite dev and preview origins (`localhost` and `127.0.0.1`, ports 5173 and 4173) are always allowed. |
 | `NORM_OPENLINEAGE_URL` | empty (do not forward) | Lineage collector URL. |
-| `NORM_API_HOST`, `NORM_API_PORT` | `0.0.0.0`, 8080 | Used by `python -m normapi.main`. |
+| `NORM_API_HOST`, `NORM_API_PORT` | `0.0.0.0`, 8080 | Used by `python -m normapi.main`. Inside the container only; the host publishes on `NORM_BIND_ADDR`. |
 | `NORM_CLONE_WORKERS` | 3 (capped at CPU count) | Normalization worker processes, about 175 MB each. |
 | `NORM_CLONE_HEARTBEAT_TIMEOUT_SECONDS` | 900 | When a RUNNING job reports `stale`. |
 | `NORM_CLONE_AUTODETECT_MIN_CONFIDENCE` | 0.9 | Minimum detector confidence for a suggestion. |
@@ -335,7 +343,9 @@ Known limits:
 | Previews | The API returns a masked preview unless `pii_visibility` allows more. | `packages/normcore/src/normcore/pii.py::safe_preview` |
 | Credentials | Saved passwords are encrypted with Fernet. They are decrypted in memory at connect time. | `packages/normapi/src/normapi/secrets.py` |
 | Error rows and queue | Hold the raw original. Restrict database access to the metadata database. | `packages/normapi/src/normapi/pg_persistence.py::_SCHEMA` |
-| Demo key | `compose.yaml` sets a fixed development `NORM_SECRET_KEY`. Generate your own for any other deployment. | `compose.yaml` |
+| Secret key | `compose.yaml` holds no key; it reads `NORM_SECRET_KEY` from the uncommitted `.env`. | `compose.yaml` |
+| Callers and `Host` | Middleware refuses a peer outside loopback, RFC 1918 and `fc00::/7`, and a `Host` outside the allowlist. `X-Forwarded-For` is ignored. | `packages/normapi/src/normapi/app.py::LocalCallersOnly` |
+| Database targets | A host must be a strict literal or resolve only to allowed addresses. The connection uses the checked address. Checked on save and on every use. | `packages/normapi/src/normapi/address_policy.py::resolve_and_check` |
 | CORS | Only the Vite dev and preview origins are allowed by default. `NORM_CORS_ORIGINS` adds more. | `packages/normapi/src/normapi/app.py` |
 
 The API has no authentication layer in the code. Put it behind your own
