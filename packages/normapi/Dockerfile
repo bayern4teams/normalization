@@ -46,4 +46,6 @@ EXPOSE 8080
 HEALTHCHECK --interval=10s --timeout=5s --retries=10 --start-period=20s \
     CMD curl -f http://localhost:8080/health || exit 1
 
+# 0.0.0.0 is the container's own interface; compose.yaml publishes the port on
+# NORM_BIND_ADDR only, so this does not expose the API on every host interface.
 CMD ["uvicorn", "normapi.main:app", "--host", "0.0.0.0", "--port", "8080"]

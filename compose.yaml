@@ -10,7 +10,7 @@ services:
     ports:
       # 5433 deliberately avoided — commonly bound by other local dev stacks
       # (verified conflicting on this repo's dev machine during M0).
-      - "5535:5432"
+      - "127.0.0.1:5535:5432"
     volumes:
       - pg_data:/var/lib/postgresql/data
     healthcheck:
@@ -23,7 +23,7 @@ services:
     build:
       context: ./services/libpostal
     ports:
-      - "8081:8081"
+      - "127.0.0.1:8081:8081"
     volumes:
       - libpostal_data:/data/libpostal
     environment:
@@ -41,7 +41,10 @@ services:
       context: .
       dockerfile: packages/normapi/Dockerfile
     ports:
-      - "8080:8080"
+      # The API has no authentication, so it binds one private LAN address
+      # (set NORM_BIND_ADDR in .env), never 0.0.0.0. Compose refuses to start
+      # while it is unset.
+      - "${NORM_BIND_ADDR:?set NORM_BIND_ADDR in .env to this host's private LAN address}:8080:8080"
     environment:
       NORM_PG_DSN: postgresql://normalization:normalization@postgres:5432/normalization
       NORM_LIBPOSTAL_URL: http://libpostal:8081
@@ -55,10 +58,9 @@ services:
       NORM_CACHE_PATH: /data/sidecar/cache.duckdb
       NORM_DICTIONARIES_DIR: /app/data/dictionaries
       # DB-clone-and-normalize feature (decision #12): encrypts saved
-      # connection passwords at rest. Dev-only fixed key, same convention
-      # as this file's plaintext POSTGRES_PASSWORD above — generate a real
-      # one for any non-local deployment (`Fernet.generate_key()`).
-      NORM_SECRET_KEY: 4tBi41i-Vq5DF6d-c4UTVHgIV_Kd-A3t_-mQd-uN_zE=
+      # connection passwords at rest. Read from .env (see .env.example for
+      # how to generate one); compose refuses to start without it.
+      NORM_SECRET_KEY: ${NORM_SECRET_KEY:?set NORM_SECRET_KEY in .env}
       # Backstop for store.py's own row-count cap (NORM_MAX_RUN_ROWS,
       # default 40_000 — see DEFAULT_MAX_RUN_ROWS's comment for the real
       # memory measurements this and the limit below are based on): if
@@ -96,7 +98,7 @@ services:
       POSTGRES_PASSWORD: source_admin
       POSTGRES_DB: source_demo
     ports:
-      - "5434:5432"
+      - "127.0.0.1:5434:5432"
     volumes:
       - ./tests/integration/fixtures/postgres-init:/docker-entrypoint-initdb.d:ro
     healthcheck:
@@ -111,7 +113,7 @@ services:
       MYSQL_ROOT_PASSWORD: source_admin
       MYSQL_DATABASE: source_demo
     ports:
-      - "3307:3306"
+      - "127.0.0.1:3307:3306"
     volumes:
       - ./tests/integration/fixtures/mysql-init:/docker-entrypoint-initdb.d:ro
     healthcheck:
@@ -131,7 +133,7 @@ services:
       MONGO_INITDB_ROOT_USERNAME: source_admin
       MONGO_INITDB_ROOT_PASSWORD: source_admin
     ports:
-      - "27018:27017"
+      - "127.0.0.1:27018:27017"
     volumes:
       - ./tests/integration/fixtures/mongo-init:/docker-entrypoint-initdb.d:ro
     healthcheck:
@@ -155,7 +157,7 @@ services:
   demo-clickhouse:
     image: clickhouse/clickhouse-server:24.9-alpine
     ports:
-      - "8124:8123"
+      - "127.0.0.1:8124:8123"
     volumes:
       - ./tests/integration/fixtures/clickhouse-init:/docker-entrypoint-initdb.d:ro
       - ./tests/integration/fixtures/clickhouse-init/users.xml:/etc/clickhouse-server/users.d/readonly_user.xml:ro
