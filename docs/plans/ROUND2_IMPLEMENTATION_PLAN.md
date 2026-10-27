@@ -102,7 +102,7 @@ table; an undecidable input is `AMBIGUOUS`, never a plausible answer. Every item
 2.7 **Completed is not evidence.** A job finishing `completed` proves nothing. The acceptance check is
 written *before* the implementation, by the verifier (§4), never fitted afterwards.
 
-2.8 **Environment.** Python **3.12** (owner decision Q6, 2026-10-27), everything through `uv run`.
+2.8 **Environment.** Python **3.12** (owner decisions Q6 and Q-A, 2026-10-27; `requires-python` unchanged), everything through `uv run`.
 `uv sync --all-extras` needs `libicu-dev` and `pkg-config` (installed by `scripts/cloud_setup.sh`).
 Node and npm for `ui/`. Graph tools, pinned in the cloud and locally (Q10, 2026-10-27): graphifyy
 0.9.96, `@nanonets/graft` 0.26.0 (the `graft` command; Trail's learnings are not adopted, Q10a),
@@ -139,7 +139,7 @@ Docker in the cloud (§6).
 | Q3 | Pre-approve the D13 and D14 test changes of §2.9 | "a" |
 | Q4 | Run all five phases unattended; no UI screenshots by agents (replaces R25); local-only checks are tagged and listed for the owner | "it should implement all phases"; "agents doesn't need present UI screenshot" |
 | Q5 | U1 replaces `ui/` in place | "i agree" |
-| Q6 | Pin Python 3.12 | "i agree" |
+| Q6, Q-A | Run everything on Python 3.12; `requires-python` stays `>=3.12,<3.14`; `ci-full` keeps its 3.13 leg | "keep requires-python >=3.12,<3.14, run everything on 3.12, keep the ci-full 3.13 leg" |
 | Q7 | New dependencies `@mantine/core` and `@mantine/hooks`, pinned to the release current at build time; anything else is `[BLOCKED]` | "i agree" |
 | Q8 | New cloud environment `round2-env` | "i agree" |
 | Q9 | Held-out bugs, round 1 escalations and zizmor are out of scope | "i agree" |
@@ -331,7 +331,7 @@ Within a phase, worker lanes on separate files run beside the lead's serial chai
   |---|---|---|
   | A (serial) | lead | `docs/adr/ADR-022-*.md`, `normapi/app.py`, `normapi/main.py`, `normapi/schemas.py`, `normapi/routes.py`, `normapi/clone_executor.py` (the two builders, the DSN) |
   | B | worker | the new address-policy module in `normapi` and its unit test with a fixed address table |
-  | C | worker | `compose.yaml`, `.env.example`, `Dockerfile`, `pyproject.toml` (`requires-python`), `uv.lock`, `.github/workflows/ci-full.yml` (only as §11 Q-A decides) |
+  | C | worker | `compose.yaml`, `.env.example`, `Dockerfile` |
 
 - **Phase 2, D14: remove in-place mode.**
 
@@ -452,9 +452,7 @@ the "Test changes to review" section, then decides the merge. The plan files mov
 
 ## 11. Open questions (answered before launch)
 
-- **Q-A, Python pin and `ci-full`:** pinning `requires-python` to 3.12 leaves `ci-full`'s 3.13 matrix
-  leg testing a version the package refuses. Not yet answered.
-- **Q-B** and **Q-C** are answered (§2.10).
+- **Q-A**, **Q-B** and **Q-C** are answered (§2.10). None is open.
 
 ## 12. Changes from round 1 and known limits
 
