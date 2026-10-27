@@ -87,8 +87,11 @@ table; an undecidable input is `AMBIGUOUS`, never a plausible answer. Every item
 - *The test client's address*: Starlette's `TestClient` reports the peer as `testclient`, which is
   not an IP address. D15's caller check will refuse it. Give the test client an allowed address; that
   is a test change under §2.9.
-- *`ipaddress` changed in Python 3.13 and in backports* (report D15, fix 7): the allowed set is
-  computed from `ipaddress` on the pinned Python and guarded by a fixed table of addresses in a test.
+- *Never `is_private`* (report D15, fix 7): its list changed across versions, and it calls
+  documentation and benchmark ranges private (measured 2026-10-27: `2001:db8::1` and `198.18.0.1`
+  are `True` on 3.12.13, 3.13.15 and 3.14.7). The allowed set is built from explicit
+  `ipaddress.ip_network` values named by their RFCs, and a test with a fixed table of addresses
+  guards it.
 - *Docker publishing bypasses ufw* (report D15): a compose port without a host address listens on
   every interface whatever the firewall says.
 - *Partial UI*: `ui/` keeps building after every commit of Phase 4 (`npm run build`), so that the
@@ -149,6 +152,8 @@ Docker in the cloud (§6).
 | Q16 | Add the lost-work lesson to the phase-kit | "i agree" |
 | A | Idle ticks: one-line status check, quiet session start in the cloud; hourly | "1 + 2"; "i start them and go back and watch them maybe a day later" |
 | B | Lost-work rules of §7.3 | "1. i agree 2. i agree 3. its my lesson from another projects" |
+| Q-B | The API port binds the host's private LAN address from `.env`; the API refuses callers outside the private ranges; libpostal and the databases bind `127.0.0.1` | "i agree" |
+| Q-C | The cloud session runs every CI workflow's checks itself (§8, "The CI run") | "tell cloud agent to run every Ci and test on its cloud" |
 
 ## 3. Roles, routing, concurrency
 
@@ -221,7 +226,7 @@ not essays.
 
 **Can:** the four `ci-fast` commands; the licence gate; every normalizer DB-free; the address
 classification and the caller and `Host` checks through the app with a test client; DSN building with
-`psycopg.conninfo.make_conninfo`; `compose.yaml` read as YAML (every published port has `127.0.0.1`);
+`psycopg.conninfo.make_conninfo`; `compose.yaml` read as YAML (every published port has a host address: `127.0.0.1`, or the `.env` LAN address for the API, Q-B);
 the UI's `npm ci`, `npm run build` and `npm run lint`; Playwright, if its browsers install in the
 container (the dry-run tick records whether they do).
 
@@ -351,16 +356,27 @@ Within a phase, worker lanes on separate files run beside the lead's serial chai
   | B | worker | `ui/package.json`, `ui/package-lock.json`, the app shell, Connections, New clone |
   | C | worker | Jobs, Review, Quality, `ui/e2e/` |
 
-- **Phase 5, close (lead).** The four CI commands green; `/ponytail-review` over the whole branch diff,
+- **Phase 5, close (lead).** The CI run green; `/ponytail-review` over the whole branch diff,
   `/ponytail-audit`, `/ponytail-debt`, `/ponytail-gain`; every `HANDOFF.md` row has a lead verdict;
   `LOCAL_VERIFY.md` final; `.handoff/` folded into `round2/FINAL_REPORT.md` and purged; the report's
   round 2 status line updated (add, do not rewrite); `[ROUND2 COMPLETE]`. **Stop. Never merge.**
 
+### The CI run (owner decision Q-C)
+
+GitHub Actions is the second check, not the only one: since 2026-10-25 it has refused to start jobs
+for a billing reason, and it may do so again. So the session runs the checks itself. The workflow files
+are the one home of the commands; the session reads them and runs the `run:` steps of every job in
+`ci-fast.yml`, `stub-check.yml`, `docs-note.yml`, `guards.yml`, `dep-check.yml` and `docs.yml`, with
+the base `main`, installing the pinned tools those steps install (Vale, lychee, gitleaks, actionlint,
+the Mermaid renderer). Tests stay in memory-capped runs. It records each job's result in the phase's
+`[PHASE n DONE]` note. Then it checks GitHub: a GitHub run that started and failed blocks the gate like
+a local failure; a run GitHub refused to start (billing) is recorded and does not block.
+
 ### Phase gate (end of every phase)
 
 All items accepted, or `unverified-live` with a `LOCAL_VERIFY.md` entry, or escalated → the four CI
-commands green (Phase 4 also: `npm ci && npm run build && npm run lint` in `ui/`) → CI on the pushed
-head green (`ci-fast`; `drift` excluded) → `/ponytail-review` of the phase diff addressed → graphs
+commands green (Phase 4 also: `npm ci && npm run build && npm run lint` in `ui/`) → the CI run above
+green in the session, and GitHub as it says (`drift` excluded) → `/ponytail-review` of the phase diff addressed → graphs
 refreshed → `HANDOFF.md` updated → push → `[PHASE n DONE]` commit.
 
 ## 9. Per-item specification
@@ -380,6 +396,8 @@ applies to all.
   checked address (libpq `hostaddr`; for ClickHouse, what Phase 0 found). Unix-socket paths and
   multi-host strings refused. Checked when a connection is saved and each time it is used.
 - *DSN*: built with `psycopg.conninfo.make_conninfo`, never an f-string.
+- *Ports* (Q-B): the API port binds the host's private LAN address, read from `.env`; libpostal and
+  every database port bind `127.0.0.1`.
 - *Secrets*: the committed `NORM_SECRET_KEY` leaves `compose.yaml`; compose reads it from `.env`;
   `.env.example` documents it.
 - *Acceptance beyond tests passing*: a fixed table of addresses with their expected class, written
@@ -436,9 +454,7 @@ the "Test changes to review" section, then decides the merge. The plan files mov
 
 - **Q-A, Python pin and `ci-full`:** pinning `requires-python` to 3.12 leaves `ci-full`'s 3.13 matrix
   leg testing a version the package refuses. Not yet answered.
-- **Q-B, the API's published address:** the report's D15 fix 1 binds every compose port to
-  `127.0.0.1` (R16), while R9 lets the private local network reach the UI and API. A port published
-  on `127.0.0.1` cannot be reached from the network. Not yet answered.
+- **Q-B** and **Q-C** are answered (§2.10).
 
 ## 12. Changes from round 1 and known limits
 

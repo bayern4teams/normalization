@@ -49,8 +49,9 @@ force-push; never change "autonomy" in STATUS.
    approval for every item. Record each spawn under "In flight" first. Once the rate-limit status
    is "allowed_warning", start no new agent: let running ones finish, commit, push. If your context
    is compacted or you lose track, re-read STATUS, HANDOFF.md and the plan sections.
-7. At a phase end, run the phase gate (plan §8): the four CI commands green, push, wait for ci-fast
-   on the pushed head to be green (gh run list / gh run watch), /ponytail-review on the phase diff,
+7. At a phase end, run the phase gate (plan §8): the CI run of plan §8 green in this session (every
+   job of the six workflows), push, then gh run list: a GitHub run that started and failed blocks;
+   one GitHub refused to start is recorded, not a block; /ponytail-review on the phase diff,
    graphs refreshed; advance HANDOFF.md, record "[PHASE n DONE]" under Notifications. Continue into
    the next phase.
 8. If blocked (plan §7.4): write "[BLOCKED] <question>" under Notifications, set next=blocked
