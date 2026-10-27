@@ -26,8 +26,7 @@ flowchart LR
 ```
 
 Caption: the API reads the origin, writes the destination, and keeps its own
-state in a separate metadata database. In in-place mode the destination is the
-origin database. `normcli` calls analysis code directly
+state in a separate metadata database. `normcli` calls analysis code directly
 and never the API.
 
 Boundaries:
@@ -191,10 +190,6 @@ and `FAILED` (`packages/normcore/src/normcore/enums.py::CloneJobStatus`). A
 `SCHEMA_READY`, `RUNNING` or `FAILED` job can be started again
 (`packages/normapi/src/normapi/pg_persistence.py::PgPersistence.claim_clone_job`).
 
-An in-place clone writes into the origin database under staging names and
-swaps each table in, replacing the original. It needs no `CREATE DATABASE`
-step and uses the origin connection for writing.
-
 ## Data contract
 
 <!-- verified: 9f27526 -->
@@ -308,7 +303,7 @@ Rules that matter to a database administrator:
 | Guarantee | How it holds |
 |---|---|
 | A normal clone never writes the origin. | `SourceConnector` has no write method. Demo origins have a database-level read-only user (`tests/integration/test_readonly_connectors.py`). The destination uses its own connection. |
-| In-place mode is explicit. | `in_place` is off by default and never inferred. It replaces the origin's tables, and originals survive only in the error report (`packages/normapi/src/normapi/schemas.py::CloneJobCreateRequest`). |
+| The origin is never written. | Every clone writes a separate copy. The schema refuses an `in_place` field (`packages/normapi/src/normapi/schemas.py::CloneJobCreateRequest`). |
 | No guess on ambiguous input. | Normalizers return `AMBIGUOUS` and keep the original. `1,234` has no locale to settle it. |
 | Precision is kept, not invented. | A year stays a year. Nothing fills in a month or day. |
 | The original survives. | `original` is never overwritten. A failed value keeps its original in a text destination column. A typed column stores NULL and an error row. |

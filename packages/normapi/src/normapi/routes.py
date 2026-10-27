@@ -933,7 +933,7 @@ def create_clone_job(
             connections,
             # model_dump, not a hand-copied dict: the hand-copied version
             # listed 8 of the request's fields and silently dropped the
-            # rest, so `typed_destination_columns` and `in_place` were
+            # rest, so `typed_destination_columns` was
             # unreachable over HTTP however they were sent. mode="json"
             # also does the FieldSemanticType -> str conversion that copy
             # was doing by hand.
@@ -950,11 +950,7 @@ def create_clone_job(
     return CloneJobCreateResponse(
         job_id=job["job_id"],
         status=CloneJobStatus(job["status"]),
-        # In-place reuses the source database, so there is nothing for the
-        # operator to create and Phase 1 verifies nothing.
-        create_database_sql=(
-            "" if body.in_place else clone_executor.create_database_sql(body.destination_database)
-        ),
+        create_database_sql=clone_executor.create_database_sql(body.destination_database),
     )
 
 

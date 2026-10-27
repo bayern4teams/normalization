@@ -103,7 +103,7 @@ _RUN = textwrap.dedent(
     _normalize_table(
         "t", job=job, job_id="j", source=source, dest=dest, source_engine=engine,
         persistence=store, planner=DistinctValuePlanner(build_dispatcher(env_id="e"), None),
-        pool=None, progress=job["progress"], in_place=False, entity_countries={},
+        pool=None, progress=job["progress"], entity_countries={},
         adjudication=None,
     )
     """

@@ -219,7 +219,6 @@ class _Env:
             "locale": None,
             "max_new_null_rate": None,
             "cross_table_entity_key": None,
-            "in_place": False,
             "progress": {
                 "current_table": None,
                 "tables_completed": [],
@@ -1274,11 +1273,6 @@ class TestSection24:
 
 
 # --------------------------------------------------------------------------- attack round (D3)
-class _SwapDest(_Dest):
-    def swap_table(self, database: str, table: str, staging: str) -> None:
-        self.inserted.setdefault("__swapped__", []).append({"table": table, "staging": staging})
-
-
 def _mark(env: _Env, job_id: str, **changes: Any) -> None:
     job = env.job(job_id)
     job.update(changes)
@@ -1287,18 +1281,6 @@ def _mark(env: _Env, job_id: str, **changes: Any) -> None:
 
 @pytest.mark.unit
 class TestAttackShapes:
-    def test_in_place_output_is_the_final_table_not_the_staging_name(self, env: _Env) -> None:
-        job_id = env.new_job()
-        _mark(env, job_id, in_place=True)
-        env.mp.setattr(clone_executor, "build_source_connector", lambda c, d, s=None: env.source)
-        dest = _SwapDest()
-        env.mp.setattr(clone_executor, "build_destination_writer", lambda conn: dest)
-        clone_executor._run_phase2(env.persistence, env.dispatcher, None, job_id)
-        assert env.job(job_id)["status"] == "COMPLETED", env.job(job_id)["error"]
-        for event in env.lineage(job_id):
-            assert clone_executor.staging_name("x")[1:] not in event["outputs"][0]["name"]
-            assert event["outputs"][0]["name"].endswith(f"{DST_DB}.{table_of(event)}")
-
     def test_typed_destination_runs_and_validates(self, env: _Env, spec: _Spec) -> None:
         job_id = env.new_job()
         _mark(env, job_id, typed_destination_columns=True)

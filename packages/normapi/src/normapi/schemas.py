@@ -201,10 +201,8 @@ class CloneJobCreateRequest(BaseModel):
     # job with no tables that still reported COMPLETED. One schema per job,
     # so the clone's own table names stay unqualified.
     source_schema: str | None = None
-    # Empty is valid only for in_place, which derives both from the
-    # source (see the validator below).
-    destination_connection_id: str = ""
-    destination_database: str = ""
+    destination_connection_id: str
+    destination_database: str
     # Off by default: a column absent from `field_configs` is cloned
     # verbatim. Detection still runs and the plan (`GET .../plan`) shows its
     # suggestion per column with the share of sampled values that validate;
@@ -271,23 +269,19 @@ class CloneJobCreateRequest(BaseModel):
     # kept, and goes to the review queue. Off by default: every clone reports
     # those answers in its quality report either way.
     calibrated_abstention: bool = False
-    # Normalize the source database in place instead of cloning it into a
-    # second one. Each table is built beside its original under a staging
-    # name and swapped in, so peak extra storage is the largest SINGLE
-    # table rather than a whole second copy — for sources too large to
-    # duplicate. The source is REPLACED: originals survive only in the
-    # error report, so it is off by default and never inferred.
-    in_place: bool = False
 
-    @model_validator(mode="after")
-    def _destination_required_unless_in_place(self) -> CloneJobCreateRequest:
-        """A clone needs somewhere to go; in-place already knows where it
-        goes. Caught here rather than as a confusing "no such connection:
-        ''" from the executor."""
-        if not self.in_place and not (self.destination_connection_id and self.destination_database):
-            msg = "destination_connection_id and destination_database are required unless in_place"
+    @model_validator(mode="before")
+    @classmethod
+    def _refuse_in_place(cls, data: Any) -> Any:
+        """ADR-013: the origin is never written. `in_place` used to replace it; a
+        client that still sends it gets this message, not a silent ignore."""
+        if isinstance(data, dict) and "in_place" in data:
+            msg = (
+                "in_place was removed: every clone writes a separate copy. "
+                "Send destination_connection_id and destination_database instead."
+            )
             raise ValueError(msg)
-        return self
+        return data
 
     # ponytail: stored inside normalization_clone_jobs.data's JSON blob,
     # not a separate table — consumed exactly twice (Phase 1 DDL, Phase 2
@@ -306,7 +300,7 @@ class CloneJobAmendRequest(BaseModel):
     autodetect got right. `field_configs` merges per table and per column;
     an explicit null on a column clears it back to passthrough.
 
-    Absent on purpose: the connections, the databases, `in_place` and the
+    Absent on purpose: the connections, the databases and the
     table list. Those are what the job is, and nothing has been built yet,
     so a job pointed somewhere else is cheap to create rather than amend.
     """

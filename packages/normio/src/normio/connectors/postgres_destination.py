@@ -232,37 +232,6 @@ class PostgresDestination:
             with engine.begin() as conn:
                 conn.execute(insert_sql, params)
 
-    def swap_table(self, database: str, table: str, staging: str) -> None:
-        """Replace `table` with `staging`, then drop the original.
-
-        For in-place normalization, where there is no second database to
-        write into. Peak extra storage becomes the largest SINGLE table
-        rather than a whole copy of the source, because the staging table
-        is swapped in and the original dropped one table at a time.
-
-        The two renames are one transaction, so a crash leaves either the
-        original or the normalized table in place and never neither. The
-        DROP is deliberately outside it: holding the original's storage
-        until commit would defeat the point of the exercise.
-
-        ponytail: index and constraint names still follow the ORIGINAL
-        table (Postgres does not rename them with the table), so the
-        swapped-in table carries names like "t__norm_pkey". Cosmetic, and
-        renaming every constraint is a lot of DDL for a cosmetic win —
-        revisit if something reads constraint names.
-        """
-        retired = f"{staging}_retired"
-        q = quote_identifier
-        with self._engine_for(database).begin() as conn:
-            conn.execute(sa.text(f"ALTER TABLE {q(table)} RENAME TO {q(retired)}"))
-            conn.execute(sa.text(f"ALTER TABLE {q(staging)} RENAME TO {q(table)}"))
-        with self._engine_for(database).begin() as conn:
-            conn.execute(sa.text(f"DROP TABLE {q(retired)}"))
-
-    def drop_table(self, database: str, table: str) -> None:
-        with self._engine_for(database).begin() as conn:
-            conn.execute(sa.text(f"DROP TABLE IF EXISTS {quote_identifier(table)}"))
-
     def close(self) -> None:
         self._admin_engine.dispose()
         for engine in self._db_engines.values():

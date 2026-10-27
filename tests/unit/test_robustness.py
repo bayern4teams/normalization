@@ -129,7 +129,6 @@ def _run_table(
         planner=DistinctValuePlanner(build_dispatcher(env_id="e"), None),
         pool=None,
         progress=job["progress"],
-        in_place=False,
         entity_countries={},
         adjudication=None,
     )

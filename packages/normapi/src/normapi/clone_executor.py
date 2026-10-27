@@ -445,16 +445,8 @@ def create_clone_job(
     source = build_source_connector(
         source_conn, request["source_database"], request.get("source_schema")
     )
-    # In-place normalizes the source itself, so the destination is not the
-    # caller's to choose — taking it from the request would let a typo
-    # write staging tables into some other database and swap nothing.
-    in_place = request.get("in_place", False)
-    destination_connection_id = (
-        request["source_connection_id"] if in_place else request["destination_connection_id"]
-    )
-    destination_database = (
-        request["source_database"] if in_place else request["destination_database"]
-    )
+    destination_connection_id = request["destination_connection_id"]
+    destination_database = request["destination_database"]
     explicit_configs = request["field_configs"]
     suggested: dict[str, dict[str, dict[str, Any]]] = {}
     try:
@@ -528,7 +520,6 @@ def create_clone_job(
         "confirmed_missing": request.get("confirmed_missing") or {},
         "calibrated_abstention": bool(request.get("calibrated_abstention")),
         "cross_table_entity_key": request.get("cross_table_entity_key"),
-        "in_place": in_place,
         "progress": {
             "current_table": None,
             "tables_completed": [],
@@ -585,16 +576,6 @@ _CODE_TYPES = frozenset(
 
 # CURRENCY is deliberately absent: its `display` already IS the ISO 4217
 # code, so a companion would duplicate the column.
-
-# In-place normalization writes each table to a staging table beside the
-# original, then swaps. The suffix is part of the resume contract: Phase 1
-# creates <table><suffix>, Phase 2 fills and swaps it.
-_STAGING_SUFFIX = "__normalizing"
-
-
-def staging_name(table: str) -> str:
-    return f"{table}{_STAGING_SUFFIX}"
-
 
 # A job whose PROCESS dies — OOM kill, container restart, SIGKILL — never
 # runs the `except` that would mark it FAILED, so it sits in RUNNING
@@ -846,7 +827,7 @@ def plan_job(persistence: PgPersistence, job_id: str) -> dict[str, Any]:
             tables.append(
                 {
                     "table": table,
-                    "destination_table": (staging_name(table) if job.get("in_place") else table),
+                    "destination_table": table,
                     "table_engine": plan["table_engine"],
                     "key_columns": list(plan["key_columns"]),
                     "columns": [
@@ -881,7 +862,6 @@ def plan_job(persistence: PgPersistence, job_id: str) -> dict[str, Any]:
         "typed_destination_columns": job.get("typed_destination_columns", True),
         "cross_table_entity_key": job.get("cross_table_entity_key"),
         "max_new_null_rate": job.get("max_new_null_rate"),
-        "in_place": job.get("in_place", False),
         "tables": tables,
     }
 
@@ -938,7 +918,7 @@ def amend_clone_job(
 
 
 # Everything a review can change. Deliberately excludes the connections,
-# the databases, `in_place` and the table list: those are what the job IS,
+# the databases and the table list: those are what the job IS,
 # and a job pointed somewhere else is a different job — cheap to create,
 # since nothing has been built yet.
 _AMENDABLE_FIELDS = (
@@ -957,11 +937,8 @@ def verify_and_create_schema(persistence: PgPersistence, job_id: str) -> dict[st
     `CREATE DATABASE` command, then creates every table completely empty
     (schema clone only, no rows yet).
 
-    In-place mode (`in_place`) writes into the SOURCE database instead:
-    each table is created beside its original under a staging name, and
-    Phase 2 swaps it in and drops the original one table at a time. The
-    database already exists, so there is nothing for the operator to
-    create and no CREATE DATABASE step to verify.
+    The origin is never written (ADR-013): the destination is always a
+    separate database.
     """
     job = persistence.get_clone_job(job_id)
     if job is None:
@@ -973,8 +950,7 @@ def verify_and_create_schema(persistence: PgPersistence, job_id: str) -> dict[st
     dest_conn = _require_connection(persistence, job["destination_connection_id"])
     dest = build_destination_writer(dest_conn)
     try:
-        in_place = job.get("in_place", False)
-        if not in_place and not dest.database_exists(job["destination_database"]):
+        if not dest.database_exists(job["destination_database"]):
             msg = (
                 f"Destination database {job['destination_database']!r} does not exist yet — "
                 "run the CREATE DATABASE command returned by POST /clone-jobs, then retry."
@@ -989,12 +965,6 @@ def verify_and_create_schema(persistence: PgPersistence, job_id: str) -> dict[st
         try:
             for table in job["tables"]:
                 plan = plan_one_table(source, dest_conn["engine"], table, job)
-                # In-place: build beside the original, swap in Phase 2.
-                # A leftover staging table from an abandoned run would
-                # make CREATE TABLE fail, so it is cleared first.
-                target = staging_name(table) if in_place else table
-                if in_place:
-                    dest.drop_table(job["destination_database"], target)
                 shared = {
                     "semantic_types": plan["semantic_types"],
                     "column_overrides": plan["column_overrides"],
@@ -1007,7 +977,7 @@ def verify_and_create_schema(persistence: PgPersistence, job_id: str) -> dict[st
                 if isinstance(source, PostgresConnector) and isinstance(dest, PostgresDestination):
                     dest.create_table(
                         job["destination_database"],
-                        target,
+                        table,
                         plan["columns"],
                         primary_key=plan["key_columns"],
                         **shared,
@@ -1017,7 +987,7 @@ def verify_and_create_schema(persistence: PgPersistence, job_id: str) -> dict[st
                 ):
                     dest.create_table(
                         job["destination_database"],
-                        target,
+                        table,
                         plan["columns"],
                         order_by=plan["key_columns"],
                         engine=plan["table_engine"],
@@ -2349,7 +2319,6 @@ def _resume_point(
     progress: dict[str, Any],
     dest: Any,
     job: dict[str, Any],
-    write_target: str,
     persistence: PgPersistence,
     job_id: str,
 ) -> int:
@@ -2371,7 +2340,7 @@ def _resume_point(
     checkpoint: int = progress["checkpoints"].get(table, -1)
     if checkpoint < 0 or source_engine != "clickhouse":
         return checkpoint
-    dest.truncate_table(job["destination_database"], write_target)
+    dest.truncate_table(job["destination_database"], table)
     persistence.delete_clone_job_errors(job_id, table)
     persistence.reset_queue_counts(job_id, table)
     progress["rows_done"] -= checkpoint + 1
@@ -2391,7 +2360,6 @@ def _normalize_table(
     planner: DistinctValuePlanner,
     pool: Any,
     progress: dict[str, Any],
-    in_place: bool,
     entity_countries: Mapping[str, str],
     adjudication: Adjudication | None = None,
 ) -> None:
@@ -2419,14 +2387,12 @@ def _normalize_table(
     # per-row filter param on read_table today) — correct, but
     # re-reads already-processed rows on resume. Add pushdown
     # filtering if resumed jobs on very large tables get costly.
-    write_target = staging_name(table) if in_place else table
     checkpoint = _resume_point(
         table,
         source_engine=source_engine,
         progress=progress,
         dest=dest,
         job=job,
-        write_target=write_target,
         persistence=persistence,
         job_id=job_id,
     )
@@ -2466,7 +2432,7 @@ def _normalize_table(
             return
         # The same block gets the same token on a resume, so a block that
         # committed just before a crash is not written twice (ClickHouse).
-        dest.bulk_insert(job["destination_database"], write_target, block, primary_key=primary_key)
+        dest.bulk_insert(job["destination_database"], table, block, primary_key=primary_key)
         if block_errors:
             persistence.save_clone_job_errors(job_id, block_errors)
         checkpoint = block_last
@@ -2531,14 +2497,6 @@ def _normalize_table(
     job.setdefault("quality", {})[table] = {
         column: stat.quality() for column, stat in sorted(stats.items()) if stat.total
     }
-
-    if in_place:
-        # Swap only after the table is fully written, and BEFORE
-        # it is marked completed: a crash between the two replays
-        # a table that is already normalized, which re-reads the
-        # source and rebuilds a staging table that no longer
-        # exists — so the swap is what "completed" must mean here.
-        dest.swap_table(job["destination_database"], table, write_target)
 
     job["progress"] = progress
     _save_progress(persistence, job_id, job)
@@ -2649,7 +2607,6 @@ def _run_phase2(
     pool = _make_pool(dispatcher.env_id)
     progress = job["progress"]
     tables_completed = set(progress["tables_completed"])
-    in_place = job.get("in_place", False)
     adjudication = Adjudication(persistence, SCAFFOLD_PROFILE)
 
     try:
@@ -2696,7 +2653,6 @@ def _run_phase2(
                     planner=planner,
                     pool=pool,
                     progress=progress,
-                    in_place=in_place,
                     entity_countries=entity_countries,
                     adjudication=adjudication,
                 )

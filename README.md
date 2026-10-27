@@ -17,7 +17,7 @@ flowchart LR
 ```
 
 Caption: a normal clone only reads the origin and writes a normalized copy
-next to it. The opt-in in-place mode is the exception (see Limits).
+next to it. Every clone writes a separate copy; the origin is never written.
 
 ## Why it matters
 
@@ -149,9 +149,8 @@ Measured on public data. Full tables, environment and reproduction:
   per job ([REPORT §11.8](docs/benchmarks/REPORT.md)).
 - Postgres and ClickHouse only, and the origin and destination must use the
   same engine.
-- In-place mode (`in_place`, off by default) replaces the origin's tables with
-  normalized ones. Originals then survive only in the error report. It needs a
-  writable origin login.
+- A clone needs disk space for a full copy of the origin. There is no mode that
+  writes into the origin.
 - The app never runs `CREATE DATABASE`. You run it once by hand.
 - Column type autodetect is off by default. It once turned French company
   numbers into phone numbers ([REPORT](docs/benchmarks/REPORT.md) headline).

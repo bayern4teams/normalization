@@ -73,3 +73,11 @@ documented as a known weaker guarantee); MongoDB needs a document-shape-
 inference step before "clone the schema" means anything; File needs a
 different page flow, not a third branch bolted onto the connection-based
 one.
+
+## Amendment 2026-10-27 — in-place mode removed (round 2, D14)
+
+The origin is read-only in every clone, with no exception. Opt-in in-place mode
+(`in_place`, added 2026-09-24 to save disk space) wrote normalized tables into the origin and
+dropped the original, so a wrong value overwrote the only copy of the right one. It is removed:
+every clone writes a separate copy, and the schema refuses an `in_place` field. The cost is the
+disk space for a full copy; the owner chose that trade (R4).
