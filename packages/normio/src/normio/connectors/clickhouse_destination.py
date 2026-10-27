@@ -71,8 +71,11 @@ class ClickHouseDestination:
     """Write-capable, server-level (no `database` at construction). Unlike
     `ClickHouseConnector`, no readonly profile is requested."""
 
-    def __init__(self, host: str, port: int, username: str, password: str) -> None:
+    def __init__(
+        self, host: str, port: int, username: str, password: str, hostaddr: str | None = None
+    ) -> None:
         self._host = host
+        self._hostaddr = hostaddr
         self._port = port
         self._username = username
         self._password = password
@@ -82,7 +85,9 @@ class ClickHouseDestination:
         client = self._clients.get(database)
         if client is None:
             client = clickhouse_connect.get_client(
-                host=self._host,
+                # ADR-022: connect to the checked address, keep the name for the TLS check.
+                host=self._hostaddr or self._host,
+                server_host_name=self._host if self._hostaddr else None,
                 port=self._port,
                 username=self._username,
                 password=self._password,

@@ -41,10 +41,13 @@ class ClickHouseConnector:
         username: str,
         password: str,
         database: str,
+        hostaddr: str | None = None,
     ) -> None:
         self.source_id = source_id
         self._client = clickhouse_connect.get_client(
-            host=host,
+            # ADR-022: connect to the checked address, keep the name for the TLS check.
+            host=hostaddr or host,
+            server_host_name=host if hostaddr else None,
             port=port,
             username=username,
             password=password,

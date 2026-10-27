@@ -49,9 +49,11 @@ from normio.connectors import (
     PostgresDestination,
 )
 from normio.connectors._sql_base import DESTINATION_INSERT_CHUNK_ROWS, SOURCE_READ_BATCH_ROWS
+from normio.connectors.postgres_destination import build_postgres_dsn
 
 from normanalysis import disguised_missing
 from normapi import lineage, secrets
+from normapi.address_policy import resolve_and_check
 from normapi.adjudication import Adjudication, source_identity
 from normapi.scaffold_profile import SCAFFOLD_PROFILE
 from normcore import (
@@ -110,8 +112,12 @@ def build_source_connector(
     that table names are relative to. ClickHouse has no layer between
     database and table, so its `database` argument already is this."""
     password = secrets.decrypt(conn["encrypted_password"])
+    # ADR-022: checked on every use, and the connection goes to the checked address.
+    hostaddr = resolve_and_check(conn["host"])
     if conn["engine"] == "postgres":
-        dsn = f"postgresql://{conn['username']}:{password}@{conn['host']}:{conn['port']}/{database}"
+        dsn = build_postgres_dsn(
+            conn["host"], conn["port"], conn["username"], password, database, hostaddr=hostaddr
+        )
         return PostgresConnector(conn["connection_id"], dsn, schema)
     if conn["engine"] == "clickhouse":
         return ClickHouseConnector(
@@ -121,6 +127,7 @@ def build_source_connector(
             username=conn["username"],
             password=password,
             database=database,
+            hostaddr=hostaddr,
         )
     msg = f"Unsupported engine: {conn['engine']!r}"
     raise ValueError(msg)
@@ -133,10 +140,13 @@ def build_destination_writer(conn: dict[str, Any]) -> PostgresDestination | Clic
     # Protocol only when a 3rd engine (MySQL) makes this a three-way
     # branch.
     password = secrets.decrypt(conn["encrypted_password"])
+    hostaddr = resolve_and_check(conn["host"])  # ADR-022
     if conn["engine"] == "postgres":
-        return PostgresDestination(conn["host"], conn["port"], conn["username"], password)
+        return PostgresDestination(conn["host"], conn["port"], conn["username"], password, hostaddr)
     if conn["engine"] == "clickhouse":
-        return ClickHouseDestination(conn["host"], conn["port"], conn["username"], password)
+        return ClickHouseDestination(
+            conn["host"], conn["port"], conn["username"], password, hostaddr
+        )
     msg = f"Unsupported engine: {conn['engine']!r}"
     raise ValueError(msg)
 

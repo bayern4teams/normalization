@@ -59,6 +59,7 @@ from normanalysis import (
     suggest_semantic_type,
 )
 from normapi import adjudication, clone_executor, secrets
+from normapi.address_policy import resolve_and_check
 from normapi.clone_executor import CloneJobNotFoundError, CloneJobStateError
 from normapi.dependencies import (
     get_cache,
@@ -765,6 +766,7 @@ def create_connection(
     body: ConnectionCreateRequest,
     connections: Annotated[PgPersistence, Depends(get_connections)],
 ) -> Connection:
+    resolve_and_check(body.host)  # ADR-022: refuse a non-local target when it is saved
     connection_id = str(uuid.uuid4())
     row = connections.save_connection(
         connection_id,

@@ -10,9 +10,10 @@ from __future__ import annotations
 import logging
 import os
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import blake3
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from normalizers.address import AddressNormalizer, LibpostalClient
 from normalizers.boolean import BooleanNormalizer
@@ -35,7 +36,10 @@ from normalizers.unit import UnitNormalizer
 from normalizers.url import URLNormalizer
 from normexec.cache import NormalizationCache
 from normexec.env_fingerprint import current_env_id
+from starlette.middleware.trustedhost import TrustedHostMiddleware
+from starlette.responses import JSONResponse, PlainTextResponse
 
+from normapi.address_policy import AddressPolicyError, check_caller
 from normapi.adjudication import migrate_sources
 from normapi.pg_persistence import PgPersistence
 from normapi.routes import router
@@ -43,6 +47,9 @@ from normapi.scaffold_profile import SCAFFOLD_PROFILE
 from normapi.store import DEFAULT_MAX_RUN_ROWS, InMemoryStore
 from normcore import Dispatcher, NormalizerRegistry
 from normdict import CustomDictionaryStore, DictionaryLoader
+
+if TYPE_CHECKING:
+    from starlette.types import ASGIApp, Receive, Scope, Send
 
 logger = logging.getLogger(__name__)
 
@@ -207,6 +214,37 @@ def build_dispatcher(loader: DictionaryLoader | None = None, *, env_id: str) -> 
     )
 
 
+def _allowed_hosts() -> list[str]:
+    """Host-header allowlist (the DNS-rebinding defence, ADR-022): loopback
+    names, the LAN address compose binds, and any names the deployer lists."""
+    extra = [
+        os.environ.get("NORM_BIND_ADDR", ""),
+        *os.environ.get("NORM_ALLOWED_HOSTS", "").split(","),
+    ]
+    return ["localhost", "127.0.0.1", "[::1]", *(h.strip() for h in extra if h.strip())]
+
+
+class LocalCallersOnly:
+    """Refuses a peer outside the allowed set (ADR-022). `X-Forwarded-For` is
+    never read: there is no proxy in front of this app."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] in ("http", "websocket"):
+            client = scope.get("client")
+            if not check_caller(client[0] if client else None):
+                if scope["type"] == "http":
+                    await PlainTextResponse("Forbidden: caller outside the local network", 403)(
+                        scope, receive, send
+                    )
+                else:
+                    await send({"type": "websocket.close", "code": 1008})
+                return
+        await self.app(scope, receive, send)
+
+
 def create_app(
     *,
     dictionaries_dir: Path | None = None,
@@ -221,12 +259,21 @@ def create_app(
         version="0.1.0",
     )
 
+    # ADR-022. add_middleware puts the last one added outermost, so the caller
+    # check runs first, then the Host check, then CORS.
     app.add_middleware(
         CORSMiddleware,
         allow_origins=[*_DEFAULT_CORS_ORIGINS, *_EXTRA_CORS_ORIGINS],
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    @app.exception_handler(AddressPolicyError)
+    async def _address_refused(_request: Request, exc: AddressPolicyError) -> JSONResponse:
+        return JSONResponse(status_code=422, content={"detail": str(exc)})
+
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=_allowed_hosts())
+    app.add_middleware(LocalCallersOnly)
 
     loader = DictionaryLoader(dictionaries_dir or _DEFAULT_DICTIONARIES_DIR)
     custom_store = CustomDictionaryStore(
