@@ -42,7 +42,8 @@ See plan §8 phase tables; they stand unchanged.
 (plan §7.3: before spawning an agent the lead adds one line here: agent, task, files, progress file,
 time; it removes the line when the agent's result is recorded)
 
-none
+- round2-verifier (sonnet), D15 derive: writes `.handoff/D15.test_*.py` + `.handoff/D15.acceptance.md`; progress `.handoff/D15.progress.md`; started 2026-10-27T15:19Z
+- round2-worker (sonnet), D15 lane C: `compose.yaml`, `.env.example`, `packages/normapi/Dockerfile`; progress `.handoff/D15.laneC.progress.md`; started 2026-10-27T15:19Z
 
 ## Next action
 
