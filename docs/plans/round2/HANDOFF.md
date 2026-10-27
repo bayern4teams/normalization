@@ -11,7 +11,7 @@ minutes is stale.
 
 | item | phase | state | commit | lead verdict |
 |---|---|---|---|---|
-| D15 | 1 | todo | | |
+| D15 | 1 | unverified-live | see git log | Lead: verifier REJECTed (`.handoff/D15.verdict.md`: compose env not passed, 3 wiring points untested, `://` in a password, `[::1]` Host). Lead fixed all four plus `--no-proxy-headers`, with `tests/unit/test_address_policy_wiring.py`. Known and recorded: `Host: localhost:80@evil.com` accepted (LOCAL_VERIFY). Accepted by the lead on the diff; live checks in LOCAL_VERIFY. |
 | D14 | 2 | todo | | |
 | D13 | 3 | todo | | |
 | U1 | 4 | todo | | |
@@ -39,7 +39,6 @@ See plan §8 phase tables; they stand unchanged.
 
 ## In flight
 
-- round2-verifier (sonnet), D15 attack: runs `tests/unit/test_address_policy*.py`, tries to break it; verdict `.handoff/D15.verdict.md`; started 2026-10-27T15:41Z
 
 ## Next action
 

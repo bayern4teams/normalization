@@ -61,6 +61,10 @@ services:
       # connection passwords at rest. Read from .env (see .env.example for
       # how to generate one); compose refuses to start without it.
       NORM_SECRET_KEY: ${NORM_SECRET_KEY:?set NORM_SECRET_KEY in .env}
+      # Policy settings (ADR-022). The app adds NORM_BIND_ADDR to its Host allowlist.
+      NORM_BIND_ADDR: ${NORM_BIND_ADDR}
+      NORM_ALLOWED_HOSTS: ${NORM_ALLOWED_HOSTS:-}
+      NORM_ALLOWED_NETWORKS: ${NORM_ALLOWED_NETWORKS:-}
       # Backstop for store.py's own row-count cap (NORM_MAX_RUN_ROWS,
       # default 40_000 — see DEFAULT_MAX_RUN_ROWS's comment for the real
       # memory measurements this and the limit below are based on): if

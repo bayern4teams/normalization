@@ -7,6 +7,7 @@ anyway, so sharing the class would be misleading, not lazy).
 
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING, Any
 
 import psycopg
@@ -94,7 +95,7 @@ def engine_from_dsn(dsn: str, **kwargs: Any) -> sa.Engine:
     SQLAlchemy cannot carry `hostaddr` in a URL, so for a connection string psycopg
     opens the connection. A `postgresql://` URL gets the psycopg3 driver explicitly,
     not SQLAlchemy's default (psycopg2, not a project dependency)."""
-    if "://" in dsn:
+    if re.match(r"[A-Za-z][A-Za-z0-9+.-]*://", dsn):  # a libpq string starts with `host=`
         return sa.create_engine(dsn.replace("postgresql://", "postgresql+psycopg://", 1), **kwargs)
     return sa.create_engine("postgresql+psycopg://", creator=lambda: psycopg.connect(dsn), **kwargs)
 

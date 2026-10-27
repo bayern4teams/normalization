@@ -89,7 +89,7 @@ All settings are environment variables. The default is the value in code.
 | `NORM_PG_DSN` | none (`compose`: the `postgres` service) | Metadata database. Required for clone jobs. |
 | `NORM_SECRET_KEY` | none (`compose`: required, from `.env`) | Fernet key that encrypts saved connection passwords. Required to save a connection. |
 | `NORM_BIND_ADDR` | none (`compose`: required, from `.env`) | Host address the API port is published on. Use the private LAN address. |
-| `NORM_ALLOWED_HOSTS` | empty | Extra `Host` header names. `localhost`, `127.0.0.1`, `[::1]` and `NORM_BIND_ADDR` are always allowed. |
+| `NORM_ALLOWED_HOSTS` | empty | Extra `Host` header names. `localhost`, `127.0.0.1` and `NORM_BIND_ADDR` are always allowed. |
 | `NORM_ALLOWED_NETWORKS` | empty | Extra networks (CIDR) allowed as callers and database targets, for example `100.64.0.0/10`. |
 | `NORM_LIBPOSTAL_URL` | `http://localhost:8081` (`compose`: `http://libpostal:8081`) | Address parsing service. |
 | `NORM_CACHE_PATH` | `:memory:` (`compose`: `/data/sidecar/cache.duckdb`) | DuckDB file for the value cache. |

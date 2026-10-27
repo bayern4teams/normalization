@@ -38,7 +38,20 @@ Use a copy of a real database; the sources are read-only (ADR-013, unconditional
 - Result (filled in locally):
 ```
 
-(no entries yet)
+### D15 — local network only
+- Why the cloud could not verify: no Docker, no LAN, no real Postgres or ClickHouse.
+- Command: set `NORM_BIND_ADDR` (LAN address) and `NORM_SECRET_KEY` in `.env`; `docker compose up -d`; then
+  `ss -ltnp` on the host; `curl http://$NORM_BIND_ADDR:8080/health` from a second LAN machine; the same
+  from a machine outside the private ranges (or with a public `Host`) must be refused; save a connection to
+  a public host (must answer 422); save one to a host name with two addresses, one public (must answer 422).
+- Independent check: `ss -ltnp` shows only `$NORM_BIND_ADDR:8080` and `127.0.0.1:*` for every other port;
+  `docker version` server >= 28.3.3; the Postgres log shows the connection came from the checked address
+  (libpq `hostaddr`); for ClickHouse, `system.query_log` shows the client connected (the driver was given the
+  IP with `server_host_name`; never tried against a real server).
+- Expected evidence: no port on `0.0.0.0`; LAN caller answered; outside caller refused with 403; bad Host 400.
+- Also: `Host: localhost:80@evil.com` is accepted (the allowlist reads the part before the first `:`); an
+  IPv6 `Host` (`[::1]`) is not allowed.
+- Result (filled in locally):
 
 ## Test changes to review
 
@@ -48,4 +61,6 @@ Review the diff of each and confirm the test still checks the same behaviour.
 | file | commit | reason |
 |---|---|---|
 
-(none yet)
+| `tests/conftest.py` (new) | WIP D15 commit "TEST-CHANGE: loopback peer and localhost host for every TestClient" | Starlette's default peer `testclient` and host `testserver` are refused by ADR-022 |
+| `tests/unit/test_connector_schema.py` | WIP D15 commit "TEST-CHANGE: use a literal local address as the connection host" | host `h` does not resolve; assertions unchanged |
+| `tests/unit/test_address_policy.py` | WIP D15 commit "lint-clean the moved address-policy test" | formatting and a top-level import only |

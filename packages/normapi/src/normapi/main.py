@@ -41,4 +41,5 @@ if __name__ == "__main__":
         app,
         host=os.environ.get("NORM_API_HOST", "0.0.0.0"),  # intentional: container-facing API server
         port=int(os.environ.get("NORM_API_PORT", "8080")),
+        proxy_headers=False,  # ADR-022: X-Forwarded-For is never trusted
     )

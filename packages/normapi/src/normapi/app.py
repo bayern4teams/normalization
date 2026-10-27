@@ -221,7 +221,7 @@ def _allowed_hosts() -> list[str]:
         os.environ.get("NORM_BIND_ADDR", ""),
         *os.environ.get("NORM_ALLOWED_HOSTS", "").split(","),
     ]
-    return ["localhost", "127.0.0.1", "[::1]", *(h.strip() for h in extra if h.strip())]
+    return ["localhost", "127.0.0.1", *(h.strip() for h in extra if h.strip())]
 
 
 class LocalCallersOnly:
