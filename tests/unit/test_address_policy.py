@@ -8,8 +8,8 @@ running the code under test.
 Assumed names (see D15.acceptance.md):
   normapi.address_policy.classify(addr: str) -> bool        True = allowed
   normapi.address_policy.check_caller(peer: str | None) -> bool   True = caller allowed
-  normapi.address_policy.resolve_and_check(host: str) -> str      the checked IP literal to connect to;
-                                                    raises AddressPolicyError on any refusal
+  normapi.address_policy.resolve_and_check(host: str) -> str
+      the checked IP literal to connect to; raises AddressPolicyError on any refusal
   normapi.address_policy.AddressPolicyError(Exception)
 """
 
@@ -22,16 +22,12 @@ import re
 import socket
 from pathlib import Path
 
+import normapi.address_policy as _mod
 import pytest
 
 
-
 def _policy():
-    try:
-        import normapi.address_policy as mod
-    except ImportError as exc:  # the missing behaviour, reported as such
-        pytest.fail(f"normapi.address_policy does not exist yet: {exc}")
-    return mod
+    return _mod
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -114,7 +110,9 @@ TABLE = [
 ]
 
 
-@pytest.mark.parametrize(("addr", "allowed", "why"), TABLE, ids=[row[0] or "<empty>" for row in TABLE])
+@pytest.mark.parametrize(
+    ("addr", "allowed", "why"), TABLE, ids=[row[0] or "<empty>" for row in TABLE]
+)
 def test_fixed_address_table(addr: str, allowed: bool, why: str) -> None:
     assert _policy().classify(addr) is allowed, f"{addr!r}: expected allowed={allowed} ({why})"
 
@@ -163,7 +161,11 @@ def test_seeded_sample_matches_the_oracle() -> None:
         candidates.append(ipaddress.IPv6Address(rng.getrandbits(128)))
     for net in _RFC_ALLOWED:  # random members of each allowed block
         for _ in range(100):
-            candidates.append(type(net.network_address)(int(net.network_address) + rng.randrange(net.num_addresses)))
+            candidates.append(
+                type(net.network_address)(
+                    int(net.network_address) + rng.randrange(net.num_addresses)
+                )
+            )
     for _ in range(300):  # mapped forms of random IPv4 and of members of the IPv4 allowed blocks
         v4 = ipaddress.IPv4Address(rng.getrandbits(32))
         candidates.append(ipaddress.IPv6Address(f"::ffff:{v4}"))
@@ -186,7 +188,8 @@ def test_no_is_private_anywhere_in_normapi() -> None:
         f"{p.relative_to(ROOT)}:{n}: {line.strip()}"
         for p in SRC.rglob("*.py")
         for n, line in enumerate(p.read_text(encoding="utf-8").splitlines(), 1)
-        if re.search(r"\.is_(private|global|reserved)\b", line) and not line.lstrip().startswith("#")
+        if re.search(r"\.is_(private|global|reserved)\b", line)
+        and not line.lstrip().startswith("#")
     ]
     assert not hits, hits
 
@@ -235,7 +238,7 @@ def test_check_caller(peer: str | None, allowed: bool) -> None:
 
 # --- database targets: one refusal per kind -----------------------------------------------------
 def _fake_dns(monkeypatch: pytest.MonkeyPatch, mapping: dict[str, list[str]]) -> list[str]:
-    """Replace socket.getaddrinfo (a boundary we do not own, rule L5). Returns the list of names asked."""
+    """Replace socket.getaddrinfo (a boundary we do not own, rule L5); returns names asked."""
     asked: list[str] = []
 
     def fake(host, port=None, *args, **kwargs):
@@ -260,7 +263,9 @@ def _unwrap(text: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address:
     return addr
 
 
-@pytest.mark.parametrize("host", ["10.1.2.3", "127.0.0.1", "192.168.5.5", "::1", "fd00::9", "::ffff:10.0.0.1"])
+@pytest.mark.parametrize(
+    "host", ["10.1.2.3", "127.0.0.1", "192.168.5.5", "::1", "fd00::9", "::ffff:10.0.0.1"]
+)
 def test_allowed_literal_target_is_returned_as_the_checked_address(
     host: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -312,20 +317,33 @@ def test_hostname_with_any_public_address_is_refused(monkeypatch: pytest.MonkeyP
             "cgnat.example": ["10.0.0.5", "100.64.0.1"],
         },
     )
-    for name in ("mixed.example", "mixed-last.example", "mixed6.example", "mapped-public.example", "cgnat.example"):
+    for name in (
+        "mixed.example",
+        "mixed-last.example",
+        "mixed6.example",
+        "mapped-public.example",
+        "cgnat.example",
+    ):
         with pytest.raises(policy.AddressPolicyError):
             policy.resolve_and_check(name)
 
 
-def test_hostname_with_only_allowed_addresses_is_accepted_and_pinned(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_hostname_with_only_allowed_addresses_is_accepted_and_pinned(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     policy = _policy()
-    _fake_dns(monkeypatch, {"db.lan": ["10.0.0.5", "192.168.1.9", "fd00::7"], "localhost": ["127.0.0.1", "::1"]})
+    _fake_dns(
+        monkeypatch,
+        {"db.lan": ["10.0.0.5", "192.168.1.9", "fd00::7"], "localhost": ["127.0.0.1", "::1"]},
+    )
     got = policy.resolve_and_check("db.lan")
     assert got in {"10.0.0.5", "192.168.1.9", "fd00::7"}  # the address to hand to libpq as hostaddr
     assert policy.resolve_and_check("localhost") in {"127.0.0.1", "::1"}
 
 
-def test_never_guess_unresolvable_or_empty_resolution_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_never_guess_unresolvable_or_empty_resolution_is_refused(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """A name that does not resolve, or resolves to nothing, is undecidable: refuse, never allow."""
     policy = _policy()
     _fake_dns(monkeypatch, {"empty.example": []})
@@ -334,7 +352,9 @@ def test_never_guess_unresolvable_or_empty_resolution_is_refused(monkeypatch: py
             policy.resolve_and_check(name)
 
 
-def test_dns_rebinding_between_two_calls_is_caught_on_each_use(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_dns_rebinding_between_two_calls_is_caught_on_each_use(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """'Check both when a connection is saved and each time it is used': the answer is not cached
     across calls. First answer private, second public -> the second call must refuse."""
     policy = _policy()

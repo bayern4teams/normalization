@@ -42,9 +42,10 @@ See plan §8 phase tables; they stand unchanged.
 (plan §7.3: before spawning an agent the lead adds one line here: agent, task, files, progress file,
 time; it removes the line when the agent's result is recorded)
 
-- round2-worker (sonnet), D15 lane B: `packages/normapi/src/normapi/address_policy.py` + `tests/unit/test_address_policy.py` (from `.handoff/D15.test_address_policy.py`); progress `.handoff/D15.laneB.progress.md`; started 2026-10-27T15:22Z
 
 ## Next action
+
+D15 lane B landed (25276ee + lint fix, lead review pending: `address_policy.py`, 114 tests pass; `NORM_ALLOWED_NETWORKS` has no test yet — add one). Parked `.handoff/D15.test_app_dsn_compose.py` fails ruff (E501 etc.); fix its lint when it moves to `tests/unit/` with the wiring. Lead now wires app.py/clone_executor.py/routes.py.
 
 D15 derive done (9a60857, d0bd76f; 140 of 153 checks fail today as intended; run with `--import-mode=importlib`). Lane B module in flight. Lead then wires middleware, TrustedHost, builders, `build_postgres_dsn`, R14 setting (name to choose in ADR-022), per-use checks.
 
