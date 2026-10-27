@@ -40,6 +40,8 @@ Phase 0, step 1.
 
 ## Notifications
 
+[DRYRUN DONE] 2026-10-27T15:03Z, see .handoff/supervisor_dryrun.txt
+
 (append `[PHASE n DONE]`, `[BLOCKED]` and `[ROUND2 COMPLETE]` entries; the same prefixes go in commit
 messages)
 
