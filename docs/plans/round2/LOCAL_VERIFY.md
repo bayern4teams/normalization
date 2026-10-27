@@ -53,6 +53,14 @@ Use a copy of a real database; the sources are read-only (ADR-013, unconditional
   IPv6 `Host` (`[::1]`) is not allowed.
 - Result (filled in locally):
 
+### D14 — remove in-place mode
+- Why the cloud could not verify: no Postgres or ClickHouse.
+- Command: `( ulimit -v 16777216; uv run pytest -m integration -q )` against the compose stack; `grep -rn in_place packages ui/src`.
+- Independent check: after a clone, `SELECT count(*)` of the origin tables is unchanged and its tables carry no `__normalizing` suffix.
+- Expected evidence: integration suite green; a `POST /normalization/clone-jobs` with `in_place` answers 422.
+- Note: a job stored before this change with `in_place: true` is not migrated; delete such rows from the metadata database if any exist.
+- Result (filled in locally):
+
 ## Test changes to review
 
 Plan §2.9: every test change outside the pre-approved list, each its own `TEST-CHANGE:` commit.

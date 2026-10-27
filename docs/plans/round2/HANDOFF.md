@@ -43,7 +43,7 @@ See plan §8 phase tables; they stand unchanged.
 
 ## Next action
 
-Phase 2 (D14, remove in-place mode): ADR-013 and ADR-017 amendments first, then derive step (round2-verifier, model sonnet) for D14, then lanes per plan §8. Remember §2.9: deleted tests need a `C5:` line (owner approval 2026-10-27, review 2027-01-27).
+D14 code removal is committed (in_place field refused by a `before` validator in schemas.py; staging_name, swap_table, drop_table removed; in-place tests removed with C5 lines; docs and ADR-013/017 amended). Derive verifier still in flight: when `.handoff/D14.*` lands, move its tests into `tests/unit/`, run them, then spawn the ATTACK verifier (`.handoff/D14.verdict.md`). Note: persisted jobs with `in_place: true` in the metadata DB are not migrated (listed in LOCAL_VERIFY). Then Phase 2 gate, then Phase 3 (D13).
 
 ## Notifications
 
