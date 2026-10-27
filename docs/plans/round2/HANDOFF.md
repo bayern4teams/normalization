@@ -43,9 +43,11 @@ See plan §8 phase tables; they stand unchanged.
 time; it removes the line when the agent's result is recorded)
 
 - round2-verifier (sonnet), D15 derive: writes `.handoff/D15.test_*.py` + `.handoff/D15.acceptance.md`; progress `.handoff/D15.progress.md`; started 2026-10-27T15:19Z
-- round2-worker (sonnet), D15 lane C: `compose.yaml`, `.env.example`, `packages/normapi/Dockerfile`; progress `.handoff/D15.laneC.progress.md`; started 2026-10-27T15:19Z
 
 ## Next action
+
+D15 lane C landed (d823ba8, WIP, lead review pending). Follow-ups for the lead: set `NORM_BIND_ADDR` and `NORM_SECRET_KEY` in `.github/workflows/ci-full.yml:151`, `gate.yml:115,195` and the compose-starting test fixtures (compose now fails without them); update README (~80, ~152) and ARCHITECTURE (~85, ~338, deployment text); check what reads `NORM_API_HOST` in `.env.example`. Then: derive result, address-policy module, middleware, builders.
+
 
 Phase 1 (D15): ADR-022 first, then derive step (round2-verifier, model sonnet) for D15.
 
