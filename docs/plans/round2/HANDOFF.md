@@ -42,9 +42,11 @@ See plan §8 phase tables; they stand unchanged.
 (plan §7.3: before spawning an agent the lead adds one line here: agent, task, files, progress file,
 time; it removes the line when the agent's result is recorded)
 
-- round2-verifier (sonnet), D15 derive: writes `.handoff/D15.test_*.py` + `.handoff/D15.acceptance.md`; progress `.handoff/D15.progress.md`; started 2026-10-27T15:19Z
+- round2-worker (sonnet), D15 lane B: `packages/normapi/src/normapi/address_policy.py` + `tests/unit/test_address_policy.py` (from `.handoff/D15.test_address_policy.py`); progress `.handoff/D15.laneB.progress.md`; started 2026-10-27T15:22Z
 
 ## Next action
+
+D15 derive done (9a60857, d0bd76f; 140 of 153 checks fail today as intended; run with `--import-mode=importlib`). Lane B module in flight. Lead then wires middleware, TrustedHost, builders, `build_postgres_dsn`, R14 setting (name to choose in ADR-022), per-use checks.
 
 D15 lane C landed (d823ba8, WIP, lead review pending). Follow-ups for the lead: set `NORM_BIND_ADDR` and `NORM_SECRET_KEY` in `.github/workflows/ci-full.yml:151`, `gate.yml:115,195` and the compose-starting test fixtures (compose now fails without them); update README (~80, ~152) and ARCHITECTURE (~85, ~338, deployment text); check what reads `NORM_API_HOST` in `.env.example`. Then: derive result, address-policy module, middleware, builders.
 
