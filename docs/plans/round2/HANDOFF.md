@@ -39,11 +39,11 @@ See plan §8 phase tables; they stand unchanged.
 
 ## In flight
 
-(plan §7.3: before spawning an agent the lead adds one line here: agent, task, files, progress file,
-time; it removes the line when the agent's result is recorded)
-
+- round2-verifier (sonnet), D15 attack: runs `tests/unit/test_address_policy*.py`, tries to break it; verdict `.handoff/D15.verdict.md`; started 2026-10-27T15:41Z
 
 ## Next action
+
+D15 implemented and wired (commits up to 'compose settings in CI, docs'): middleware, TrustedHost, builders check+pin, build_postgres_dsn, save-time check, CI env, docs. Full unit+golden run: only a flaky timing test (`test_groups_cost_is_linear_in_pairs`) failed under load, passes alone. Test changes: `tests/conftest.py` and `test_connector_schema.py` (TEST-CHANGE commits; add to LOCAL_VERIFY). Remaining: attack verdict, lead review of lane B/C diffs, LOCAL_VERIFY entries, add `NORM_ALLOWED_NETWORKS` test, ADR-014/env_id check, phase gate (full CI run, ponytail-review).
 
 D15 lane B landed (25276ee + lint fix, lead review pending: `address_policy.py`, 114 tests pass; `NORM_ALLOWED_NETWORKS` has no test yet — add one). Parked `.handoff/D15.test_app_dsn_compose.py` fails ruff (E501 etc.); fix its lint when it moves to `tests/unit/` with the wiring. Lead now wires app.py/clone_executor.py/routes.py.
 
