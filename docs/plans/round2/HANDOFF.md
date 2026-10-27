@@ -7,7 +7,7 @@ Update this file at every commit. A working session reads [STATUS](STATUS) and t
 A session sets `lock=<ISO time>`, pushes it, and refreshes it with every commit; a lock older than 75
 minutes is stale.
 
-**Branch:** `feat/round2-fixes` · **Current phase:** 0 (not started)
+**Branch:** `feat/round2-fixes` · **Current phase:** 0 (baseline done; ownership locked; Phase 1 next)
 
 | item | phase | state | commit | lead verdict |
 |---|---|---|---|---|
@@ -21,11 +21,21 @@ States: `todo` · `in-progress` · `accepted-cloud` (lead accepted, cloud-verifi
 
 ## Locked file-ownership table (Phase 0)
 
-(filled by Phase 0 from `graphify affected` and `graft callers --depth all`)
+Locked 2026-10-27 from source reading and the Phase 0 greps (graft is not installed in the cloud;
+graphify graph built). Shared files are serial lead chains (plan §2.6).
+
+| files | owner | phases |
+|---|---|---|
+| `normapi/{app,main,schemas,routes,clone_executor}.py` | lead only | 1-4 |
+| `normio/connectors/{postgres,clickhouse}_destination.py` | lead | 2 |
+| new address-policy module in `normapi` + `tests/unit/test_address_policy.py` | worker B | 1 |
+| `compose.yaml`, `.env.example`, `packages/normapi/Dockerfile` | worker C | 1 |
+| `normalizers/language.py` + its unit test; `tests/property/` | workers | 3 |
+| `ui/**` | workers | 4 |
 
 ## Lane plan
 
-(filled by Phase 0)
+See plan §8 phase tables; they stand unchanged.
 
 ## In flight
 
@@ -36,7 +46,7 @@ none
 
 ## Next action
 
-Phase 0, step 1.
+Phase 1 (D15): ADR-022 first, then derive step (round2-verifier, model sonnet) for D15.
 
 ## Notifications
 
