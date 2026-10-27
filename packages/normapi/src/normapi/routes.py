@@ -1064,7 +1064,10 @@ def start_clone_job(
     request). Also the resume entry point (decision #10): calling this
     again on an orphaned RUNNING job re-streams and skips already-
     committed rows rather than redoing the whole table."""
-    started = clone_executor.start_phase2(connections, dispatcher, cache, job_id)
+    try:
+        started = clone_executor.start_phase2(connections, dispatcher, cache, job_id)
+    except CloneJobStateError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     if not started:
         job = connections.get_clone_job(job_id)
         if job is None:

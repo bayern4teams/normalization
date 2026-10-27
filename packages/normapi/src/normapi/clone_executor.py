@@ -932,6 +932,25 @@ _AMENDABLE_FIELDS = (
 )
 
 
+def _require_separate_copy(
+    job: dict[str, Any], source_conn: dict[str, Any], dest_conn: dict[str, Any]
+) -> None:
+    """ADR-013: the origin is never written. Refuses a job whose destination is the origin: the
+    same saved connection, or two saved connections to the same engine, host and port, with the
+    same database name. Checked on every phase, so a job stored before the request check existed
+    cannot write to its origin. Two host names for one server are not guessed to be equal."""
+    same_server = source_conn["connection_id"] == dest_conn["connection_id"] or (
+        (source_conn["engine"], source_conn["host"].lower(), source_conn["port"])
+        == (dest_conn["engine"], dest_conn["host"].lower(), dest_conn["port"])
+    )
+    if same_server and job["source_database"] == job["destination_database"]:
+        msg = (
+            f"Clone job {job['job_id']} would write into its origin "
+            f"({job['source_database']!r}). Create a new job with another destination database."
+        )
+        raise CloneJobStateError(msg)
+
+
 def verify_and_create_schema(persistence: PgPersistence, job_id: str) -> dict[str, Any]:
     """Phase 1 (decision #5): verifies the user has run the returned
     `CREATE DATABASE` command, then creates every table completely empty
@@ -948,6 +967,9 @@ def verify_and_create_schema(persistence: PgPersistence, job_id: str) -> dict[st
         raise CloneJobStateError(msg)
 
     dest_conn = _require_connection(persistence, job["destination_connection_id"])
+    _require_separate_copy(
+        job, _require_connection(persistence, job["source_connection_id"]), dest_conn
+    )
     dest = build_destination_writer(dest_conn)
     try:
         if not dest.database_exists(job["destination_database"]):
@@ -1041,7 +1063,16 @@ def start_phase2(
     """Claims the job (SCHEMA_READY|RUNNING|FAILED -> RUNNING) and starts Phase 2
     on a daemon thread. Returns False without starting a new thread if
     either the claim fails (wrong state — 409 at the route level) or a
-    thread for this job is already alive in this process."""
+    thread for this job is already alive in this process. Raises
+    `CloneJobStateError` when the job's destination is its origin (checked
+    before the claim, so the job is left as it was)."""
+    job = persistence.get_clone_job(job_id)
+    if job is not None:
+        # A missing connection is left to Phase 2, which names it; only identity is checked here.
+        source_conn = persistence.get_connection(job["source_connection_id"])
+        dest_conn = persistence.get_connection(job["destination_connection_id"])
+        if source_conn is not None and dest_conn is not None:
+            _require_separate_copy(job, source_conn, dest_conn)
     if not persistence.claim_clone_job(job_id):
         return False
     with _threads_lock:
@@ -2585,6 +2616,7 @@ def _run_phase2(
         source_identity(source_conn, job["source_database"], job.get("source_schema")),
     )
     dest_conn = _require_connection(persistence, job["destination_connection_id"])
+    _require_separate_copy(job, source_conn, dest_conn)
     source = build_source_connector(source_conn, job["source_database"], job.get("source_schema"))
     dest = build_destination_writer(dest_conn)
     # `cache` is deliberately NOT passed to the planner. The persistent

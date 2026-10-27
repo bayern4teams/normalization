@@ -81,9 +81,9 @@ INSERT INTO typed_source (amount, price, active) VALUES
 
 GRANT SELECT ON typed_source TO readonly_user;
 
--- In-place normalization (decision: swap a staging table in) needs a
--- database the app may WRITE to, which source_demo deliberately is not.
--- writable_user has CREATEDB, so the test creates and seeds its own.
+-- The clone destination needs a database the app may WRITE to, which
+-- source_demo deliberately is not. writable_user has CREATEDB, so the test
+-- creates and seeds its own.
 
 -- A dedicated table for the normalization-CONTEXT tests. Several
 -- normalizers refuse to guess without a country, and a COUNTRY column in
