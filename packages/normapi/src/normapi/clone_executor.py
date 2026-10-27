@@ -2364,7 +2364,7 @@ def _normalize_table(
     adjudication: Adjudication | None = None,
 ) -> None:
     """One table, end to end: stream it, normalize every configured
-    column, insert, checkpoint, and — in-place only — swap it in.
+    column, insert, checkpoint.
 
     Extracted from `_run_phase2`, which had grown to 63 statements across
     15 branches doing connection setup, the per-table work and failure
@@ -2478,10 +2478,8 @@ def _normalize_table(
                 flush()
     flush()
 
-    # Before the swap, deliberately: a job that trips its own
-    # max_new_null_rate ceiling in in-place mode must leave the ORIGINAL
-    # table in place. Failing after the swap would have already replaced
-    # the source with the table the ceiling exists to reject.
+    # Reported after the last block is written: a job that trips its own
+    # max_new_null_rate ceiling fails here, with the copy left as written.
     _report_column_findings(
         persistence,
         job_id,

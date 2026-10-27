@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from normcore import (
     CloneJobStatus,
@@ -193,6 +193,8 @@ class CloneJobCreateRequest(BaseModel):
     (a column absent from its table's map, or mapped to null, is
     passthrough)."""
 
+    model_config = ConfigDict(extra="forbid")  # a removed or misspelt option is an error
+
     source_connection_id: str
     source_database: str
     # Postgres only: the namespace inside `source_database` that table names
@@ -201,8 +203,8 @@ class CloneJobCreateRequest(BaseModel):
     # job with no tables that still reported COMPLETED. One schema per job,
     # so the clone's own table names stay unqualified.
     source_schema: str | None = None
-    destination_connection_id: str
-    destination_database: str
+    destination_connection_id: str = Field(min_length=1)
+    destination_database: str = Field(min_length=1)
     # Off by default: a column absent from `field_configs` is cloned
     # verbatim. Detection still runs and the plan (`GET .../plan`) shows its
     # suggestion per column with the share of sampled values that validate;
@@ -270,18 +272,20 @@ class CloneJobCreateRequest(BaseModel):
     # those answers in its quality report either way.
     calibrated_abstention: bool = False
 
-    @model_validator(mode="before")
-    @classmethod
-    def _refuse_in_place(cls, data: Any) -> Any:
-        """ADR-013: the origin is never written. `in_place` used to replace it; a
-        client that still sends it gets this message, not a silent ignore."""
-        if isinstance(data, dict) and "in_place" in data:
+    @model_validator(mode="after")
+    def _destination_is_not_the_origin(self) -> CloneJobCreateRequest:
+        """ADR-013: the origin is never written. The same connection and the same
+        database is the origin itself; anything else is a separate copy."""
+        if (
+            self.destination_connection_id == self.source_connection_id
+            and self.destination_database == self.source_database
+        ):
             msg = (
-                "in_place was removed: every clone writes a separate copy. "
-                "Send destination_connection_id and destination_database instead."
+                "The destination is the origin. Choose another database: "
+                "every clone writes a separate copy."
             )
             raise ValueError(msg)
-        return data
+        return self
 
     # ponytail: stored inside normalization_clone_jobs.data's JSON blob,
     # not a separate table — consumed exactly twice (Phase 1 DDL, Phase 2

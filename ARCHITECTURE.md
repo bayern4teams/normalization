@@ -303,7 +303,7 @@ Rules that matter to a database administrator:
 | Guarantee | How it holds |
 |---|---|
 | A normal clone never writes the origin. | `SourceConnector` has no write method. Demo origins have a database-level read-only user (`tests/integration/test_readonly_connectors.py`). The destination uses its own connection. |
-| The origin is never written. | Every clone writes a separate copy. The schema refuses an `in_place` field (`packages/normapi/src/normapi/schemas.py::CloneJobCreateRequest`). |
+| The origin is never written. | Every clone writes a separate copy. The schema refuses unknown fields and a destination equal to the origin (`packages/normapi/src/normapi/schemas.py::CloneJobCreateRequest`). |
 | No guess on ambiguous input. | Normalizers return `AMBIGUOUS` and keep the original. `1,234` has no locale to settle it. |
 | Precision is kept, not invented. | A year stays a year. Nothing fills in a month or day. |
 | The original survives. | `original` is never overwritten. A failed value keeps its original in a text destination column. A typed column stores NULL and an error row. |
