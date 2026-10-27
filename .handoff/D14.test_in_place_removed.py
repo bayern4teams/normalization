@@ -289,7 +289,7 @@ FEATURE_NAME = re.compile(r"in[\s_-]?place", re.IGNORECASE)
 
 # Different meanings of the words, checked by reading each hit at the parent commit:
 #   "replaced in place (decision #7)"   a DDL column replaced by its typed column
-#   "in place of"                       "instead of"
+#   "in place of" (may wrap)            "instead of"
 #   "object in place" / "mutated in place" / "one chunk, in place"   Python object mutation
 #   "replicates schema in place"        "on the spot"; no connection to the removed mode
 BENIGN = (
@@ -319,10 +319,12 @@ def _scanned_files() -> list[Path]:
 def test_in_place_feature_name_is_absent() -> None:
     hits: list[str] = []
     for path in _scanned_files():
-        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        lines = path.read_text(encoding="utf-8").splitlines()
+        for number, line in enumerate(lines, 1):
             if not FEATURE_NAME.search(line):
                 continue
-            if any(pattern.search(line) for pattern in BENIGN):
+            following = lines[number].lstrip(" #/*") if number < len(lines) else ""
+            if any(pattern.search(f"{line} {following}") for pattern in BENIGN):
                 continue
             if path.name == "ARCHITECTURE.md" and REFUSAL_SENTENCE.search(line):
                 continue
