@@ -34,7 +34,7 @@ def _policy():
     return mod
 
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 SRC = ROOT / "packages" / "normapi" / "src" / "normapi"
 
 # (address, allowed, why). The reason column is the RFC / registry that makes the row true.
