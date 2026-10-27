@@ -47,6 +47,8 @@ Phase 3 (D13, LANGUAGE): ADR-010 amendment first; derive step (round2-verifier, 
 
 ## Notifications
 
+[BLOCKED] 2026-10-27 D13: step 4 failed. graphify-out/graph.json is missing and `uv sync --all-extras` fails in this session: first pyicu (no libicu-dev/pkg-config), then after `scripts/cloud_setup.sh` pyarrow 17.0.0 (uv picked Python 3.13; build needs pkg_resources). Question: should the routine environment pin Python 3.12 (e.g. `uv sync --python 3.12 --all-extras`) and install libicu-dev in its setup script, or should I continue without graphs? Set next=work after fixing.
+
 [DRYRUN DONE] 2026-10-27T15:03Z, see .handoff/supervisor_dryrun.txt
 
 [PHASE 1 DONE] 2026-10-27. D15 `unverified-live` (see LOCAL_VERIFY.md). Gate, run in this session:
