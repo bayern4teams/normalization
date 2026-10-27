@@ -42,6 +42,9 @@ class NormalizationContext(BaseModel):
     column_date_order: tuple[str, int] | None = None
     # The same for the decimal mark (`.` or `,`) of a NUMERIC or MONEY column.
     column_decimal_mark: tuple[str, int] | None = None
+    # Whether the column's own values prove LANGUAGE codes (`code`) or names (`name`), and how
+    # many distinct values prove it (ADR-010 amendment 2026-10-27).
+    column_language_form: tuple[str, int] | None = None
     error_policy: ErrorPolicy = ErrorPolicy.RETURN_ORIGINAL
     pii_visibility: str = "masked"
     # Whether normalizers build the per-step `trace` (Source.txt §65).

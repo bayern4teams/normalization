@@ -35,7 +35,7 @@ pytestmark = pytest.mark.unit
 _NORMALIZER = LanguageNormalizer()
 _LANGS = list(pycountry.languages)
 _REFUSED = {S.AMBIGUOUS, S.INVALID, S.FAILED, S.NEEDS_REVIEW}
-_REPO = Path(__file__).resolve().parents[1]
+_REPO = Path(__file__).resolve().parents[2]
 _LANGUAGE_PY = _REPO / "packages" / "normalizers" / "src" / "normalizers" / "language.py"
 
 

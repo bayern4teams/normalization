@@ -38,6 +38,7 @@ from importlib import resources
 from typing import TYPE_CHECKING, Any
 
 from normalizers.date import column_date_evidence
+from normalizers.language import column_language_evidence
 from normalizers.numeric import column_decimal_evidence
 from normalizers.postcode_validation import country_from_postcode_format
 from normanalysis.type_detection import suggest_semantic_type
@@ -2152,7 +2153,11 @@ def _proven(job: Mapping[str, Any], table: str, column: str) -> dict[str, tuple[
     evidence = job.get("column_evidence", {}).get(table, {}).get(column) or {}
     return {
         field: (evidence[key], evidence[evidence[key]])
-        for key, field in (("order", "column_date_order"), ("mark", "column_decimal_mark"))
+        for key, field in (
+            ("order", "column_date_order"),
+            ("mark", "column_decimal_mark"),
+            ("form", "column_language_form"),
+        )
         if evidence.get(key)
     }
 
@@ -2536,6 +2541,7 @@ _COLUMN_EVIDENCE = {
     FieldSemanticType.DATETIME: column_date_evidence,
     FieldSemanticType.NUMERIC: column_decimal_evidence,
     FieldSemanticType.MONEY: column_decimal_evidence,
+    FieldSemanticType.LANGUAGE: column_language_evidence,
 }
 
 
@@ -2545,8 +2551,9 @@ def _column_evidence(
     table: str,
     configured_columns: Mapping[str, FieldSemanticType],
 ) -> None:
-    """What each DATE/DATETIME column's values prove about its day/month order
-    and each NUMERIC/MONEY column's about its decimal mark, over every value,
+    """What each DATE/DATETIME column's values prove about its day/month order,
+    each NUMERIC/MONEY column's about its decimal mark and each LANGUAGE
+    column's about whether it holds codes or names, over every value,
     before the first row is written. Kept on the job, so a resume reads the
     same (ADR-008 and ADR-011 amendments)."""
     evidence = job.setdefault("column_evidence", {})

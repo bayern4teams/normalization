@@ -28,8 +28,8 @@ language after the bare code.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from typing import TYPE_CHECKING, cast
+from collections.abc import Iterable, Mapping
+from typing import TYPE_CHECKING, Any, cast
 
 import babel.core
 import blake3
@@ -44,6 +44,7 @@ from normcore.trace import TraceStep
 
 from normalizers import text_ops
 from normalizers._cldr_language_names import CLDR_LANGUAGE_NAMES
+from normalizers.date import proven_by_column
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -58,6 +59,10 @@ _TAG_SEPARATORS = ("-", "_")
 
 # Deprecated ISO 639 subtags CLDR maps to their modern equivalent.
 _LANGUAGE_ALIASES: Mapping[str, str] = babel.core.get_global("language_aliases")
+# CLDR: the languages spoken in each territory (row evidence for a code that is also a name).
+_TERRITORY_LANGUAGES: Mapping[str, Mapping[str, object]] = babel.core.get_global(
+    "territory_languages"
+)
 
 
 class _StaticStepSpec:
@@ -90,12 +95,29 @@ class LanguageNormalizer:
         # Same edge set COUNTRY resolves by: a lookup value wrapped in
         # list or path separators (`/en`, `, , , , USD`) is the value.
         cleaned, _ = text_ops.strip_enclosing_separators(value)
-        subtag, tag_parts = _split_language_tag(cleaned)
-        language = _resolve_language(subtag)
+        cleaned = cleaned.strip()
+        code_reading, tag_parts = _code_reading(cleaned)
+        name_reading = _exact_name(cleaned)
+        evidence: str | None = None
+        language: pycountry.db.Data | None
+        if (
+            code_reading is not None
+            and name_reading is not None
+            and not _same(code_reading, name_reading)
+        ):
+            # Both a code and a name (`Ga`, `Mon`): the row or the column
+            # settles it, or nobody does (ADR-010 amendment 2026-10-27).
+            chosen, evidence = _settle(code_reading, name_reading, ctx)
+            if chosen is None:
+                return _ambiguous(value, code_reading, name_reading, ctx)
+            language = chosen
+            tag_parts = tag_parts if chosen is code_reading else {}
+        else:
+            language = code_reading or name_reading or _resolve_name(cleaned)
         if language is None:
             return _unresolved(value, ctx)
 
-        canonical_code = getattr(language, "alpha_2", None) or language.alpha_3
+        canonical_code = _code_of(language)
 
         structured = {
             "source_value": cleaned,
@@ -104,6 +126,7 @@ class LanguageNormalizer:
             # Present (and non-null) only for a tag that actually carried
             # them — what "en-US" means beyond "en" is not thrown away.
             **tag_parts,
+            **({"evidence": evidence} if evidence else {}),
         }
 
         return NormalizedValue(
@@ -170,17 +193,35 @@ class LanguageNormalizer:
         return None
 
 
-def _split_language_tag(cleaned: str) -> tuple[str, dict[str, str]]:
-    """Split a BCP 47 tag into its language subtag and the rest.
+def _code_of(language: pycountry.db.Data) -> str:
+    """ISO 639-1 where one exists, else ISO 639-3: the stored code."""
+    return cast("str", getattr(language, "alpha_2", None) or language.alpha_3)
 
-    Returns the value unchanged when it is not tag-shaped, so plain codes
-    and names ("en", "English") take exactly the path they always did.
-    Parsing is syntactic only — Babel happily parses "xx-YY" — so the
-    subtag is still validated against ISO 639 by `_resolve_language`.
-    """
+
+def _same(a: pycountry.db.Data, b: pycountry.db.Data) -> bool:
+    return bool(a.alpha_3 == b.alpha_3)
+
+
+def _by_code(code: str) -> pycountry.db.Data | None:
+    """An exact ISO 639-1 or 639-3 code. `pycountry.languages.lookup("en")` does
+    NOT return English: it matches the name "En" (alpha_3 `enc`) first, so the
+    code fields are tried explicitly."""
+    lowered = code.lower()
+    if len(lowered) == 2:  # ISO 639-1 codes are two letters
+        return cast("pycountry.db.Data | None", pycountry.languages.get(alpha_2=lowered))
+    if len(lowered) == 3:  # ISO 639-3 codes are three letters
+        return cast("pycountry.db.Data | None", pycountry.languages.get(alpha_3=lowered))
+    return None
+
+
+def _code_reading(cleaned: str) -> tuple[pycountry.db.Data | None, dict[str, str]]:
+    """The language read as an ISO 639 code or a BCP 47 tag, with the tag's
+    script, territory and variant. A hyphen or underscore splits a value only
+    when the first piece is a language subtag that exists and the rest parses as
+    script, territory or variant subtags; any other value (`Kuku-Yalanji`) is
+    left whole, to be looked up as a name."""
     if not any(sep in cleaned for sep in _TAG_SEPARATORS):
-        return cleaned, {}
-
+        return _by_code(cleaned), {}
     for separator in _TAG_SEPARATORS:
         if separator not in cleaned:
             continue
@@ -192,44 +233,33 @@ def _split_language_tag(cleaned: str) -> tuple[str, dict[str, str]]:
         # modifier ("ca_ES@valencia"). Indexing rather than unpacking
         # keeps both shapes working.
         language, territory, script, variant = parsed[0], parsed[1], parsed[2], parsed[3]
-        if not language:
-            continue
         # An alias may itself carry a script ("sh" -> "sr_Latn").
-        alias = _LANGUAGE_ALIASES.get(language, language)
+        alias = _LANGUAGE_ALIASES.get(language, language) if language else ""
         alias_language, _, alias_script = alias.partition("_")
+        resolved = _by_code(alias_language) if alias_language else None
+        if resolved is None:
+            continue
         parts = {
             "tag_script": script or alias_script or None,
             "tag_territory": territory,
             "tag_variant": variant,
         }
-        return alias_language, {k: v for k, v in parts.items() if v}
+        return resolved, {k: v for k, v in parts.items() if v}
+    return None, {}
 
-    return cleaned, {}
+
+def _exact_name(cleaned: str) -> pycountry.db.Data | None:
+    """The language whose ISO 639 name is exactly `cleaned` (`Ga`, `Mon`,
+    `Kuku-Yalanji`). pycountry's name index ignores case, so the name is
+    compared again: `ga` is the code of Irish, not the name of `gaa`."""
+    found = pycountry.languages.get(name=cleaned)
+    if found is not None and found.name == cleaned:
+        return cast("pycountry.db.Data", found)
+    return None
 
 
-def _resolve_language(cleaned: str) -> pycountry.db.Data | None:
-    """Tries exact ISO 639 code fields FIRST, before falling back to
-    `pycountry.languages.lookup()`'s generic (code-or-name) search.
-
-    Found empirically in M4: `pycountry.languages.lookup("en")` does NOT
-    return English — it returns a different, obscure language whose
-    `name` field happens to be the two-letter string "En" (alpha_3
-    "enc"), because `lookup()` apparently checks name equality before —
-    or instead of — an exact alpha_2 code match for short inputs. Trying
-    `get(alpha_2=...)` / `get(alpha_3=...)` explicitly first sidesteps
-    this entirely for the common case of a real ISO code being passed
-    in, and `lookup()` remains the fallback for full names ("English")
-    where this bug does not manifest.
-    """
-    lowered = cleaned.lower()
-    if len(lowered) == 2:
-        exact = pycountry.languages.get(alpha_2=lowered)
-        if exact is not None:
-            return cast("pycountry.db.Data", exact)
-    if len(lowered) == 3:
-        exact = pycountry.languages.get(alpha_3=lowered)
-        if exact is not None:
-            return cast("pycountry.db.Data", exact)
+def _resolve_name(cleaned: str) -> pycountry.db.Data | None:
+    """A name, endonym or deprecated subtag, for a value that is not a code."""
     try:
         return cast("pycountry.db.Data", pycountry.languages.lookup(cleaned))
     except LookupError:
@@ -240,7 +270,7 @@ def _resolve_language(cleaned: str) -> pycountry.db.Data | None:
     # entry and is NOT rewritten to CLDR's "sr_Latn"). Without this a
     # bare "iw" was INVALID while "iw-IL" resolved, purely because only
     # the tagged form went through the alias map.
-    alias = _LANGUAGE_ALIASES.get(lowered)
+    alias = _LANGUAGE_ALIASES.get(cleaned.lower())
     if alias is not None:
         alias_language, _, _ = alias.partition("_")
         resolved = pycountry.languages.get(alpha_2=alias_language) or pycountry.languages.get(
@@ -258,6 +288,85 @@ def _resolve_language(cleaned: str) -> pycountry.db.Data | None:
         if by_name is not None:
             return cast("pycountry.db.Data", by_name)
     return None
+
+
+def _spoken_in(language: pycountry.db.Data, country: str) -> bool:
+    """CLDR lists the language for the territory (`territory_languages`)."""
+    own = {getattr(language, "alpha_2", None), language.alpha_3}
+    listed = _TERRITORY_LANGUAGES.get(country.upper(), {})
+    return any(key.partition("_")[0] in own for key in listed)
+
+
+def _settle(
+    as_code: pycountry.db.Data, as_name: pycountry.db.Data, ctx: NormalizationContext
+) -> tuple[pycountry.db.Data | None, str | None]:
+    """The reading the evidence supports, with where it came from, or
+    (None, None). Row evidence: exactly one reading is a language of the row's
+    country. Column evidence: the column's own values are all codes or all
+    names. Two pieces of evidence that disagree settle nothing."""
+    votes: dict[str, pycountry.db.Data] = {}
+    if ctx.country:
+        in_country = [
+            (reading, language)
+            for reading, language in (("code", as_code), ("name", as_name))
+            if _spoken_in(language, ctx.country)
+        ]
+        if len(in_country) == 1:
+            votes["row_country"] = in_country[0][1]
+    if ctx.column_language_form is not None:
+        votes["column"] = as_code if ctx.column_language_form[0] == "code" else as_name
+    if len({v.alpha_3 for v in votes.values()}) != 1:
+        return None, None
+    source = "row_country" if "row_country" in votes else "column"
+    return next(iter(votes.values())), source
+
+
+def column_language_evidence(values: Iterable[object]) -> dict[str, Any]:
+    """How many distinct values of a column can only be a code (`fr`, `deu`,
+    `en-GB`) and how many can only be a name (`French`), and the form they prove
+    (`form`, by the same rule as a day/month order). A value that is both, or
+    neither, proves nothing."""
+    found: dict[str, set[str]] = {"code": set(), "name": set()}
+    for value in values:
+        if not isinstance(value, str):
+            continue
+        cleaned = value.strip()
+        as_code = _code_reading(cleaned)[0] is not None
+        as_name = _exact_name(cleaned) is not None or (not as_code and _resolve_name(cleaned))
+        if as_code != bool(as_name):
+            found["code" if as_code else "name"].add(cleaned)
+    counts = {k: len(v) for k, v in found.items()}
+    return {**counts, "form": proven_by_column(counts)}
+
+
+def _ambiguous(
+    value: str,
+    as_code: pycountry.db.Data,
+    as_name: pycountry.db.Data,
+    ctx: NormalizationContext,
+) -> NormalizedValue:
+    """Neither reading is chosen: the value is kept, both readings go to the
+    review queue in `structured`."""
+    return NormalizedValue(
+        original=value,
+        display=value,
+        structured={
+            "readings": [
+                {"reading": "code", "code": _code_of(as_code), "language_name": as_code.name},
+                {"reading": "name", "code": _code_of(as_name), "language_name": as_name.name},
+            ]
+        },
+        validation_status="AMBIGUOUS",
+        normalization_status=NormalizationStatus.AMBIGUOUS,
+        confidence=0.0,
+        errors=["both an ISO 639 code and the name of another language: not guessed"],
+        trace=[_resolve_trace_step(value, changed=False)],
+        lossiness=Reversibility.LOSSLESS,
+        profile_version="",
+        env_id="",
+        semantic_type=ctx.semantic_type,
+        context_hash=ctx.context_hash,
+    )
 
 
 def _unresolved(value: str, ctx: NormalizationContext) -> NormalizedValue:

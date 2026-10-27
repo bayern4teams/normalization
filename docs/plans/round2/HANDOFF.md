@@ -39,7 +39,7 @@ See plan §8 phase tables; they stand unchanged.
 
 ## In flight
 
-- round2-verifier (sonnet), D13 derive: `.handoff/D13.test_*.py`, `.handoff/D13.acceptance.md`; started 2026-10-27T16:25Z
+- round2-verifier (sonnet), D13 attack: verdict `.handoff/D13.verdict.md`; started 2026-10-27T16:41Z
 
 ## Next action
 

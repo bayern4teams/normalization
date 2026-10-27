@@ -293,7 +293,7 @@ override and outputs stay outside the repository.
 
 ## Algorithms and techniques
 
-<!-- verified: 9f27526 -->
+<!-- verified: a80d9bf -->
 
 | Module | Technique | Why |
 |---|---|---|
@@ -305,6 +305,7 @@ override and outputs stay outside the repository.
 | `normalizers/phone.py` | `phonenumbers`. Letters that the parser would drop give `AMBIGUOUS`. With an extension, `comparison` is the RFC 3966 URI. | Silent letter drops gave confident wrong numbers ([REPORT §10 item 4](docs/benchmarks/REPORT.md)). |
 | `normalizers/identifier.py::tax_id_module_for` | Pick the `python-stdnum` module for the country from the package list of `python-stdnum`. A number that no offline validator can decide is `UNKNOWN`. | A hand table covered four countries (D7). |
 | `normalizers/url.py::_registrable` | Registrable domain from the bundled Public Suffix List, offline. | Network access is off by construction. |
+| `normalizers/language.py` | The stored code (`comparison`) is the contract; `display` is output only. A value that is both an ISO 639 code and another language's name (`Ga`, `Mon`) is `AMBIGUOUS` unless the row's country (CLDR `territory_languages`) or the column's own values (codes or names) settle it. A hyphen splits only a valid BCP 47 tag. | Feeding the English names back changed 440 of 7,910 languages ([D13](docs/improvement-report.md), ADR-010). |
 | `normalizers/name.py` | Double Metaphone and Beider-Morse codes for Latin names. Cyrillic and Arabic names get the two language-aware keys only. | Soundex is Anglo-centric (D11). |
 | `normcore/dispatch.py::Dispatcher._reads_as_a_value` | A normalizer that rejects a negative control string proves something by accepting a token. | `NA` is Namibia to one type and Nauru to another. |
 | `normanalysis/type_detection.py::suggest_semantic_type` | Name match plus a sample check against the normalizer, using the same negative control. | A type that accepts anything is no evidence. |

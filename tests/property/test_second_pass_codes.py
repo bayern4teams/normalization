@@ -161,12 +161,12 @@ def test_the_pinned_ga_case_holds_on_comparison() -> None:
 
 
 def test_the_property_has_teeth_display_is_not_a_fixed_point() -> None:
-    """Teeth: the same two-pass check on `display` finds the report's case, so the helper
-    above is able to fail. Display is output only (R11); this is why the contract is the code.
-    True before and after D13."""
+    """Teeth: feeding `display` back does not return the first code (before D13 it named Irish,
+    now it is AMBIGUOUS), so display is output only (R11) and the contract is the code."""
     normalizer = LanguageNormalizer()
     ctx = _ctx(T.LANGUAGE, "US")
     first = normalizer.normalize("\u0e01\u0e32", ctx)
     assert first.display == "Ga"
     second = normalizer.normalize(first.display, ctx)
-    assert second.display != first.display
+    # Fed back, the name is read as a code or stays ambiguous: it is never the first code again.
+    assert second.comparison != first.comparison
