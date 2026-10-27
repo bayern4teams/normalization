@@ -44,7 +44,7 @@ Boundaries:
 
 ## Deployment
 
-<!-- verified: 9f27526 -->
+<!-- verified: 544cd37 -->
 
 ```mermaid
 flowchart LR
@@ -334,7 +334,7 @@ Known limits:
 
 ## Security and personal data
 
-<!-- verified: 9f27526 -->
+<!-- verified: 544cd37 -->
 
 | Topic | Rule | Code |
 |---|---|---|

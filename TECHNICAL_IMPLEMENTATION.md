@@ -344,7 +344,7 @@ Rejected libraries: `Unidecode`, `text-unidecode`, `wordfreq`, `abydos`, `deeppa
 
 ## Tests and CI
 
-<!-- verified: 12c1dd5 -->
+<!-- verified: 544cd37 -->
 
 | Marker | Where | Needs |
 |---|---|---|

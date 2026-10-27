@@ -7,7 +7,7 @@ Update this file at every commit. A working session reads [STATUS](STATUS) and t
 A session sets `lock=<ISO time>`, pushes it, and refreshes it with every commit; a lock older than 75
 minutes is stale.
 
-**Branch:** `feat/round2-fixes` · **Current phase:** 0 (baseline done; ownership locked; Phase 1 next)
+**Branch:** `feat/round2-fixes` · **Current phase:** 2 (Phase 1 done)
 
 | item | phase | state | commit | lead verdict |
 |---|---|---|---|---|
@@ -42,20 +42,22 @@ See plan §8 phase tables; they stand unchanged.
 
 ## Next action
 
-D15 implemented and wired (commits up to 'compose settings in CI, docs'): middleware, TrustedHost, builders check+pin, build_postgres_dsn, save-time check, CI env, docs. Full unit+golden run: only a flaky timing test (`test_groups_cost_is_linear_in_pairs`) failed under load, passes alone. Test changes: `tests/conftest.py` and `test_connector_schema.py` (TEST-CHANGE commits; add to LOCAL_VERIFY). Remaining: attack verdict, lead review of lane B/C diffs, LOCAL_VERIFY entries, add `NORM_ALLOWED_NETWORKS` test, ADR-014/env_id check, phase gate (full CI run, ponytail-review).
-
-D15 lane B landed (25276ee + lint fix, lead review pending: `address_policy.py`, 114 tests pass; `NORM_ALLOWED_NETWORKS` has no test yet — add one). Parked `.handoff/D15.test_app_dsn_compose.py` fails ruff (E501 etc.); fix its lint when it moves to `tests/unit/` with the wiring. Lead now wires app.py/clone_executor.py/routes.py.
-
-D15 derive done (9a60857, d0bd76f; 140 of 153 checks fail today as intended; run with `--import-mode=importlib`). Lane B module in flight. Lead then wires middleware, TrustedHost, builders, `build_postgres_dsn`, R14 setting (name to choose in ADR-022), per-use checks.
-
-D15 lane C landed (d823ba8, WIP, lead review pending). Follow-ups for the lead: set `NORM_BIND_ADDR` and `NORM_SECRET_KEY` in `.github/workflows/ci-full.yml:151`, `gate.yml:115,195` and the compose-starting test fixtures (compose now fails without them); update README (~80, ~152) and ARCHITECTURE (~85, ~338, deployment text); check what reads `NORM_API_HOST` in `.env.example`. Then: derive result, address-policy module, middleware, builders.
-
-
-Phase 1 (D15): ADR-022 first, then derive step (round2-verifier, model sonnet) for D15.
+Phase 2 (D14, remove in-place mode): ADR-013 and ADR-017 amendments first, then derive step (round2-verifier, model sonnet) for D14, then lanes per plan §8. Remember §2.9: deleted tests need a `C5:` line (owner approval 2026-10-27, review 2027-01-27).
 
 ## Notifications
 
 [DRYRUN DONE] 2026-10-27T15:03Z, see .handoff/supervisor_dryrun.txt
+
+[PHASE 1 DONE] 2026-10-27. D15 `unverified-live` (see LOCAL_VERIFY.md). Gate, run in this session:
+ruff check, ruff format --check, mypy: pass. pytest (unit or golden and not slow, capped): 3385 passed, 24 skipped, 1 xfailed.
+Guards: check_c5_exceptions, check_test_assertions, check_root_files, check_gitignore_consistency, check_no_stubs,
+check_docs_note, deptry, actionlint, markdownlint-cli2, check_mermaid: pass. gitleaks on `main..HEAD`: no leaks.
+NOT run: Vale, lychee (docs.yml `style` and `links` jobs), zizmor (needs the GitHub API: "couldn't list tags"), and
+the ci-full / gate.yml integration, e2e and mutation jobs (no Docker). GitHub: every run on the branch ends in 2 s
+with one job and no steps (e.g. ci-fast run 40536779521): treated as the known billing refusal, recorded, not a block.
+/ponytail-review of the phase diff: lean, no findings. Graphs refreshed.
+Pre-existing, not this branch: `gitleaks git .` over full history reports 3 hits on the old committed
+NORM_SECRET_KEY (commits already on main: da81a25, ab0846a, 364cbd3). See Open escalations.
 
 (append `[PHASE n DONE]`, `[BLOCKED]` and `[ROUND2 COMPLETE]` entries; the same prefixes go in commit
 messages)
@@ -68,4 +70,9 @@ messages)
 
 (results that passed only written tests or one case, and findings outside round 2's scope)
 
-none
+- The `NORM_SECRET_KEY` that compose.yaml used to commit is in main's history and `gitleaks git .` flags it (guards.yml B6
+  step is likely red on main too). Rotate it on any deployment that used it; whether to add a `.gitleaksignore` entry (a C5
+  exception) is the owner's call. Not touched.
+- D15: `Host: localhost:80@evil.com` is accepted by Starlette's TrustedHostMiddleware (it reads the part before the first `:`).
+  Not exploitable without an allowed peer; listed in LOCAL_VERIFY.
+- Vale and lychee not run in the cloud (see [PHASE 1 DONE]).
