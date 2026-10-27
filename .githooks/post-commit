@@ -16,6 +16,7 @@
 # Enable (once per clone):  git config core.hooksPath .githooks
 
 set -u
+export DO_NOT_TRACK=1  # graft's usage ping and version check (owner decision 2026-10-27)
 
 # Never fail a commit because an index did not refresh, and never hold the
 # terminal: each tool is optional and independently skippable.

@@ -293,6 +293,9 @@ These are not style preferences; each one exists because ignoring it broke somet
 - Part 1, round 2 (D13-D15 and the UI, U1) is planned, not built:
   [`docs/improvement-report.md`](docs/improvement-report.md), "Part 1, round 2", with the
   owner's decisions of 2026-10-25. Why: it is the live plan; build from it, not from memory.
+  How it is built: [`docs/plans/ROUND2_IMPLEMENTATION_PLAN.md`](docs/plans/ROUND2_IMPLEMENTATION_PLAN.md)
+  (the cloud routine kit, state in `docs/plans/round2/`). Why: the routine and the owner read the
+  same plan.
 
 ### Known gaps against general block v1.2.0
 

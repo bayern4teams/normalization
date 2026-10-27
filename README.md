@@ -170,6 +170,7 @@ as `Proprietary`.
 | [docs/LESSONS.md](docs/LESSONS.md) | What was tried and did not work |
 | [docs/adr/](docs/adr/) | Design decisions |
 | [docs/improvement-report.md](docs/improvement-report.md) | Defects D1 to D15 and the UI (U1), research, the plan behind Part 1 |
+| [docs/plans/ROUND2_IMPLEMENTATION_PLAN.md](docs/plans/ROUND2_IMPLEMENTATION_PLAN.md) | How round 2 (D13 to D15, U1) is built |
 | [docs/normalization-tool-evaluation.md](docs/normalization-tool-evaluation.md) | Library evaluation and rejected candidates |
 | [docs/dependency-inventory.md](docs/dependency-inventory.md) | Dependencies and licenses |
 | [docs/clone-e2e-guide.md](docs/clone-e2e-guide.md) | Run a clone step by step |

@@ -1,4 +1,7 @@
 {
+  "env": {
+    "DO_NOT_TRACK": "1"
+  },
   "statusLine": {
     "type": "command",
     "command": "node \"${CLAUDE_PROJECT_DIR:-.}/.claude/helpers/graft-statusline.cjs\""
@@ -35,7 +38,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PROJECT_DIR:-.}/.claude/helpers/graft-hooks.cjs\" prompt",
+            "command": "[ \"$CLAUDE_CODE_REMOTE\" = true ] || node \"${CLAUDE_PROJECT_DIR:-.}/.claude/helpers/graft-hooks.cjs\" prompt",
             "timeout": 15000
           }
         ]
@@ -46,7 +49,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PROJECT_DIR:-.}/.claude/helpers/graft-hooks.cjs\" session-start",
+            "command": "[ \"$CLAUDE_CODE_REMOTE\" = true ] || node \"${CLAUDE_PROJECT_DIR:-.}/.claude/helpers/graft-hooks.cjs\" session-start",
             "timeout": 8000
           }
         ]
@@ -55,7 +58,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "uv run python \"${CLAUDE_PROJECT_DIR:-.}/scripts/refresh_graphs.py\" --session-start",
+            "command": "[ \"$CLAUDE_CODE_REMOTE\" = true ] || uv run python \"${CLAUDE_PROJECT_DIR:-.}/scripts/refresh_graphs.py\" --session-start",
             "timeout": 300
           }
         ]

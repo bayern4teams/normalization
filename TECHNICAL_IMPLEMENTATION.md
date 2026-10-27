@@ -71,7 +71,7 @@ Rules between modules:
 | `ui/src` | `pages/`, `api/client.ts`, `app/` | React UI. 18 pages. |
 | `services/libpostal` | `Dockerfile` | Address parsing sidecar. |
 | `data/dictionaries` | `honorifics`, `legal-entity-suffixes`, `missing-values`, `name-suffixes` | Shipped dictionaries. |
-| `scripts` | `refresh_graphs.py`, `check_*.py`, `generate_*.py`, `license_policy.toml` | Repository tooling and generators. |
+| `scripts` | `refresh_graphs.py`, `cloud_setup.sh`, `cloud_environment_setup.sh`, `check_*.py`, `generate_*.py`, `license_policy.toml` | Repository tooling and generators. `refresh_graphs.py::PINS` is the one home of the graph-tool versions. |
 | `tests` | `unit`, `golden`, `property`, `integration`, `bench`, `defects` | Tests. |
 | `docs/benchmarks` | `REPORT.md`, `scripts/`, `configs/` | Benchmark report and its scripts. |
 

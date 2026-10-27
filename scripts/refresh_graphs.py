@@ -12,6 +12,7 @@ empty index. Same shallow, no-LLM commands as the hook; never `--deep`, never `g
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import sys
@@ -19,6 +20,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 _TIMEOUT_S = 600
+
+# The one home of the graph-tool versions (owner decision 2026-10-27): both cloud setup scripts must
+# install exactly these (tests/unit/test_refresh_graphs.py), and a local mismatch is a warning.
+PINS = {"graft": "0.26.0", "graphify": "0.9.96", "codebase-memory-mcp": "0.12.1"}
 
 # (tool, argv, in-tree output proving it ran; Path() = none, always rebuilt)
 GRAPHS: list[tuple[str, list[str], Path]] = [
@@ -53,9 +58,31 @@ def _run(tool: str, args: list[str]) -> str | None:
     return None
 
 
+def _version_output(exe: str) -> str:
+    done = subprocess.run(
+        [exe, "--version"], capture_output=True, text=True, timeout=30, check=False
+    )
+    return done.stdout.strip()
+
+
+def version_warnings() -> list[str]:
+    """One line per installed tool whose `--version` differs from its pin."""
+    warnings = []
+    for tool, pin in PINS.items():
+        exe = shutil.which(tool)
+        if exe is None:
+            continue
+        found = (_version_output(exe).split() or ["unknown"])[-1].removeprefix("v")
+        if found != pin:
+            warnings.append(f"{tool} is {found}, pinned {pin}")
+    return warnings
+
+
 def refresh(*, if_missing: bool = False) -> int:
     missing: list[str] = []
     failed: list[str] = []
+    for warning in version_warnings():
+        print(f"refresh_graphs: WARNING {warning}", file=sys.stderr)
     for tool, args, proof in GRAPHS:
         if if_missing and proof != Path() and proof.exists():
             continue
@@ -107,7 +134,13 @@ def refresh_session_start() -> int:
 
     A session must not start on a hard error from a background housekeeping
     step, so this mode is warning-only (the strict `refresh()` is for CI/setup).
+    In a cloud session it does nothing: an idle supervisor tick must stay cheap, and a working tick
+    refreshes the graphs itself (docs/plans/round2/SUPERVISOR.md step 4).
     """
+    if os.environ.get("CLAUDE_CODE_REMOTE") == "true":
+        return 0
+    for warning in version_warnings():
+        print(f"refresh_graphs --session-start: WARNING {warning}", file=sys.stderr)
     for tool, args, proof in GRAPHS:
         if _fresh(tool, proof):
             continue
