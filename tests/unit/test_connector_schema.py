@@ -102,7 +102,7 @@ class TestTheSchemaReachesTheConnector:
             "engine": "postgres",
             "connection_id": "c1",
             "username": "u",
-            "host": "h",
+            "host": "127.0.0.1",
             "port": 5432,
             "encrypted_password": "x",
         }
@@ -125,7 +125,7 @@ class TestTheSchemaReachesTheConnector:
             "engine": "clickhouse",
             "connection_id": "c1",
             "username": "u",
-            "host": "h",
+            "host": "127.0.0.1",
             "port": 8123,
             "encrypted_password": "x",
         }
