@@ -33,13 +33,20 @@ def test_two_saved_connections_to_one_server_are_the_same_origin() -> None:
 
 
 def test_another_database_on_the_same_server_is_a_separate_copy() -> None:
-    clone_executor._require_separate_copy(_job("shop", "shop_clone"), _conn("a"), _conn("a"))
+    # no refusal: the call returns instead of raising CloneJobStateError
+    assert (
+        clone_executor._require_separate_copy(_job("shop", "shop_clone"), _conn("a"), _conn("a"))
+        is None
+    )
 
 
 def test_the_same_name_on_another_server_is_not_guessed_to_be_the_origin() -> None:
     # Two host names may or may not be one server; only provable identity is refused.
-    clone_executor._require_separate_copy(
-        _job("shop", "shop"), _conn("a"), _conn("b", host="10.0.0.6")
+    assert (
+        clone_executor._require_separate_copy(
+            _job("shop", "shop"), _conn("a"), _conn("b", host="10.0.0.6")
+        )
+        is None
     )
 
 
