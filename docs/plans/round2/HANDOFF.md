@@ -7,13 +7,13 @@ Update this file at every commit. A working session reads [STATUS](STATUS) and t
 A session sets `lock=<ISO time>`, pushes it, and refreshes it with every commit; a lock older than 75
 minutes is stale.
 
-**Branch:** `feat/round2-fixes` · **Current phase:** 3 (Phases 1-2 done)
+**Branch:** `feat/round2-fixes` · **Current phase:** 4 (Phases 1-3 done)
 
 | item | phase | state | commit | lead verdict |
 |---|---|---|---|---|
 | D15 | 1 | unverified-live | see git log | Lead: verifier REJECTed (`.handoff/D15.verdict.md`: compose env not passed, 3 wiring points untested, `://` in a password, `[::1]` Host). Lead fixed all four plus `--no-proxy-headers`, with `tests/unit/test_address_policy_wiring.py`. Known and recorded: `Host: localhost:80@evil.com` accepted (LOCAL_VERIFY). Accepted by the lead on the diff; live checks in LOCAL_VERIFY. |
 | D14 | 2 | unverified-live | see git log | Lead: verifier REJECTed (`.handoff/D14.verdict.md`): a stored legacy job could still write to its origin, a second connection to one server was not caught, stale text. Lead added `_require_separate_copy` (start, Phase 1, Phase 2) with `tests/unit/test_same_origin_guard.py`, fixed the text. Two host names for one server are not guessed equal (limit). |
-| D13 | 3 | todo | | |
+| D13 | 3 | unverified-live | see git log | Lead: verifier REJECTed e93bc50 (`.handoff/D13.verdict.md`): `column_language_form` missing from the `context_hash` unset set (every hash moved), and free text like `Mon-Khmer` split as a BCP 47 variant. Lead fixed both (variants must be known to CLDR or digit-led; tests `test_language_free_text_hyphen.py`, fail before / pass after), built the AMBIGUOUS result from `_unresolved` (the pinned confidence-literal count stays), and added the missing assertions to `test_same_origin_guard.py`. Not re-attacked; end-to-end clone with row country and column form, resume and `env_id` movement are live checks. |
 | U1 | 4 | todo | | |
 
 States: `todo` · `in-progress` · `accepted-cloud` (lead accepted, cloud-verifiable parts proven) ·
@@ -39,11 +39,11 @@ See plan §8 phase tables; they stand unchanged.
 
 ## In flight
 
-- round2-verifier (sonnet), D13 attack: verdict `.handoff/D13.verdict.md`; started 2026-10-27T16:41Z
+(nothing)
 
 ## Next action
 
-Phase 3 (D13, LANGUAGE): ADR-010 amendment first; derive step (round2-verifier, sonnet) from the report's six-row table; then lane B worker (`normalizers/language.py` + its tests), lane C worker (second-pass property tests for country, currency, script, unit, language), lead wires row evidence in `clone_executor.py`. Pre-approved test edit: `tests/property/test_idempotency_determinism.py::test_language_ga_script_input_converges_in_one_pass` moves from `display` to `comparison` (C5 line).
+Phase 4 (U1, the new UI): ADR-023 first (lead), then lanes B and C per plan §8 and §9. Read `docs/improvement-report.md` U1 and the plan before briefing workers. Start with the derive step (round2-verifier, sonnet).
 
 ## Notifications
 
@@ -68,6 +68,14 @@ no-stubs, root-files), deptry, actionlint, markdownlint, mermaid pass. pytest (u
 `test_calibration_attack.py::test_groups_cost_is_linear_in_pairs` (a 0.5 s wall-clock assertion; passes alone, fails in
 the full run, unrelated to D13-D15, not skipped, see Open escalations). Vale, lychee, zizmor, Docker jobs not run; GitHub
 runs end in 2 s without steps (billing refusal pattern). /ponytail-review: the removal only deletes code.
+
+[PHASE 3 DONE] 2026-10-28. D13 `unverified-live`. Gate in this session: ruff check, ruff format --check, mypy, check_c5_exceptions,
+check_test_assertions, check_no_stubs, check_docs_note, check_root_files, check_gitignore_consistency, check_mermaid, deptry, actionlint,
+markdownlint-cli2 (changed files), gitleaks on `main..HEAD`: pass. pytest (unit or golden and not slow, capped): 3450 passed, 24 skipped,
+1 xfailed, 1 failure `test_calibration_attack.py::test_groups_cost_is_linear_in_pairs` (the known wall-clock test, passes alone: 42 passed;
+see Open escalations). NOT run: Vale, lychee, zizmor, Docker jobs. GitHub runs not checked this tick (billing-refusal pattern in Phases 1-2).
+/ponytail-review of the phase diff: lean; the one addition (`_known_variants`) carries a `ponytail:` comment naming its limit.
+Graphs built this session (cloud_setup on Python 3.12 worked).
 
 (append `[PHASE n DONE]`, `[BLOCKED]` and `[ROUND2 COMPLETE]` entries; the same prefixes go in commit
 messages)

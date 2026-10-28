@@ -39,6 +39,7 @@ Use a copy of a real database; the sources are read-only (ADR-013, unconditional
 ```
 
 ### D15 — local network only
+
 - Why the cloud could not verify: no Docker, no LAN, no real Postgres or ClickHouse.
 - Command: set `NORM_BIND_ADDR` (LAN address) and `NORM_SECRET_KEY` in `.env`; `docker compose up -d`; then
   `ss -ltnp` on the host; `curl http://$NORM_BIND_ADDR:8080/health` from a second LAN machine; the same
@@ -54,6 +55,7 @@ Use a copy of a real database; the sources are read-only (ADR-013, unconditional
 - Result (filled in locally):
 
 ### D14 — remove in-place mode
+
 - Why the cloud could not verify: no Postgres or ClickHouse.
 - Command: `( ulimit -v 16777216; uv run pytest -m integration -q )` against the compose stack; `grep -rn in_place packages ui/src`.
 - Independent check: after a clone, `SELECT count(*)` of the origin tables is unchanged and its tables carry no `__normalizing` suffix.
@@ -73,3 +75,10 @@ Review the diff of each and confirm the test still checks the same behaviour.
 | `tests/conftest.py` (new) | WIP D15 commit "TEST-CHANGE: loopback peer and localhost host for every TestClient" | Starlette's default peer `testclient` and host `testserver` are refused by ADR-022 |
 | `tests/unit/test_connector_schema.py` | WIP D15 commit "TEST-CHANGE: use a literal local address as the connection host" | host `h` does not resolve; assertions unchanged |
 | `tests/unit/test_address_policy.py` | WIP D15 commit "lint-clean the moved address-policy test" | formatting and a top-level import only |
+
+### D13 — LANGUAGE code is the contract
+
+- Why the cloud could not verify: no real source database. Check: a clone of a table with a LANGUAGE column, a COUNTRY column
+  (`Mon` with `MM` gives `mnw`, with no evidence stays AMBIGUOUS) and a column of only 2-letter codes (`Ga` gives `ga`).
+- Check that `env_id` moves with the new `language.py` (ADR-014) and that a resumed job keeps `column_language_form`.
+- Known limit: a registered BCP 47 variant with no CLDR locale (for example `sl-rozaj`) is read as a name, not split.
