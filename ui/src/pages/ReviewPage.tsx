@@ -128,9 +128,11 @@ function ReviewSession({ entries }: { entries: ReviewEntry[] }) {
   // Leaving the page must not lose a decision that is still held back.
   useEffect(() => {
     const timerMap = timers.current;
+    const sent = new Set<string>(); // pagehide and unmount both call flush: send once
     const flush = () => {
       for (const it of itemsRef.current) {
-        if (it.status !== "held") continue;
+        if (it.status !== "held" || sent.has(it.key)) continue;
+        sent.add(it.key);
         window.clearTimeout(timerMap.get(it.key));
         timerMap.delete(it.key);
         void postVerdict(

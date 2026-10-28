@@ -14,7 +14,7 @@ minutes is stale.
 | D15 | 1 | unverified-live | see git log | Lead: verifier REJECTed (`.handoff/D15.verdict.md`: compose env not passed, 3 wiring points untested, `://` in a password, `[::1]` Host). Lead fixed all four plus `--no-proxy-headers`, with `tests/unit/test_address_policy_wiring.py`. Known and recorded: `Host: localhost:80@evil.com` accepted (LOCAL_VERIFY). Accepted by the lead on the diff; live checks in LOCAL_VERIFY. |
 | D14 | 2 | unverified-live | see git log | Lead: verifier REJECTed (`.handoff/D14.verdict.md`): a stored legacy job could still write to its origin, a second connection to one server was not caught, stale text. Lead added `_require_separate_copy` (start, Phase 1, Phase 2) with `tests/unit/test_same_origin_guard.py`, fixed the text. Two host names for one server are not guessed equal (limit). |
 | D13 | 3 | unverified-live | see git log | Lead: verifier REJECTed e93bc50 (`.handoff/D13.verdict.md`): `column_language_form` missing from the `context_hash` unset set (every hash moved), and free text like `Mon-Khmer` split as a BCP 47 variant. Lead fixed both (variants must be known to CLDR or digit-led; tests `test_language_free_text_hyphen.py`, fail before / pass after), built the AMBIGUOUS result from `_unresolved` (the pinned confidence-literal count stays), and added the missing assertions to `test_same_origin_guard.py`. Not re-attacked; end-to-end clone with row country and column form, resume and `env_id` movement are live checks. |
-| U1 | 4 | in-progress | see git log | Derive done (`.handoff/U1.acceptance.md`). Lead: review route `GET /adjudication/review[/{key}]` built, API-half test moved to `tests/unit/test_u1_review_route.py` (18 pass). Serving, screens, Playwright pending. |
+| U1 | 4 | unverified-live | see git log | Verifier REJECT (`.handoff/U1.verdict.md`): lead fixed the C5 guard, double POST on leave, list route leaking quality; the rest escalated (R23 gaps, /docs). Derive done (`.handoff/U1.acceptance.md`). Lead: review route `GET /adjudication/review[/{key}]` built, API-half test moved to `tests/unit/test_u1_review_route.py` (18 pass). Serving, screens, Playwright pending. |
 
 States: `todo` · `in-progress` · `accepted-cloud` (lead accepted, cloud-verifiable parts proven) ·
 `unverified-live` (accepted, needs the real environment: see LOCAL_VERIFY.md) · `blocked`.
@@ -93,6 +93,10 @@ messages)
   its verdict; run it again.
 
 ## Open escalations
+
+- U1 R23, more: `GET /clone-jobs/{id}/errors` rows for column findings carry sample values in the unmasked `error` text
+  (`clone_executor.py`, "e.g. ..."), and the Jobs screen shows that text. Pre-existing API behaviour; not changed. The list
+  route `GET /clone-jobs` now omits `quality`. Owner decides how the findings text is masked.
 
 - U1 R23 conflict, not changed: `GET /clone-jobs/{id}` and `/quality` carry raw `disguised_missing[].value`.
   D4's confirm step (`confirmed_missing`) needs those exact values, so masking them would break it. Owner decides

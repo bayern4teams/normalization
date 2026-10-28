@@ -19,19 +19,16 @@ from __future__ import annotations
 
 import json
 import re
-import sys
 from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import urlparse
 
 import pytest
 import yaml
+from fastapi.testclient import TestClient
+from normapi.app import create_app
 
 ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT))
-
-from fastapi.testclient import TestClient  # noqa: E402
-from normapi.app import create_app  # noqa: E402
 
 UI = ROOT / "ui"
 DIST = UI / "dist"

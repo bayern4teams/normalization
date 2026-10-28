@@ -959,8 +959,12 @@ def create_clone_job(
 def list_clone_jobs(
     connections: Annotated[PgPersistence, Depends(get_connections)],
 ) -> list[dict[str, Any]]:
-    """Every job, in the shape of `GET /clone-jobs/{id}` (ADR-023: the Jobs screen)."""
-    return [{**job, "stale": clone_executor.is_stale(job)} for job in connections.list_clone_jobs()]
+    """Every job in the shape of `GET /clone-jobs/{id}` (ADR-023: the Jobs screen), without
+    `quality`: that is read per job from `/quality`, and carries raw values (R23)."""
+    return [
+        {**{k: v for k, v in job.items() if k != "quality"}, "stale": clone_executor.is_stale(job)}
+        for job in connections.list_clone_jobs()
+    ]
 
 
 @router.get("/clone-jobs/{job_id}")

@@ -27,7 +27,6 @@ import datetime as dt
 import json
 import logging
 import re
-import sys
 import time
 from collections.abc import Iterator
 from pathlib import Path
@@ -35,18 +34,16 @@ from typing import Any
 from urllib.parse import quote
 
 import pytest
+from fastapi.testclient import TestClient
+from normapi.adjudication import Adjudication
+from normapi.app import build_dispatcher, create_app
+from normapi.clone_executor import _normalize_table
+from normapi.dependencies import get_connections
+from normapi.pg_persistence import PgPersistence
+from normapi.scaffold_profile import SCAFFOLD_PROFILE
+from normexec.planner import DistinctValuePlanner
 
 ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT))
-
-from fastapi.testclient import TestClient  # noqa: E402
-from normapi.adjudication import Adjudication  # noqa: E402
-from normapi.app import build_dispatcher, create_app  # noqa: E402
-from normapi.clone_executor import _normalize_table  # noqa: E402
-from normapi.dependencies import get_connections  # noqa: E402
-from normapi.pg_persistence import PgPersistence  # noqa: E402
-from normapi.scaffold_profile import SCAFFOLD_PROFILE  # noqa: E402
-from normexec.planner import DistinctValuePlanner  # noqa: E402
 
 # =========================================================================== LEAD: set these
 # GET: the whole pending queue, raw values and candidate readings, no paging parameters.
@@ -471,7 +468,7 @@ def test_review_route_is_unreachable_from_a_public_peer(seeded: tuple[Env, str])
     env, _ = seeded
     assert env.client.get(REVIEW_LIST_ROUTE).status_code == 200, "precondition: route exists"
     app = env.client.app
-    outsider = TestClient(app, client=("8.8.8.8", 50000), base_url="http://localhost")  # type: ignore[arg-type]
+    outsider = TestClient(app, client=("8.8.8.8", 50000), base_url="http://localhost")
     r = outsider.get(REVIEW_LIST_ROUTE)
     assert r.status_code in (400, 403)
     for raw in PLANTED:

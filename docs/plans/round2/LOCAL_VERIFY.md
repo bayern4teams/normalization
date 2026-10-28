@@ -75,6 +75,7 @@ Review the diff of each and confirm the test still checks the same behaviour.
 | `tests/conftest.py` (new) | WIP D15 commit "TEST-CHANGE: loopback peer and localhost host for every TestClient" | Starlette's default peer `testclient` and host `testserver` are refused by ADR-022 |
 | `tests/unit/test_connector_schema.py` | WIP D15 commit "TEST-CHANGE: use a literal local address as the connection host" | host `h` does not resolve; assertions unchanged |
 | `tests/unit/test_address_policy.py` | WIP D15 commit "lint-clean the moved address-policy test" | formatting and a top-level import only |
+| `tests/unit/test_u1_serving.py` (new this round) | U1 commits "serving test lists non-fetched message hosts", "docs, ci-fast..." | C5: `JS_NOT_FETCHED` widened by `reactrouter.com`, `mantine.dev`, `localhost`, `github.com` (message text in the bundle, none fetched); the `/docs`-served-locally test was removed from the file and parked in `.handoff/U1.test_docs_local.md` (needs `swagger-ui-dist`, outside plan 2.10). Owner approval: none, escalated in HANDOFF.md. Review 2027-01-27. |
 
 ### D13 — LANGUAGE code is the contract
 
@@ -82,3 +83,13 @@ Review the diff of each and confirm the test still checks the same behaviour.
   (`Mon` with `MM` gives `mnw`, with no evidence stays AMBIGUOUS) and a column of only 2-letter codes (`Ga` gives `ga`).
 - Check that `env_id` moves with the new `language.py` (ADR-014) and that a resumed job keeps `column_language_form`.
 - Known limit: a registered BCP 47 variant with no CLDR locale (for example `sl-rozaj`) is read as a name, not split.
+
+### U1 — the new UI
+
+- Why the cloud could not verify: no Docker, no running stack, no real API shapes.
+- Command: `docker compose up -d --build`; open `http://$NORM_BIND_ADDR:8080/`; walk Connections (save a public host: refused at the field),
+  New clone, Jobs (reload keeps filter and detail), Review (keys 1-9, o, k, u), Quality. `( cd ui && npm run test:e2e )`.
+- Independent check: browser dev-tools network tab shows no request to another origin; the Review key press updates the page in under 0.1 s
+  and each page loads in under 1 s with 250 distinct values; `docker run` image has `/app/ui/dist`.
+- Also: `/docs` is off (Swagger needs `swagger-ui-dist`); R23 gaps listed in HANDOFF.md Open escalations.
+- Result (filled in locally):
