@@ -59,9 +59,6 @@ export type ErrorPolicy =
   | "RETURN_NULL"
   | "MARK_INVALID";
 
-export type ProfileStatus = "DRAFT" | "ACTIVE" | "DEPRECATED";
-export type RunStatus = "PENDING" | "RUNNING" | "COMPLETED" | "FAILED" | "PARTIAL";
-
 export interface TraceStep {
   step_order: number;
   rule_id: string;
@@ -102,68 +99,6 @@ export interface NormalizedValue {
   context_hash: string;
 }
 
-export interface NormalizationStep {
-  step_id: string;
-  rule_id: string;
-  operation: string;
-  parameters: Record<string, unknown>;
-  enabled: boolean;
-  on_error: string;
-  produces_view: string | null;
-  claimed_reversibility: Reversibility;
-  lossy: boolean;
-}
-
-export interface FieldNormalizationConfig {
-  field_ref: string;
-  semantic_type: FieldSemanticType;
-  semantic_confidence: number;
-  semantic_source: string;
-  pipeline: { steps: NormalizationStep[] };
-  error_policy: ErrorPolicy;
-  locale_overrides: Record<string, string>;
-  dictionary_refs: string[];
-  emitted_views: string[];
-}
-
-export interface NormalizationProfile {
-  id: string;
-  name: string;
-  version: string;
-  description: string;
-  status: ProfileStatus;
-  locale_policy: Record<string, string>;
-  default_operations: string[];
-  field_configs: FieldNormalizationConfig[];
-  created_at: string;
-  updated_at: string;
-  created_by: string;
-  parent_version: string | null;
-}
-
-export interface NormalizationRunMetrics {
-  records_processed: number;
-  fields_processed: number;
-  changed_values: number;
-  unchanged_values: number;
-  warnings: number;
-  errors: number;
-  cache_hits: number;
-  cache_misses: number;
-}
-
-export interface NormalizationRun {
-  id: string;
-  profile_id: string;
-  profile_version: string;
-  env_id: string;
-  source_snapshot: string;
-  started_at: string;
-  finished_at: string | null;
-  status: RunStatus;
-  metrics: NormalizationRunMetrics;
-}
-
 export interface NormalizationError {
   field: string;
   record_ref: string;
@@ -173,113 +108,6 @@ export interface NormalizationError {
   safe_preview: string;
   rule_id: string | null;
   library_version: string | null;
-}
-
-export interface CollisionGroup {
-  normalized_value: string;
-  original_values: string[];
-  total_occurrences: number;
-}
-
-export interface ImpactReport {
-  field_name: string;
-  total_values: number;
-  unique_before: number;
-  unique_after: number;
-  new_collisions: number;
-  null_before: number;
-  null_after: number;
-  avg_length_before: number;
-  avg_length_after: number;
-  lossy_count: number;
-  partially_reversible_count: number;
-  warnings: string[];
-}
-
-export interface SideMetrics {
-  profile_version: string;
-  total_values: number;
-  unique_values: number;
-  unique_ratio: number;
-  invalid_count: number;
-  invalid_rate: number;
-}
-
-export interface AbComparisonReport {
-  field_name: string;
-  a: SideMetrics;
-  b: SideMetrics;
-  changed_between_a_and_b: number;
-  changed_between_a_and_b_pct: number;
-  collision_rate_delta: number;
-}
-
-export interface TransformationPatternCount {
-  operation: string;
-  count: number;
-}
-
-export interface FieldProfile {
-  field_name: string;
-  rows: number;
-  changed: number;
-  unchanged: number;
-  warnings: number;
-  errors: number;
-  potentially_lossy: number;
-  top_transformation_patterns: TransformationPatternCount[];
-}
-
-export interface OverviewReport {
-  fields_analyzed: number;
-  fields_normalized: number;
-  rows_processed: number;
-  values_changed: number;
-  warnings: number;
-  potential_collisions: number;
-  ambiguous_values: number;
-  errors: number;
-}
-
-export interface QualityMetric {
-  name: string;
-  semantic_type: string;
-  count: number;
-  total_evaluated: number;
-}
-
-export interface QualityReport {
-  metrics: QualityMetric[];
-}
-
-export interface DictionarySummary {
-  id: string;
-  version: string;
-  locale: string | null;
-  source: string;
-  license: string;
-  entry_count: number;
-  is_custom: boolean;
-  active_version: string | null;
-}
-
-export interface FieldSummary {
-  field_ref: string;
-  semantic_type: FieldSemanticType;
-  profile_ids: string[];
-}
-
-export interface TypeSuggestion {
-  semantic_type: FieldSemanticType;
-  confidence: number;
-  reason: string;
-}
-
-export interface ProfileSuggestion {
-  semantic_type: FieldSemanticType;
-  recommended_summary: string;
-  risk: string;
-  real_steps: string[];
 }
 
 // --- DB-clone-and-normalize (normio wiring) ---------------------------------
