@@ -39,7 +39,7 @@ See plan §8 phase tables; they stand unchanged.
 
 ## In flight
 
-(nothing)
+- 2026-10-28 U1 step 1: ADR-023 written by lead (done). Next: round2-verifier (derive) for U1 -> `.handoff/U1.acceptance.md`.
 
 ## Next action
 
