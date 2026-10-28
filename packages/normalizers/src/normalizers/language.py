@@ -235,7 +235,7 @@ def _code_reading(cleaned: str) -> tuple[pycountry.db.Data | None, dict[str, str
         # modifier ("ca_ES@valencia"). Indexing rather than unpacking
         # keeps both shapes working.
         language, territory, script, variant = parsed[0], parsed[1], parsed[2], parsed[3]
-        if variant and variant.upper() not in _known_variants():
+        if variant and not variant[0].isdigit() and variant.upper() not in _known_variants():
             continue  # `Mon-Khmer` parses as a tag with variant "Khmer"; no registry knows it
         # An alias may itself carry a script ("sh" -> "sr_Latn").
         alias = _LANGUAGE_ALIASES.get(language, language) if language else ""
@@ -256,7 +256,8 @@ def _code_reading(cleaned: str) -> tuple[pycountry.db.Data | None, dict[str, str
 def _known_variants() -> frozenset[str]:
     """The BCP 47 variants CLDR has locales for (Babel's locale identifiers).
     Babel parses any 5-8 letter piece as a variant, so a free-text value such as
-    `Mon-Khmer` would otherwise split. ponytail: the IANA variant registry is not
+    `Mon-Khmer` would otherwise split; the digit-led form (`1901`) cannot be a word.
+    ponytail: the IANA variant registry is not
     installed, so a registered variant without a CLDR locale (`sl-rozaj`) is left
     whole and read as a name; upgrade: read the IANA subtag registry."""
     return frozenset(
