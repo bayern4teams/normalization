@@ -1,7 +1,7 @@
 // New clone screen, three steps: (1) origin and destination, (2) the columns to normalize and
 // their semantic types, (3) "Check your answers". The Start button exists only in step 3.
 // Every table of the origin database is cloned (the API has no table filter); step 2 only
-// decides, per column, a semantic type or "copy unchanged". There is no in-place option (D14).
+// decides, per column, a semantic type or "copy unchanged".
 import {
   Accordion,
   Alert,

@@ -7,7 +7,7 @@ Update this file at every commit. A working session reads [STATUS](STATUS) and t
 A session sets `lock=<ISO time>`, pushes it, and refreshes it with every commit; a lock older than 75
 minutes is stale.
 
-**Branch:** `feat/round2-fixes` · **Current phase:** 4 (Phases 1-3 done)
+**Branch:** `feat/round2-fixes` · **Current phase:** 5 (Phases 1-4 done)
 
 | item | phase | state | commit | lead verdict |
 |---|---|---|---|---|
@@ -45,9 +45,18 @@ See plan §8 phase tables; they stand unchanged.
 
 ## Next action
 
-Phase 4 (U1, the new UI): ADR-023 first (lead), then lanes B and C per plan §8 and §9. Read `docs/improvement-report.md` U1 and the plan before briefing workers. Start with the derive step (round2-verifier, sonnet).
+Phase 5 (close): `/ponytail-audit`, `/ponytail-debt`, `/ponytail-gain`, delete unused exports in `ui/src/api/{client,types}.ts`, fold `.handoff/` into `round2/FINAL_REPORT.md`, purge it, add the status line to the report, `[ROUND2 COMPLETE]`. Never merge.
 
 ## Notifications
+
+[PHASE 4 DONE] 2026-10-28. U1 `unverified-live`. Verifier REJECTed once (`.handoff/U1.verdict.md`); the lead fixed the C5 guard, the double POST
+on leave, the list route leaking `quality`, and `NORM_UI_DIR` in `.env.example`; /docs-local and three R23 gaps are escalated (Open escalations).
+Gate in this session: ruff check, ruff format --check, mypy, check_c5_exceptions, check_test_assertions, check_no_stubs, check_docs_note,
+check_root_files, check_gitignore_consistency, check_mermaid, deptry, gitleaks main..HEAD: pass; ui `npm ci`, build, lint: pass; Playwright 48 passed
+(verifier); actionlint: installed, not run on the changed workflow output beyond the install check. pytest (unit or golden and not slow, capped): 3481
+passed, 24 skipped, 1 xfailed, 3 failed before fixes: the known `test_groups_cost_is_linear_in_pairs` plus two U1 ones (an "in-place" comment in
+NewClonePage, `NORM_UI_DIR` undocumented) fixed and re-run alone: pass. NOT run: Vale, lychee, zizmor, Docker jobs, GitHub run check.
+/ponytail-review: the new UI is 2,468 lines against 4,114 before; open finding: unused exports in `ui/src/api/client.ts` and `types.ts` (deletable).
 
 [BLOCKED] 2026-10-27 D13: step 4 failed. graphify-out/graph.json is missing and `uv sync --all-extras` fails in this session: first pyicu (no libicu-dev/pkg-config), then after `scripts/cloud_setup.sh` pyarrow 17.0.0 (uv picked Python 3.13; build needs pkg_resources). Question: should the routine environment pin Python 3.12 (e.g. `uv sync --python 3.12 --all-extras`) and install libicu-dev in its setup script, or should I continue without graphs? Set next=work after fixing.
 

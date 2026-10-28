@@ -91,7 +91,7 @@ _DEFAULT_CUSTOM_DICTIONARIES_DIR = Path(
 # is the repository layout (/app in the image, where the Dockerfile copies
 # the build); an absent directory means an API-only checkout.
 _UI_DIST_DIR = Path(
-    os.environ.get("NORM_UI_DIR", Path(__file__).resolve().parents[4] / "ui" / "dist")
+    os.environ.get("NORM_UI_DIR") or Path(__file__).resolve().parents[4] / "ui" / "dist"
 )
 
 # §103's normalization cache — defaults to an in-process-only DuckDB
