@@ -28,10 +28,12 @@ language after the bare code.
 
 from __future__ import annotations
 
+import functools
 from collections.abc import Iterable, Mapping
 from typing import TYPE_CHECKING, Any, cast
 
 import babel.core
+import babel.localedata
 import blake3
 import pyarrow as pa
 import pycountry
@@ -233,6 +235,8 @@ def _code_reading(cleaned: str) -> tuple[pycountry.db.Data | None, dict[str, str
         # modifier ("ca_ES@valencia"). Indexing rather than unpacking
         # keeps both shapes working.
         language, territory, script, variant = parsed[0], parsed[1], parsed[2], parsed[3]
+        if variant and variant.upper() not in _known_variants():
+            continue  # `Mon-Khmer` parses as a tag with variant "Khmer"; no registry knows it
         # An alias may itself carry a script ("sh" -> "sr_Latn").
         alias = _LANGUAGE_ALIASES.get(language, language) if language else ""
         alias_language, _, alias_script = alias.partition("_")
@@ -246,6 +250,22 @@ def _code_reading(cleaned: str) -> tuple[pycountry.db.Data | None, dict[str, str
         }
         return resolved, {k: v for k, v in parts.items() if v}
     return None, {}
+
+
+@functools.cache
+def _known_variants() -> frozenset[str]:
+    """The BCP 47 variants CLDR has locales for (Babel's locale identifiers).
+    Babel parses any 5-8 letter piece as a variant, so a free-text value such as
+    `Mon-Khmer` would otherwise split. ponytail: the IANA variant registry is not
+    installed, so a registered variant without a CLDR locale (`sl-rozaj`) is left
+    whole and read as a name; upgrade: read the IANA subtag registry."""
+    return frozenset(
+        part.upper()
+        for ident in babel.localedata.locale_identifiers()
+        for part in ident.split("_")[2:]
+        if not (len(part) == 4 and part.istitle())  # a script, as in `sr_Latn_RS`
+        and not (len(part) == 2 and part.isupper())  # a territory
+    )
 
 
 def _exact_name(cleaned: str) -> pycountry.db.Data | None:

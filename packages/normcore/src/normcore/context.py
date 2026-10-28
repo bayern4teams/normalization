@@ -89,7 +89,9 @@ class NormalizationContext(BaseModel):
         # A context without a column order hashes as it did before the field
         # existed: stored verdict keys and cache keys hold these hashes.
         unset = {
-            f for f in ("column_date_order", "column_decimal_mark") if getattr(self, f) is None
+            f
+            for f in ("column_date_order", "column_decimal_mark", "column_language_form")
+            if getattr(self, f) is None
         }
         payload = self.model_dump(mode="json", exclude={"pii_visibility", *unset})
         canonical = _canonical_json(payload)
