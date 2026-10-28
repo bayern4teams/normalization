@@ -39,7 +39,7 @@ See plan §8 phase tables; they stand unchanged.
 
 ## In flight
 
-- 2026-10-28 U1 step 1: ADR-023 written by lead (done). Next: round2-verifier (derive) for U1 -> `.handoff/U1.acceptance.md`.
+- 2026-10-28 U1: ADR-023 done. round2-verifier (derive, sonnet) running: writes `.handoff/U1.acceptance.md` + `.handoff/U1.test_*.py`, commits itself. Lead waits before implementing.
 
 ## Next action
 
