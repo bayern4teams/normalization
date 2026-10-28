@@ -39,7 +39,8 @@ See plan §8 phase tables; they stand unchanged.
 
 ## In flight
 
-(nothing; derive done, commit c322da2)
+- 2026-10-28 U1 lane B (round2-worker, sonnet): `ui/src/{App,main}.tsx`, `app/`, shell/Nav, Connections, New clone, deleting the dropped pages/specs; progress `.handoff/U1.laneB.progress.md`.
+- 2026-10-28 U1 lane C (round2-worker, sonnet): `ui/src/pages/{Jobs*,Review*,Quality*}`, `ui/src/lib/review*`, `ui/e2e/{jobs,review,quality}.spec.ts`; progress `.handoff/U1.laneC.progress.md`. The lead wires C's pages into the router.
 
 ## Next action
 
