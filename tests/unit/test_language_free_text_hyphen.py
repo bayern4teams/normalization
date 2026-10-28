@@ -2,7 +2,6 @@
 
 import pytest
 from normalizers.language import LanguageNormalizer
-
 from normcore.context import NormalizationContext
 from normcore.enums import FieldSemanticType, NormalizationStatus
 
