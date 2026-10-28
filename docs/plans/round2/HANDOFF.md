@@ -14,7 +14,7 @@ minutes is stale.
 | D15 | 1 | unverified-live | see git log | Lead: verifier REJECTed (`.handoff/D15.verdict.md`: compose env not passed, 3 wiring points untested, `://` in a password, `[::1]` Host). Lead fixed all four plus `--no-proxy-headers`, with `tests/unit/test_address_policy_wiring.py`. Known and recorded: `Host: localhost:80@evil.com` accepted (LOCAL_VERIFY). Accepted by the lead on the diff; live checks in LOCAL_VERIFY. |
 | D14 | 2 | unverified-live | see git log | Lead: verifier REJECTed (`.handoff/D14.verdict.md`): a stored legacy job could still write to its origin, a second connection to one server was not caught, stale text. Lead added `_require_separate_copy` (start, Phase 1, Phase 2) with `tests/unit/test_same_origin_guard.py`, fixed the text. Two host names for one server are not guessed equal (limit). |
 | D13 | 3 | unverified-live | see git log | Lead: verifier REJECTed e93bc50 (`.handoff/D13.verdict.md`): `column_language_form` missing from the `context_hash` unset set (every hash moved), and free text like `Mon-Khmer` split as a BCP 47 variant. Lead fixed both (variants must be known to CLDR or digit-led; tests `test_language_free_text_hyphen.py`, fail before / pass after), built the AMBIGUOUS result from `_unresolved` (the pinned confidence-literal count stays), and added the missing assertions to `test_same_origin_guard.py`. Not re-attacked; end-to-end clone with row country and column form, resume and `env_id` movement are live checks. |
-| U1 | 4 | todo | | |
+| U1 | 4 | in-progress | see git log | Derive done (`.handoff/U1.acceptance.md`). Lead: review route `GET /adjudication/review[/{key}]` built, API-half test moved to `tests/unit/test_u1_review_route.py` (18 pass). Serving, screens, Playwright pending. |
 
 States: `todo` · `in-progress` · `accepted-cloud` (lead accepted, cloud-verifiable parts proven) ·
 `unverified-live` (accepted, needs the real environment: see LOCAL_VERIFY.md) · `blocked`.
@@ -39,7 +39,7 @@ See plan §8 phase tables; they stand unchanged.
 
 ## In flight
 
-- 2026-10-28 U1: ADR-023 done. round2-verifier (derive, sonnet) running: writes `.handoff/U1.acceptance.md` + `.handoff/U1.test_*.py`, commits itself. Lead waits before implementing.
+(nothing; derive done, commit c322da2)
 
 ## Next action
 
@@ -91,6 +91,15 @@ messages)
   its verdict; run it again.
 
 ## Open escalations
+
+- U1 lead decisions on the verifier's open questions (2026-10-28, no owner answer; the owner may overrule):
+  (1) the accept key takes the reading the person picks with number keys 1-9; nothing is pre-selected.
+  (2) Verdicts are append-only, so "keep ambiguous" skips the value (nothing stored, it stays pending) and
+  "undo" reverts the last decision only while it is unsent (a short hold before the POST). (3) R23 covers
+  the review route only; `/preview`, `/field-test` and `/runs/{id}/values` still echo raw values: not changed,
+  owner decides. (4) Only the five screens ship; Runs and Comparison pages go with the rest.
+  (5) `/docs` and `/redoc` need Swagger assets; no allowed dependency supplies them (Q7 names only
+  Mantine), so they are switched off and `/openapi.json` stays: owner decides whether to add `swagger-ui-dist`.
 
 (results that passed only written tests or one case, and findings outside round 2's scope)
 

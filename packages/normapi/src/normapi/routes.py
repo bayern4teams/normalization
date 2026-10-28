@@ -94,6 +94,7 @@ from normapi.schemas import (
     ProfileRollbackRequest,
     ProfileSuggestionResponse,
     ProfileVersionRequest,
+    ReviewEntry,
     RunExecutionRequest,
     TypeSuggestionResponse,
 )
@@ -1139,6 +1140,7 @@ def get_clone_job_errors(
 # --- Adjudication (ADR-018): the exit for AMBIGUOUS ---
 
 _MAX_QUEUE_PAGE_SIZE = 1000
+_MAX_REVIEW_ENTRIES = 100_000  # R22: no server paging; far above hundreds of distinct values
 
 
 def _mask_leaves(value: Any) -> Any:
@@ -1204,6 +1206,40 @@ def list_adjudication_queue(
     )
     response.headers["X-Total-Count"] = str(total)
     return [_queue_view(row) for row in rows]
+
+
+def _review_view(row: dict[str, Any]) -> ReviewEntry:
+    return ReviewEntry(
+        key=row["key"],
+        semantic_type=FieldSemanticType(row["semantic_type"]),
+        original=row["original"],
+        context=json.loads(row["context"]),
+        detail=json.loads(row["detail"]),
+        occurrences=row["occurrences"],
+        decided=bool(row["decided"]),
+    )
+
+
+@router.get("/adjudication/review", response_model=list[ReviewEntry])
+def list_review_entries(
+    connections: Annotated[PgPersistence, Depends(get_connections)],
+) -> list[ReviewEntry]:
+    """Every pending entry, most frequent first, raw value included (R23). One
+    unpaged list: a run has hundreds of distinct values at most (R22)."""
+    _, rows = connections.list_queue(
+        semantic_type=None, decided=False, limit=_MAX_REVIEW_ENTRIES, offset=0
+    )
+    return [_review_view(row) for row in rows]
+
+
+@router.get("/adjudication/review/{key}", response_model=ReviewEntry)
+def get_review_entry(
+    key: str, connections: Annotated[PgPersistence, Depends(get_connections)]
+) -> ReviewEntry:
+    row = connections.get_queue_entry(key)
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"No such queue entry: {key}")
+    return _review_view(row)
 
 
 @router.get("/adjudication/queue/{key}", response_model=AdjudicationQueueEntry)

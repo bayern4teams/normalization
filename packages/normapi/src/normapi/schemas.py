@@ -342,6 +342,20 @@ class AdjudicationQueueEntry(BaseModel):
     verdicts: list[AdjudicationVerdict] = Field(default_factory=list)
 
 
+class ReviewEntry(BaseModel):
+    """One open question for the review screen (ADR-023, R23). The only
+    response that carries the raw value and the unmasked candidate readings.
+    No field names a preferred reading: the person chooses (R18)."""
+
+    key: str
+    semantic_type: FieldSemanticType
+    original: str
+    context: dict[str, Any]
+    detail: dict[str, Any]
+    occurrences: int
+    decided: bool
+
+
 class AdjudicationVerdictRequest(BaseModel):
     decided_value: str = Field(min_length=1)
     # `human:<id>` or `agent:<id>` (Q15), checked in the route against
