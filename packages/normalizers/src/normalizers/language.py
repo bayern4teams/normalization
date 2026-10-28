@@ -367,25 +367,18 @@ def _ambiguous(
 ) -> NormalizedValue:
     """Neither reading is chosen: the value is kept, both readings go to the
     review queue in `structured`."""
-    return NormalizedValue(
-        original=value,
-        display=value,
-        structured={
-            "readings": [
-                {"reading": "code", "code": _code_of(as_code), "language_name": as_code.name},
-                {"reading": "name", "code": _code_of(as_name), "language_name": as_name.name},
-            ]
-        },
-        validation_status="AMBIGUOUS",
-        normalization_status=NormalizationStatus.AMBIGUOUS,
-        confidence=0.0,
-        errors=["both an ISO 639 code and the name of another language: not guessed"],
-        trace=[_resolve_trace_step(value, changed=False)],
-        lossiness=Reversibility.LOSSLESS,
-        profile_version="",
-        env_id="",
-        semantic_type=ctx.semantic_type,
-        context_hash=ctx.context_hash,
+    return _unresolved(value, ctx).model_copy(
+        update={
+            "structured": {
+                "readings": [
+                    {"reading": "code", "code": _code_of(as_code), "language_name": as_code.name},
+                    {"reading": "name", "code": _code_of(as_name), "language_name": as_name.name},
+                ]
+            },
+            "validation_status": "AMBIGUOUS",
+            "normalization_status": NormalizationStatus.AMBIGUOUS,
+            "errors": ["both an ISO 639 code and the name of another language: not guessed"],
+        }
     )
 
 
