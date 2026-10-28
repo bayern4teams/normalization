@@ -18,12 +18,14 @@ export function JobDetailPage() {
   const jobQuery = useQuery({
     queryKey: ["job", jobId],
     queryFn: () => getJob(jobId),
+    retry: false, // a 404 will not get better; show the API's text at once
     refetchInterval: (q) => (q.state.data?.status === "RUNNING" ? POLL_MS : false),
   });
   const running = jobQuery.data?.status === "RUNNING";
   const errorsQuery = useQuery({
     queryKey: ["job-errors", jobId, page],
     queryFn: () => getJobErrorsPage(jobId, ERRORS_PER_PAGE, page * ERRORS_PER_PAGE),
+    retry: false,
     refetchInterval: running ? POLL_MS : false,
   });
   const refresh = () => queryClient.invalidateQueries({ queryKey: ["job", jobId] });

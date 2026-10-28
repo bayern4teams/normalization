@@ -15,11 +15,12 @@ export function QualityPage() {
   const [params, setParams] = useSearchParams();
   const jobId = params.get("job");
 
-  const jobsQuery = useQuery({ queryKey: ["jobs"], queryFn: listCloneJobs });
+  const jobsQuery = useQuery({ queryKey: ["jobs"], queryFn: listCloneJobs, retry: false });
   const quality = useQuery({
     queryKey: ["job-quality", jobId],
     queryFn: () => getJobQuality(jobId ?? ""),
     enabled: jobId !== null,
+    retry: false,
     refetchInterval: (q) => (q.state.data?.status === "RUNNING" ? POLL_MS : false),
   });
 

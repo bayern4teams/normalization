@@ -13,6 +13,7 @@ export function JobsPage() {
   const query = useQuery({
     queryKey: ["jobs"],
     queryFn: listCloneJobs,
+    retry: false,
     refetchInterval: (q) => (q.state.data?.some((j) => j.status === "RUNNING") ? POLL_MS : false),
   });
 
