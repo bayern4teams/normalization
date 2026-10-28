@@ -21,6 +21,9 @@ timeout 600 $SUDO apt-get update -qq && timeout 900 $SUDO apt-get install -y -qq
   || echo "setup: libicu-dev install failed, the PyICU build will fail" >&2
 command -v uv >/dev/null || pip install -q uv
 uv python install 3.12
+# uv otherwise picks any Python in requires-python (it chose 3.13 and pyarrow failed to build);
+# owner decision Q-A, 2026-10-27: run everything on 3.12.
+export UV_PYTHON=3.12
 uv sync --all-extras
 git config core.hooksPath .githooks
 uv run python scripts/refresh_graphs.py

@@ -76,6 +76,12 @@ messages)
 
 (the owner answers a `[BLOCKED]` here, then sets `next=work` in STATUS)
 
+- 2026-10-28, to the D13 [BLOCKED] (graph build fails): owner: "Yes, fix it". Fixed in the setup, do not
+  continue without graphs: `scripts/cloud_setup.sh` now exports `UV_PYTHON=3.12`, and SUPERVISOR step 4
+  runs `cloud_setup.sh` whenever a tool or `graphify-out/graph.json` is missing. If `.venv` was already
+  built on 3.13 in your session, `rm -rf .venv` first. Also: the D13 attack under "In flight" never wrote
+  its verdict; run it again.
+
 ## Open escalations
 
 (results that passed only written tests or one case, and findings outside round 2's scope)
