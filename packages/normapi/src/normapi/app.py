@@ -14,7 +14,6 @@ from typing import TYPE_CHECKING
 
 import blake3
 from fastapi import FastAPI, Request
-from fastapi.middleware.cors import CORSMiddleware
 from normalizers.address import AddressNormalizer, LibpostalClient
 from normalizers.boolean import BooleanNormalizer
 from normalizers.company import CompanyNormalizer
@@ -36,6 +35,7 @@ from normalizers.unit import UnitNormalizer
 from normalizers.url import URLNormalizer
 from normexec.cache import NormalizationCache
 from normexec.env_fingerprint import current_env_id
+from starlette.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.responses import JSONResponse, PlainTextResponse
 
@@ -87,25 +87,12 @@ _DEFAULT_CUSTOM_DICTIONARIES_DIR = Path(
     os.environ.get("NORM_CUSTOM_DICTIONARIES_DIR", "data/custom-dictionaries")
 )
 
-# The M7 UI (ui/) is a separate origin from the API — without CORS
-# headers the browser blocks every fetch outright (caught by actually
-# loading the UI in a real browser against a real running server, not by
-# reasoning about the two processes in isolation). Comma-separated so a
-# deployment can widen this without a code change; both Vite's dev-server
-# origin (5173) and its `vite preview`/production-build origin (4173,
-# what the Playwright e2e suite builds and serves) are included by
-# default since both are this milestone's own consumers.
-_DEFAULT_CORS_ORIGINS = [
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
-    "http://localhost:4173",
-    "http://127.0.0.1:4173",
-]
-_EXTRA_CORS_ORIGINS = [
-    origin.strip()
-    for origin in os.environ.get("NORM_CORS_ORIGINS", "").split(",")
-    if origin.strip()
-]
+# ADR-023: the API serves the built UI itself (one port, no CORS). The path
+# is the repository layout (/app in the image, where the Dockerfile copies
+# the build); an absent directory means an API-only checkout.
+_UI_DIST_DIR = Path(
+    os.environ.get("NORM_UI_DIR", Path(__file__).resolve().parents[4] / "ui" / "dist")
+)
 
 # §103's normalization cache — defaults to an in-process-only DuckDB
 # (":memory:") so a fresh `InMemoryStore` and a fresh cache always start
@@ -257,17 +244,14 @@ def create_app(
         title="Normalization Engine API",
         description="Source.txt §98 API surface.",
         version="0.1.0",
+        # ADR-023: Swagger UI and ReDoc load their code from a CDN. No allowed
+        # dependency supplies them locally, so they are off; /openapi.json stays.
+        docs_url=None,
+        redoc_url=None,
     )
 
     # ADR-022. add_middleware puts the last one added outermost, so the caller
-    # check runs first, then the Host check, then CORS.
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=[*_DEFAULT_CORS_ORIGINS, *_EXTRA_CORS_ORIGINS],
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
-
+    # check runs first, then the Host check.
     @app.exception_handler(AddressPolicyError)
     async def _address_refused(_request: Request, exc: AddressPolicyError) -> JSONResponse:
         return JSONResponse(status_code=422, content={"detail": str(exc)})
@@ -315,5 +299,10 @@ def create_app(
     @app.get("/health")
     def health() -> dict[str, str]:
         return {"status": "ok"}
+
+    # Last, so no API route is shadowed. The UI uses hash routes: a reload of
+    # `/#/jobs/x` is still `/`.
+    if (_UI_DIST_DIR / "index.html").is_file():
+        app.mount("/", StaticFiles(directory=_UI_DIST_DIR, html=True), name="ui")
 
     return app

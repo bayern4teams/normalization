@@ -11,6 +11,14 @@
 # libicu72" (a real failure hit while re-verifying M7's Docker-based e2e
 # CI job, not a hypothetical). Bump both the suffix and `libicu72` together,
 # deliberately, when moving to a newer Debian release.
+# ADR-023: the UI is built here and served by the API, so there is one port.
+FROM node:22-bookworm-slim AS ui
+WORKDIR /ui
+COPY ui/package.json ui/package-lock.json ./
+RUN npm ci
+COPY ui/ ./
+RUN npm run build
+
 FROM python:3.12-slim-bookworm AS builder
 
 # PyICU (a normcore dependency) needs libicu-dev + pkg-config to build its
@@ -38,6 +46,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=builder /app/.venv /app/.venv
 COPY --from=builder /app/packages /app/packages
 COPY data/dictionaries /app/data/dictionaries
+COPY --from=ui /ui/dist /app/ui/dist
 
 ENV PATH="/app/.venv/bin:$PATH"
 WORKDIR /app

@@ -99,7 +99,7 @@ messages)
   the review route only; `/preview`, `/field-test` and `/runs/{id}/values` still echo raw values: not changed,
   owner decides. (4) Only the five screens ship; Runs and Comparison pages go with the rest.
   (5) `/docs` and `/redoc` need Swagger assets; no allowed dependency supplies them (Q7 names only
-  Mantine), so they are switched off and `/openapi.json` stays: owner decides whether to add `swagger-ui-dist`.
+  Mantine), so they are switched off and `/openapi.json` stays. The acceptance test is parked in `.handoff/U1.test_docs_local.py` (unmet, escalated): owner decides whether to add `swagger-ui-dist`.
 
 (results that passed only written tests or one case, and findings outside round 2's scope)
 

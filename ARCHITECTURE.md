@@ -96,7 +96,7 @@ All settings are environment variables. The default is the value in code.
 | `NORM_DICTIONARIES_DIR` | `data/dictionaries` (`compose`: `/app/data/dictionaries`) | Shipped dictionaries. |
 | `NORM_CUSTOM_DICTIONARIES_DIR` | `data/custom-dictionaries` | User dictionaries. |
 | `NORM_MAX_RUN_ROWS` | 40,000 | Row limit for one `POST /runs`. |
-| `NORM_CORS_ORIGINS` | empty | Extra allowed browser origins. The Vite dev and preview origins (`localhost` and `127.0.0.1`, ports 5173 and 4173) are always allowed. |
+| `NORM_UI_DIR` | `ui/dist` in the repository | The built UI the API serves at `/` ([ADR-023](docs/adr/ADR-023-ui-scope-and-technology.md)). |
 | `NORM_OPENLINEAGE_URL` | empty (do not forward) | Lineage collector URL. |
 | `NORM_API_HOST`, `NORM_API_PORT` | `0.0.0.0`, 8080 | Used by `python -m normapi.main`. Inside the container only; the host publishes on `NORM_BIND_ADDR`. |
 | `NORM_CLONE_WORKERS` | 3 (capped at CPU count) | Normalization worker processes, about 175 MB each. |
@@ -341,7 +341,7 @@ Known limits:
 | Secret key | `compose.yaml` holds no key; it reads `NORM_SECRET_KEY` from the uncommitted `.env`. | `compose.yaml` |
 | Callers and `Host` | Middleware refuses a peer outside loopback, RFC 1918 and `fc00::/7`, and a `Host` outside the allowlist. `X-Forwarded-For` is ignored. | `packages/normapi/src/normapi/app.py::LocalCallersOnly` |
 | Database targets | A host must be a strict literal or resolve only to allowed addresses. The connection uses the checked address. Checked on save and on every use. | `packages/normapi/src/normapi/address_policy.py::resolve_and_check` |
-| CORS | Only the Vite dev and preview origins are allowed by default. `NORM_CORS_ORIGINS` adds more. | `packages/normapi/src/normapi/app.py` |
+| CORS | None. The API serves the UI on its own port, so no browser origin needs access. | `packages/normapi/src/normapi/app.py::create_app` |
 
 The API has no authentication layer in the code. Put it behind your own
 gateway.
