@@ -50,5 +50,8 @@ jobs:
       - name: Fetch main (the ADR-014 added-dependencies test compares against it)
         run: git fetch --no-tags --depth=1 origin main
 
+      - name: Build the UI (test_u1_serving checks ui/dist; the runner ships Node)
+        run: cd ui && npm ci && npm run build
+
       - name: Unit tests + fast golden subset
         run: uv run pytest -m "unit or (golden and not slow)" -q --maxfail=1

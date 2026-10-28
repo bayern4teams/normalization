@@ -16,7 +16,7 @@ records.
 ```mermaid
 flowchart LR
     user([User]) --> ui[UI: React + Vite]
-    ui -->|HTTP /normalization| api[API: normapi]
+    ui -->|same origin /normalization| api[API: normapi]
     cli[normcli] --> analysis[normanalysis]
     api -->|reads| origin[(Origin database)]
     api -->|write| dest[(Destination database)]
@@ -37,9 +37,10 @@ Boundaries:
 - The lineage collector is optional. `packages/normapi/src/normapi/lineage.py::_forward`
   posts events only when `NORM_OPENLINEAGE_URL` is set. A missing collector
   never fails a job.
-- The UI is a separate static app. `compose.yaml` has no UI service and the
-  API does not serve it. The UI calls `VITE_API_BASE_URL`, default
-  `http://localhost:8080` (`ui/src/api/client.ts::API_BASE`).
+- The API serves the built UI at `/` on its own port, so there is no UI service in
+  `compose.yaml` and no CORS ([ADR-023](docs/adr/ADR-023-ui-scope-and-technology.md)).
+  The image builds `ui/` in a Node stage (`packages/normapi/Dockerfile`). `/docs` and
+  `/redoc` are off; `/openapi.json` stays.
 
 ## Deployment
 

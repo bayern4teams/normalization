@@ -68,7 +68,7 @@ Rules between modules:
 | `packages/normanalysis/src/normanalysis` | `gold.py`, `calibration.py`, `type_detection.py`, `disguised_missing.py`, `profiling.py`, `impact.py`, `collisions.py`, `quality.py`, `handoff.py` | Measurement and diagnostics. |
 | `packages/normapi/src/normapi` | `app.py`, `routes.py`, `clone_executor.py`, `adjudication.py`, `pg_persistence.py`, `store.py`, `lineage.py`, `secrets.py`, `schemas.py` | HTTP API, clone jobs, metadata storage. |
 | `packages/normcli/src/normcli` | `cli.py`, `traceability.py`, `mutation_gate.py` | Command line. |
-| `ui/src` | `pages/`, `api/client.ts`, `app/` | React UI. 18 pages. |
+| `ui/src` | `pages/`, `api/`, `app/`, `lib/review*.ts` | React + Mantine UI, five screens (Connections, New clone, Jobs, Review, Quality), hash routes ([ADR-023](docs/adr/ADR-023-ui-scope-and-technology.md)). Review keys: `lib/reviewKeys.ts`. Only `GET /adjudication/review` returns raw values. |
 | `services/libpostal` | `Dockerfile` | Address parsing sidecar. |
 | `data/dictionaries` | `honorifics`, `legal-entity-suffixes`, `missing-values`, `name-suffixes` | Shipped dictionaries. |
 | `scripts` | `refresh_graphs.py`, `cloud_setup.sh`, `cloud_environment_setup.sh`, `check_*.py`, `generate_*.py`, `license_policy.toml` | Repository tooling and generators. `refresh_graphs.py::PINS` is the one home of the graph-tool versions. |

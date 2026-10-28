@@ -39,7 +39,7 @@ next to it. Every clone writes a separate copy; the origin is never written.
 All milestones M0 to M8 are complete. Part 1 of the improvement report
 (defects D1 to D12) is complete and measured on public data
 ([record](docs/archive/plans/defects/PART1_COMPLETE.md)). Round 2 of Part 1
-(D13 to D15 and a new UI, U1) is researched and planned, not built
+(D13 to D15 and a new UI, U1) is built in the cloud and waits for the owner's local checks
 ([report](docs/improvement-report.md#part-1-round-2-2026-10-25--found-after-d1-d12-were-closed)). Postgres and
 ClickHouse are supported for the clone feature. MySQL, Mongo and file sources
 exist as read-only connectors, and the clone feature does not use them
@@ -78,10 +78,10 @@ docker compose up -d postgres libpostal api
 curl -s http://$NORM_BIND_ADDR:8080/health
 ```
 
-Start the UI:
+The API serves the UI at `http://$NORM_BIND_ADDR:8080/`. For UI development:
 
 ```bash
-cd ui && npm install && npm run dev
+cd ui && npm ci && npm run dev
 ```
 
 The compose file has no secret key; it reads `NORM_SECRET_KEY` from your `.env`.
