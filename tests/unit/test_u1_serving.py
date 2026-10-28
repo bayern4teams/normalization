@@ -51,7 +51,9 @@ TELEMETRY_OR_CDN = (
     "fastapi.tiangolo.com", "use.typekit.net", "api.mantine.dev",
 )  # fmt: skip
 # Hosts that appear in a JS bundle as identifiers or message text but are never fetched:
-# XML namespace URIs (W3C, SVG/XLink/MathML), React's minified-error link, and (2026-10-28, lead, new test of this round, not an existing one) the error-message links of react-router and Mantine plus a react-router warning link to github.com, and the dummy base `http://localhost` react-router uses to parse relative URLs: all text, none fetched (checked in the built bundle).
+# XML namespace URIs, React's error link, and (lead, 2026-10-28; a new test of this round) the
+# message text of react-router and Mantine plus react-router's dummy base `http://localhost`:
+# text in the bundle, never fetched (checked in the built bundle).
 JS_NOT_FETCHED = (
     "www.w3.org",
     "react.dev",

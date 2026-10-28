@@ -102,8 +102,6 @@ export async function postVerdict(
   }
 }
 
-// ponytail: GET /clone-jobs (list) is not in the API yet; this expects an array of the same
-// objects as GET /clone-jobs/{id}. Upgrade path: none needed once the route exists.
 export async function listCloneJobs(): Promise<JobListItem[]> {
   return (await get<JobListItem[]>("/clone-jobs")).body;
 }

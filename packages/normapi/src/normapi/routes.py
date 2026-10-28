@@ -955,6 +955,14 @@ def create_clone_job(
     )
 
 
+@router.get("/clone-jobs")
+def list_clone_jobs(
+    connections: Annotated[PgPersistence, Depends(get_connections)],
+) -> list[dict[str, Any]]:
+    """Every job, in the shape of `GET /clone-jobs/{id}` (ADR-023: the Jobs screen)."""
+    return [{**job, "stale": clone_executor.is_stale(job)} for job in connections.list_clone_jobs()]
+
+
 @router.get("/clone-jobs/{job_id}")
 def get_clone_job(
     job_id: str,

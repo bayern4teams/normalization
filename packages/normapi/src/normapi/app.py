@@ -35,9 +35,9 @@ from normalizers.unit import UnitNormalizer
 from normalizers.url import URLNormalizer
 from normexec.cache import NormalizationCache
 from normexec.env_fingerprint import current_env_id
-from starlette.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.responses import JSONResponse, PlainTextResponse
+from starlette.staticfiles import StaticFiles
 
 from normapi.address_policy import AddressPolicyError, check_caller
 from normapi.adjudication import migrate_sources

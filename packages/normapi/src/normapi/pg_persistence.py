@@ -706,8 +706,8 @@ class PgPersistence:
 
     def list_clone_jobs(self) -> list[dict[str, Any]]:
         with self._engine.begin() as conn:
-            rows = conn.execute(sa.text("SELECT data FROM normalization_clone_jobs")).all()
-        return [json.loads(r[0]) for r in rows]
+            rows = conn.execute(sa.text("SELECT job_id, data FROM normalization_clone_jobs")).all()
+        return [{"job_id": r[0], **json.loads(r[1])} for r in rows]
 
     def claim_clone_job(self, job_id: str) -> bool:
         """Atomic SCHEMA_READY|RUNNING|FAILED -> RUNNING transition, same

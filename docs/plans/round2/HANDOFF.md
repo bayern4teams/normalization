@@ -39,7 +39,8 @@ See plan §8 phase tables; they stand unchanged.
 
 ## In flight
 
-- 2026-10-28 U1 lane B (round2-worker, sonnet): `ui/src/{App,main}.tsx`, `app/`, shell/Nav, Connections, New clone, deleting the dropped pages/specs; progress `.handoff/U1.laneB.progress.md`.
+- (lane B and C finished 2026-10-28, reports in .handoff/U1.lane{B,C}.report.md; lead wired, added GET /clone-jobs)
+- (done) lane B (round2-worker, sonnet): `ui/src/{App,main}.tsx`, `app/`, shell/Nav, Connections, New clone, deleting the dropped pages/specs; progress `.handoff/U1.laneB.progress.md`.
 - 2026-10-28 U1 lane C (round2-worker, sonnet): `ui/src/pages/{Jobs*,Review*,Quality*}`, `ui/src/lib/review*`, `ui/e2e/{jobs,review,quality}.spec.ts`; progress `.handoff/U1.laneC.progress.md`. The lead wires C's pages into the router.
 
 ## Next action
@@ -93,6 +94,10 @@ messages)
 
 ## Open escalations
 
+- U1 R23 conflict, not changed: `GET /clone-jobs/{id}` and `/quality` carry raw `disguised_missing[].value`.
+  D4's confirm step (`confirmed_missing`) needs those exact values, so masking them would break it. Owner decides
+  (a separate review-style route for them, or accept the exception).
+
 - U1 lead decisions on the verifier's open questions (2026-10-28, no owner answer; the owner may overrule):
   (1) the accept key takes the reading the person picks with number keys 1-9; nothing is pre-selected.
   (2) Verdicts are append-only, so "keep ambiguous" skips the value (nothing stored, it stays pending) and
@@ -100,7 +105,7 @@ messages)
   the review route only; `/preview`, `/field-test` and `/runs/{id}/values` still echo raw values: not changed,
   owner decides. (4) Only the five screens ship; Runs and Comparison pages go with the rest.
   (5) `/docs` and `/redoc` need Swagger assets; no allowed dependency supplies them (Q7 names only
-  Mantine), so they are switched off and `/openapi.json` stays. The acceptance test is parked in `.handoff/U1.test_docs_local.py` (unmet, escalated): owner decides whether to add `swagger-ui-dist`.
+  Mantine), so they are switched off and `/openapi.json` stays. The acceptance test is parked in `.handoff/U1.test_docs_local.md` (unmet, escalated): owner decides whether to add `swagger-ui-dist`.
 
 (results that passed only written tests or one case, and findings outside round 2's scope)
 
