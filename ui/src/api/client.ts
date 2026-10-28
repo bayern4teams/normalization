@@ -9,9 +9,7 @@ import type {
   ColumnInfo,
   Connection,
   ConnectionEngine,
-  ErrorPolicy,
   FieldSemanticType,
-  NormalizedValue,
 } from "./types";
 
 // Same origin: the API serves this UI (ADR-023, one port, no CORS). `npm run dev` and
@@ -56,17 +54,6 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     return undefined as T;
   }
   return (await resp.json()) as T;
-}
-
-// --- preview / field-test ------------------------------------------------
-
-export function preview(body: {
-  field_name: string;
-  semantic_type: FieldSemanticType;
-  values: (string | null)[];
-  error_policy?: ErrorPolicy;
-}): Promise<NormalizedValue[]> {
-  return request("/preview", { method: "POST", body: JSON.stringify(body) });
 }
 
 // --- DB-clone-and-normalize: saved connections -------------------------------
