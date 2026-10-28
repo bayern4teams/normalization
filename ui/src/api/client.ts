@@ -28,8 +28,9 @@ import type {
   TypeSuggestion,
 } from "./types";
 
-const API_BASE = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? "http://localhost:8080";
-const BASE = `${API_BASE}/normalization`;
+// Same origin: the API serves this UI (ADR-023, one port, no CORS). `npm run dev` and
+// `npm run preview` forward this prefix to the API (vite.config.ts).
+const BASE = "/normalization";
 
 export class ApiError extends Error {
   status: number;
@@ -315,6 +316,19 @@ export function createConnection(body: {
   password: string;
 }): Promise<Connection> {
   return request("/connections", { method: "POST", body: JSON.stringify(body) });
+}
+
+// "Test connection" (U1): the API has no test route; listing the server's databases with the
+// not-yet-saved credentials ("adhoc") is the same check Save's later use would make, and it
+// goes through the address check (D15), which answers 422 for a refused host.
+export function testConnection(body: {
+  engine: ConnectionEngine;
+  host: string;
+  port: number;
+  username: string;
+  password: string;
+}): Promise<string[]> {
+  return request("/connections/adhoc/databases", { method: "POST", body: JSON.stringify(body) });
 }
 
 export function deleteConnection(connectionId: string): Promise<void> {

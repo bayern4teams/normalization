@@ -1,3 +1,4 @@
+import { Alert, Loader, Text } from "@mantine/core";
 import type { ReactNode } from "react";
 
 interface QueryStateProps {
@@ -23,13 +24,17 @@ export function QueryState({
   children,
 }: QueryStateProps) {
   if (isLoading) {
-    return <p className="state-message">Loading…</p>;
+    return <Loader size="sm" aria-label="Loading" />;
   }
   if (isError) {
-    return <p className="state-message state-message--error">Request failed: {errorMessage(error)}</p>;
+    return (
+      <Alert color="red" title="Request failed">
+        {errorMessage(error)}
+      </Alert>
+    );
   }
   if (isEmpty) {
-    return <p className="state-message">{emptyMessage}</p>;
+    return <Text c="dimmed">{emptyMessage}</Text>;
   }
   return <>{children}</>;
 }
