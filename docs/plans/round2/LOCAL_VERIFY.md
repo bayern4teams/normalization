@@ -76,6 +76,7 @@ Review the diff of each and confirm the test still checks the same behaviour.
 | `tests/unit/test_connector_schema.py` | WIP D15 commit "TEST-CHANGE: use a literal local address as the connection host" | host `h` does not resolve; assertions unchanged |
 | `tests/unit/test_address_policy.py` | WIP D15 commit "lint-clean the moved address-policy test" | formatting and a top-level import only |
 | `tests/unit/test_u1_serving.py` (new this round) | U1 commits "serving test lists non-fetched message hosts", "docs, ci-fast..." | C5: `JS_NOT_FETCHED` widened by `reactrouter.com`, `mantine.dev`, `localhost`, `github.com` (message text in the bundle, none fetched); the `/docs`-served-locally test was removed from the file and parked in `.handoff/U1.test_docs_local.md` (needs `swagger-ui-dist`, outside plan 2.10). Owner approval: none, escalated in HANDOFF.md. Review 2027-01-27. |
+| `tests/integration/test_followups_live.py` | WIP local: D14 integration fix (source_identity) | Added `source_database` to fixture `_job_with_error_rows()` so resume tests survive the `source_identity` migration in `_normalize_table` |
 
 ### D13 — LANGUAGE code is the contract
 
