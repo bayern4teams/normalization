@@ -2,7 +2,7 @@
 
 Everything here is **implemented, unverified** until the owner runs it locally. Confirm each entry
 with an independent check (a direct query, `ss -ltnp`, a curl from another machine), never the
-application's own success message.
+application's own success message. The local agent's steps for this list are in [LOCAL_RUN.md](LOCAL_RUN.md).
 
 ## Restore the environment first
 

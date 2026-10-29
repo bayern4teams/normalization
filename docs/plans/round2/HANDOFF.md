@@ -45,7 +45,8 @@ See plan §8 phase tables; they stand unchanged.
 
 ## Next action
 
-Phase 5 (close): `/ponytail-audit`, `/ponytail-debt`, `/ponytail-gain`, delete unused exports in `ui/src/api/{client,types}.ts`, fold `.handoff/` into `round2/FINAL_REPORT.md`, purge it, add the status line to the report, `[ROUND2 COMPLETE]`. Never merge.
+Since 2026-10-29 the rest of round 2 runs on the owner's laptop, one agent, no routine: follow
+[LOCAL_RUN.md](LOCAL_RUN.md) (live checks first, then Phase 5). Phase 5 (close): `/ponytail-audit`, `/ponytail-debt`, `/ponytail-gain`, delete unused exports in `ui/src/api/{client,types}.ts`, fold `.handoff/` into `round2/FINAL_REPORT.md`, purge it, add the status line to the report, `[ROUND2 COMPLETE]`. Never merge.
 
 ## Notifications
 
