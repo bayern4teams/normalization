@@ -2439,6 +2439,19 @@ def _normalize_table(
     bounds_columns: dict[str, list[str]] = table_plan.get("bounds_columns", {})
     region_columns: dict[str, str] = table_plan.get("region_columns", {})
     stats = {column: _ColumnStats() for column in configured_columns}
+    # A job created before source_identity existed (or a test fixture).
+    if "source_identity" not in job:
+        # Connectors expose different attrs than connection dicts, so build
+        # identity directly from the connector instead of calling source_identity().
+        from urllib.parse import urlparse as _urlparse  # noqa: PLC0415
+        if source_engine == "clickhouse":
+            u = _urlparse(source._client.url)
+            job["source_identity"] = f"clickhouse://{u.hostname}:{u.port}/{source._client.database}"
+        else:
+            url = source._engine.url
+            job["source_identity"] = f"{url.drivername}://{url.username}@{url.host}:{url.port}/{url.database}"
+            if job.get("source_schema"):
+                job["source_identity"] += f"/{url.database}/{job['source_schema']}"
     _column_evidence(job, source, table, configured_columns)
     # Only this table's own key column matters: a table that does not carry
     # it gets no cross-table country, which is the behaviour without the

@@ -113,6 +113,7 @@ _RUN = textwrap.dedent(
 def _job_with_error_rows() -> dict[str, Any]:
     return {
         "source_connection_id": "s",
+        "source_database": "source_demo",
         "destination_database": "",
         "field_configs": {"t": {"amt": "MONEY"}},
         "destination_plan": {"t": {"typed_columns": {}}},
