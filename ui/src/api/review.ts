@@ -1,8 +1,8 @@
 // API calls for the Review, Jobs and Quality screens (U1 lane C). Kept apart from
 // client.ts so these screens do not depend on it; the base is the page's own
 // origin because the API serves the UI (one port, no CORS, no absolute URL).
-// Job calls that client.ts already has (getCloneJob, startCloneJob,
-// verifyCloneJobDatabase) are reused from there, not repeated.
+// Job calls that client.ts already has (startCloneJob, verifyCloneJobDatabase)
+// are reused from there, not repeated.
 
 import type { CloneJob, FieldSemanticType, NormalizationError } from "./types";
 import { ApiError } from "./client";

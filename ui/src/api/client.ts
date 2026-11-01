@@ -126,7 +126,3 @@ export function verifyCloneJobDatabase(jobId: string): Promise<CloneJob> {
 export function startCloneJob(jobId: string): Promise<CloneJob> {
   return request(`/clone-jobs/${jobId}/start`, { method: "POST" });
 }
-
-export function getCloneJob(jobId: string): Promise<CloneJob> {
-  return request(`/clone-jobs/${jobId}`);
-}
