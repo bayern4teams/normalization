@@ -36,6 +36,7 @@ from collections import Counter
 from concurrent.futures import ProcessPoolExecutor
 from importlib import resources
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlparse
 
 from normalizers.date import column_date_evidence
 from normalizers.language import column_language_evidence
@@ -2384,18 +2385,16 @@ def _resume_point(
     return -1
 
 
-def _connector_source_identity(job: dict[str, Any], source: object, source_engine: str) -> str:
+def _connector_source_identity(job: dict[str, Any], source: Any, source_engine: str) -> str:
     """Identity of a job created before source_identity existed (or a test fixture).
 
     Connectors expose different attrs than connection dicts, so build identity
     directly from the connector instead of calling source_identity().
     """
-    from urllib.parse import urlparse  # noqa: PLC0415
-
     if source_engine == "clickhouse":
-        u = urlparse(source._client.url)  # type: ignore[attr-defined]
-        return f"clickhouse://{u.hostname}:{u.port}/{source._client.database}"  # type: ignore[attr-defined]
-    url = source._engine.url  # type: ignore[attr-defined]
+        u = urlparse(source._client.url)
+        return f"clickhouse://{u.hostname}:{u.port}/{source._client.database}"
+    url = source._engine.url
     identity = f"{url.drivername}://{url.username}@{url.host}:{url.port}/{url.database}"
     if job.get("source_schema"):
         identity += f"/{url.database}/{job['source_schema']}"
