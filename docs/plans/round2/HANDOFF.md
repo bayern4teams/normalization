@@ -11,10 +11,10 @@ minutes is stale.
 
 | item | phase | state | commit | lead verdict |
 |---|---|---|---|---|
-| D15 | 1 | unverified-live | see git log | Lead: verifier REJECTed (`.handoff/D15.verdict.md`: compose env not passed, 3 wiring points untested, `://` in a password, `[::1]` Host). Lead fixed all four plus `--no-proxy-headers`, with `tests/unit/test_address_policy_wiring.py`. Known and recorded: `Host: localhost:80@evil.com` accepted (LOCAL_VERIFY). Accepted by the lead on the diff; live checks in LOCAL_VERIFY. |
-| D14 | 2 | unverified-live | see git log | Lead: verifier REJECTed (`.handoff/D14.verdict.md`): a stored legacy job could still write to its origin, a second connection to one server was not caught, stale text. Lead added `_require_separate_copy` (start, Phase 1, Phase 2) with `tests/unit/test_same_origin_guard.py`, fixed the text. Two host names for one server are not guessed equal (limit). |
-| D13 | 3 | unverified-live | see git log | Lead: verifier REJECTed e93bc50 (`.handoff/D13.verdict.md`): `column_language_form` missing from the `context_hash` unset set (every hash moved), and free text like `Mon-Khmer` split as a BCP 47 variant. Lead fixed both (variants must be known to CLDR or digit-led; tests `test_language_free_text_hyphen.py`, fail before / pass after), built the AMBIGUOUS result from `_unresolved` (the pinned confidence-literal count stays), and added the missing assertions to `test_same_origin_guard.py`. Not re-attacked; end-to-end clone with row country and column form, resume and `env_id` movement are live checks. |
-| U1 | 4 | unverified-live | see git log | Verifier REJECT (`.handoff/U1.verdict.md`): lead fixed the C5 guard, double POST on leave, list route leaking quality; the rest escalated (R23 gaps, /docs). Derive done (`.handoff/U1.acceptance.md`). Lead: review route `GET /adjudication/review[/{key}]` built, API-half test moved to `tests/unit/test_u1_review_route.py` (18 pass). Serving, screens, Playwright pending. |
+| D15 | 1 | verified-live 2026-11-01 (LOCAL §5.3+§5.8: PASS) | see git log | Lead: verifier REJECTed (FINAL_REPORT.md §2: D15: compose env not passed, 3 wiring points untested, `://` in a password, `[::1]` Host). Lead fixed all four plus `--no-proxy-headers`, with `tests/unit/test_address_policy_wiring.py`. Known and recorded: `Host: localhost:80@evil.com` accepted (LOCAL_VERIFY). Accepted by the lead on the diff; live checks in LOCAL_VERIFY. |
+| D14 | 2 | verified-live 2026-11-01 (LOCAL §5.2+§5.8: PASS) | see git log | Lead: verifier REJECTed (FINAL_REPORT.md §2: D14): a stored legacy job could still write to its origin, a second connection to one server was not caught, stale text. Lead added `_require_separate_copy` (start, Phase 1, Phase 2) with `tests/unit/test_same_origin_guard.py`, fixed the text. Two host names for one server are not guessed equal (limit). |
+| D13 | 3 | verified-live 2026-11-01 (LOCAL §5.4+§5.8 re-attack: PASS) | see git log | Lead: verifier REJECTed e93bc50 (FINAL_REPORT.md §2: D13): `column_language_form` missing from the `context_hash` unset set (every hash moved), and free text like `Mon-Khmer` split as a BCP 47 variant. Lead fixed both (variants must be known to CLDR or digit-led; tests `test_language_free_text_hyphen.py`, fail before / pass after), built the AMBIGUOUS result from `_unresolved` (the pinned confidence-literal count stays), and added the missing assertions to `test_same_origin_guard.py`. Not re-attacked; end-to-end clone with row country and column form, resume and `env_id` movement are live checks. |
+| U1 | 4 | verified-live 2026-11-01 (LOCAL §5.7 walk+Playwright 48/48: PASS) | see git log | Verifier REJECT (FINAL_REPORT.md §2: U1): lead fixed the C5 guard, double POST on leave, list route leaking quality; the rest escalated (R23 gaps, /docs). Derive done (FINAL_REPORT.md §2: U1 acceptance). Lead: review route `GET /adjudication/review[/{key}]` built, API-half test moved to `tests/unit/test_u1_review_route.py` (18 pass). Serving, screens, Playwright pending. |
 
 States: `todo` · `in-progress` · `accepted-cloud` (lead accepted, cloud-verifiable parts proven) ·
 `unverified-live` (accepted, needs the real environment: see LOCAL_VERIFY.md) · `blocked`.
@@ -39,6 +39,12 @@ See plan §8 phase tables; they stand unchanged.
 
 ## In flight
 
+- 2026-11-01 §5.9 close IN PROGRESS: FINAL_REPORT.md written (folds all of `.handoff/` in),
+  round-2 status line added to `docs/improvement-report.md`, every table row above now has a
+  live verdict. OPEN (B3): the `.handoff/` purge — file list is FINAL_REPORT.md §6, awaiting
+  the owner's yes for that exact list; then one deletion commit, then `[ROUND2 COMPLETE]`.
+  Also awaiting owner: §5.6 fix go/no-go and the pre-existing
+  `test_a_time_is_no_day_or_month` failure (present on main; see FINAL_REPORT §3/§4.10).
 - 2026-11-01 §5.7 DONE: live browser walk on http://10.10.9.137:8080/ (Docker API, no deviation
   needed — its container reaches the box; the five screens walked with a real movies job
   `bm_round2_ui_out`, job 2e1d899a, COMPLETED 14,780 rows). Screenshots in
@@ -109,7 +115,7 @@ Since 2026-10-29 the rest of round 2 runs on the owner's laptop, one agent, no r
 
 ## Notifications
 
-[PHASE 4 DONE] 2026-10-28. U1 `unverified-live`. Verifier REJECTed once (`.handoff/U1.verdict.md`); the lead fixed the C5 guard, the double POST
+[PHASE 4 DONE] 2026-10-28. U1 `unverified-live`. Verifier REJECTed once (FINAL_REPORT.md §2: U1); the lead fixed the C5 guard, the double POST
 on leave, the list route leaking `quality`, and `NORM_UI_DIR` in `.env.example`; /docs-local and three R23 gaps are escalated (Open escalations).
 Gate in this session: ruff check, ruff format --check, mypy, check_c5_exceptions, check_test_assertions, check_no_stubs, check_docs_note,
 check_root_files, check_gitignore_consistency, check_mermaid, deptry, gitleaks main..HEAD: pass; ui `npm ci`, build, lint: pass; Playwright 48 passed

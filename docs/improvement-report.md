@@ -11,6 +11,10 @@
 `confidence=` counts, `ptype`'s availability), the plan's §8 "Pre-findings" records what the code says.
 **Round 2 (2026-10-25):** D13-D15 and U1 added to Part 1, with their research in Part 2 and
 four new resource files (Appendix G). Proposal only; no code changed.
+**Round 2 status (2026-11-01):** D13, D14, D15 and U1 implemented and verified on branch
+`feat/round2-fixes`; measured results, the memory diagnosis and the open owner items are in
+[`plans/round2/FINAL_REPORT.md`](plans/round2/FINAL_REPORT.md). The D13 "Verified state" tables below
+describe the state before this fix.
 **Scope confirmed with project owner** (Q&A round, 2026-09-30)
 
 ---
