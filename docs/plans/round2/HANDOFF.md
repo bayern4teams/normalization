@@ -39,6 +39,17 @@ See plan §8 phase tables; they stand unchanged.
 
 ## In flight
 
+- 2026-11-01 §5.5 DONE (measured): native API on 8090 under MemoryMax=3G; Diffbot full clone
+  COMPLETED (13/13 tables, 52,828/52,828 rows, phase2 40.2 s, 472 flagged error rows, all
+  location.postalcode vs US; origin untouched, no `__normalizing`); ZoomInfo 100k COMPLETED
+  (7/7 tables match with FINAL, 699,853 rows, phase2 67.1 s, 1,077 error rows); ZoomInfo 1M
+  COMPLETED (7/7 tables match with FINAL, 5,999,042 rows, cgroup peak 1.61 GB < 3 GB cap, no
+  OOM; the driver client was killed by a tool timeout but the job ran server-side to completion
+  — resumed by re-fetching from the API). Review queue: diffbot 1,852 rows/2.8 MB; zi1m
+  1,914,572 rows/2.7 GB — matches the 2026-10-28 baseline (1,852 / 1,914,502). CH query_log
+  shows the clone connected from ::ffff:10.10.9.137. compose.yaml `network_mode: host` graft
+  reverted (uncommitted change removed; clones use the native API per G3/G4). Now §5.6:
+  restart on norm_app_r2_zi1m under the cap, measure start-up memory. Then §5.7, §5.8, §5.9.
 - 2026-10-31 (laptop, single agent, LOCAL_RUN.md): reverting the previous session's uncommitted
   `network_mode: host` graft in compose.yaml (wrong path: G3/G4 send real-data clones to the native
   API; host networking breaks the `@postgres` service DNS and D15's binding). Then §5.5: native API
