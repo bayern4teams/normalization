@@ -39,6 +39,14 @@ See plan §8 phase tables; they stand unchanged.
 
 ## In flight
 
+- 2026-10-31 (laptop, single agent, LOCAL_RUN.md): reverting the previous session's uncommitted
+  `network_mode: host` graft in compose.yaml (wrong path: G3/G4 send real-data clones to the native
+  API; host networking breaks the `@postgres` service DNS and D15's binding). Then §5.5: native API
+  on 8090 under `MemoryMax=3G`, jobs `norm_r2_out_diffbot` (full, `source_schema: diffbot`),
+  `norm_r2_src_zi100k`→`norm_r2_out_zi100k`, `norm_r2_src_zi1m`→`norm_r2_out_zi1m`, each with its
+  own `norm_app_r2_<run>` on diffbot-pg; measure per the 2026-10-28 report. Then §5.6 memory
+  diagnosis, §5.7 UI walk (movies job; Playwright too), §5.8 worktree re-check, §5.9 close.
+  Raw outputs: `reports/2026-10-29_round2_local/` (git-ignored).
 - (lane B and C finished 2026-10-28, reports in .handoff/U1.lane{B,C}.report.md; lead wired, added GET /clone-jobs)
 - (done) lane B (round2-worker, sonnet): `ui/src/{App,main}.tsx`, `app/`, shell/Nav, Connections, New clone, deleting the dropped pages/specs; progress `.handoff/U1.laneB.progress.md`.
 - 2026-10-28 U1 lane C (round2-worker, sonnet): `ui/src/pages/{Jobs*,Review*,Quality*}`, `ui/src/lib/review*`, `ui/e2e/{jobs,review,quality}.spec.ts`; progress `.handoff/U1.laneC.progress.md`. The lead wires C's pages into the router.
