@@ -39,6 +39,36 @@ See plan §8 phase tables; they stand unchanged.
 
 ## In flight
 
+- 2026-11-01 §5.7 DONE: live browser walk on http://10.10.9.137:8080/ (Docker API, no deviation
+  needed — its container reaches the box; the five screens walked with a real movies job
+  `bm_round2_ui_out`, job 2e1d899a, COMPLETED 14,780 rows). Screenshots in
+  reports/2026-10-29_round2_local/ui/ (outside the repo). Measured: SPA route content 102-105 ms;
+  Review key press ('k') DOM update **14 ms** (budget 100 ms); all resource loads from the API's
+  own origin only (`performance.getEntriesByType('resource')` → single origin
+  http://10.10.9.137:8080); Connections refused public host 8.8.8.8 at the field
+  ("address '8.8.8.8' is outside the allowed local network"); Jobs detail survives reload (URL
+  carries job id); `docker compose exec api ls /app/ui/dist` shows the built UI. Playwright
+  `npm run test:e2e`: 48 passed. NOT measured: the "page loads < 1 s with 250 distinct values"
+  budget as a controlled 250-value page (queue here holds 12 distinct entries; route content
+  times all ≤ 3.1 s worst-case incl. API call, Review/Quality < 0.6 s).
+- 2026-11-01 §5.8 DONE (fresh worktree ../norm-r2-check at 281fbf4): integration 33 passed;
+  `grep -rn in_place packages ui/src` empty; in_place POST → 422; ss shows only
+  10.10.9.137:8080 + 127.0.0.1 ports; LAN caller 200 / bad Host 400 / userinfo Host 200 (known)
+  / 8.8.8.8 conn 422. D13 re-attack (never done by the cloud): the six acceptance cases pass —
+  Mon→AMBIGUOUS, Mon+MM→mnw, Ga+column-form-code→ga, Mon-Khmer not split (INVALID, kept),
+  en→en; DB-free probe over all 7,910 pycountry languages: `comparison` fed back changes **0**
+  (matches "before" 0; the contract holds), `display` fed back changes **142 — all to AMBIGUOUS
+  holds, 0 silent rewrites** (before: 440 changed: 208 to another language, 232 to INVALID);
+  output fed back (movies lang run, codes) changes 0. env_id: `normalizers` blake3 source digest
+  moved main 4b43f2eb… → HEAD 1fa6736e… (ADR-014 mechanism proven live); verdict store empty
+  (0 rows) so no stored env_id movement observable — noted as not checked. Resume checks live:
+  diffbot job killed mid-phase-2 (6 s in), API restarted on the same job-records DB, POST start
+  resumed → COMPLETED 52,828/52,828 rows with stored field configs intact (no `__normalizing`
+  residue); a second kill/resume with an explicit LANGUAGE/COUNTRY movies job (killed at 2,000
+  rows) resumed → COMPLETED 14,780 rows with `language_code` distribution identical to the full
+  run (en 5,763, NULL 1,627). Diff review vs plan §9: D15
+  middleware/Host/allow-set/make_conninfo/secret-from-.env all present; D14 swap_table/drop_table
+  gone from both destinations; ADR-010/013/017 amended, ADR-022/023 added. No mismatches found.
 - 2026-11-01 §5.6 DONE (measured, no code change): restart of the native API on
   `norm_app_r2_zi1m` under `MemoryMax=3G` was **OOM-killed at 3.0 GB, t+27 s, before health**;
   linear ramp ~144 MB/s from t+2 s; never answered a request. Cause confirmed by measurement +
