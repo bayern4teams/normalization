@@ -39,6 +39,16 @@ See plan §8 phase tables; they stand unchanged.
 
 ## In flight
 
+- 2026-11-01 §5.6 DONE (measured, no code change): restart of the native API on
+  `norm_app_r2_zi1m` under `MemoryMax=3G` was **OOM-killed at 3.0 GB, t+27 s, before health**;
+  linear ramp ~144 MB/s from t+2 s; never answered a request. Cause confirmed by measurement +
+  code: `adjudication.py::migrate_sources` (called by `create_app`) runs
+  `list_queue(limit=2**31)` — loads all 1,914,572 queue rows (2,302 MB of column data) into one
+  Python list — and **0 of 1,914,572 rows need migration** (every stored source is already
+  identity-form). graft `callers create_app --depth 2`: this is the only whole-table read in the
+  start-up path. Fix options researched (paged batch loop — the pattern routes.py:1213 already
+  uses — recommended; server-side cursor; SQL pre-filter; mark-done marker). Detail in FINAL_REPORT.
+  Then §5.7 (UI walk + Playwright), §5.8, §5.9.
 - 2026-11-01 §5.5 DONE (measured): native API on 8090 under MemoryMax=3G; Diffbot full clone
   COMPLETED (13/13 tables, 52,828/52,828 rows, phase2 40.2 s, 472 flagged error rows, all
   location.postalcode vs US; origin untouched, no `__normalizing`); ZoomInfo 100k COMPLETED
