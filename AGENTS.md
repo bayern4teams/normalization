@@ -405,3 +405,10 @@ scripts/run_deptry.sh && .tools/gitleaks git --no-banner . && .tools/actionlint 
 ```
 
 Install the two binaries once with `scripts/install_tools.sh`.
+
+CI also runs on GitLab: `.gitlab-ci.yml` ports the GitHub workflows (runner tag `bayern`); its header
+lists what is not ported (Windows leg, `release.yml`, `drift.yml`).
+
+Remotes (owner, 2026-11-03): `origin` is GitLab (default), `github` is GitHub; both hold the same
+branches. `origin` has two push URLs, so `git push` updates both. Check with
+`bash scripts/check_mirror.sh`.
