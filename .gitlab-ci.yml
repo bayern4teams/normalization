@@ -1,0 +1,417 @@
+# GitLab port of .github/workflows/* (owner 2026-11-03: GitLab is the default remote and both
+# remotes mirror). The GitHub workflows stay as they are; scripts are shared, so CI here and
+# there check the same things.
+#
+# Not ported, on purpose:
+#   - the Windows leg of ci-full's test matrix (no Windows runner);
+#   - release.yml (pushes to ghcr.io, signs keyless with GitHub OIDC, creates a GitHub Release);
+#   - drift.yml (manual only, and its own header says it has never been able to run);
+#   - gitleaks-action (the guards job already runs the pinned gitleaks binary over full history).
+# Not verified on this runner yet: integration, determinism-replay, e2e (docker-in-docker plus
+# the libpostal model download); the other jobs are listed in the commit message.
+
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    # A branch with an open merge request already gets the merge request pipeline.
+    - if: $CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS
+      when: never
+    - if: $CI_COMMIT_BRANCH
+    - if: $CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "api"
+
+default:
+  # The instance runner (git.n4t.com) is tag-gated: run_untagged is off, so every job
+  # must carry its tag or it stays pending forever (same as db-catalogue).
+  tags: [bayern]
+  image: python:3.12-bookworm
+
+stages: [fast, full, gate]
+
+variables:
+  GIT_DEPTH: "0"
+  UV_VERSION: "0.12.19"
+  UV_PYTHON_PREFERENCE: system
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+  DOCKER_VERSION: "29.9.2"
+  COMPOSE_VERSION: "5.7.0"
+
+# --- rules -------------------------------------------------------------------------------------
+# Same trigger split as the GitHub workflows: milestone/** branches use the heavier gate jobs.
+.on-fast:
+  rules:
+    - if: $CI_COMMIT_BRANCH =~ /^milestone\//
+      when: never
+    - when: on_success
+
+.on-full:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "main"
+    - if: $CI_COMMIT_BRANCH =~ /^milestone\//
+    - if: $CI_PIPELINE_SOURCE == "web"
+
+.on-docs:
+  rules:
+    - if: $CI_COMMIT_BRANCH =~ /^milestone\//
+      when: never
+    - changes:
+        - README.md
+        - ARCHITECTURE.md
+        - TECHNICAL_IMPLEMENTATION.md
+        - GLOSSARY.md
+        - AGENTS.md
+        - docs/**/*
+        - .vale.ini
+        - .vale/**/*
+        - .markdownlint-cli2.jsonc
+        - scripts/check_mermaid.py
+        - puppeteer-config.json
+        - .gitlab-ci.yml
+
+.on-gate:
+  rules:
+    - if: $CI_COMMIT_BRANCH =~ /^milestone\//
+    - if: $CI_PIPELINE_SOURCE == "web" && $MILESTONE
+
+# --- shared setup ------------------------------------------------------------------------------
+# Python + uv + the ICU headers PyICU needs to build (as in ci-fast).
+.uv:
+  before_script:
+    - python -m pip install --quiet "uv==${UV_VERSION}"
+    - apt-get update -qq && apt-get install -y -qq --no-install-recommends libicu-dev pkg-config >/dev/null
+    - uv sync --all-extras
+
+# BASE = what this change is compared with: the merge request base, the commit before the push,
+# or (first push of a branch, all-zero "before") the default branch.
+.base:
+  before_script:
+    - |
+      if [ -n "${CI_MERGE_REQUEST_DIFF_BASE_SHA:-}" ]; then
+        BASE="$CI_MERGE_REQUEST_DIFF_BASE_SHA"
+      else
+        BASE="${CI_COMMIT_BEFORE_SHA:-}"
+        case "$BASE" in ''|*[!0]*) : ;; *) BASE="" ;; esac
+        if [ -z "$BASE" ]; then
+          git fetch --quiet --no-tags origin "$CI_DEFAULT_BRANCH"
+          BASE="$(git rev-parse FETCH_HEAD)"
+        fi
+      fi
+      export BASE
+      echo "base of this change: $BASE"
+
+# Docker CLI + compose plugin for talking to the docker:dind service (pinned versions; the CLI
+# must match the daemon's major version).
+.docker-cli:
+  services:
+    - name: docker:29.9.2-dind
+      alias: docker
+  variables:
+    DOCKER_HOST: tcp://docker:2375
+    DOCKER_TLS_CERTDIR: ""
+.docker-scripts:
+  docker_setup: &docker_setup
+    - apt-get update -qq && apt-get install -y -qq --no-install-recommends curl socat >/dev/null
+    - curl -fsSL "https://download.docker.com/linux/static/stable/x86_64/docker-${DOCKER_VERSION}.tgz" | tar -xz -C /usr/local/bin --strip-components=1 docker/docker
+    - mkdir -p /usr/local/lib/docker/cli-plugins
+    - base=https://github.com/docker/compose/releases/download/v${COMPOSE_VERSION}
+    - curl -fsSL -o /usr/local/lib/docker/cli-plugins/docker-compose "$base/docker-compose-linux-x86_64"
+    - curl -fsSL -o /tmp/compose.sha256 "$base/docker-compose-linux-x86_64.sha256"
+    - echo "$(awk '{print $1}' /tmp/compose.sha256)  /usr/local/lib/docker/cli-plugins/docker-compose" | sha256sum -c -
+    - chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
+    - docker version --format '{{.Client.Version}} / {{.Server.Version}}'
+  # The tests reach the stack on localhost; the stack runs in docker:dind. Forward every host
+  # port the compose file publishes from 127.0.0.1 in the job to the dind host.
+  forward_ports: &forward_ports
+    - |
+      for port in $(docker compose config --format json | python3 -c "
+      import json, sys
+      for s in json.load(sys.stdin)['services'].values():
+          for p in s.get('ports', []):
+              print(p['published'])"); do
+        socat "TCP-LISTEN:${port},bind=127.0.0.1,fork,reuseaddr" "TCP:docker:${port}" &
+      done
+  libpostal_data: &libpostal_data
+    - cd services/libpostal/_data_cache && bash download_data.sh && cd - >/dev/null
+
+
+# --- fast stage: every push (ci-fast, docs-note, stub-check, dep-check, guards, docs) ---------
+fast:
+  extends: [.on-fast, .uv]
+  stage: fast
+  timeout: 10m
+  script:
+    - uv run ruff check .
+    - uv run ruff format --check .
+    - uv run mypy packages
+    # The ADR-014 added-dependencies test compares against main.
+    - git fetch --no-tags --depth=1 origin main
+    - uv run pytest -m "unit or (golden and not slow)" -q --maxfail=1
+
+docs-note:
+  extends: [.on-fast, .base]
+  stage: fast
+  timeout: 5m
+  script:
+    - python3 scripts/check_docs_note.py "$BASE..HEAD"
+
+stub-check:
+  extends: [.on-fast, .base]
+  stage: fast
+  timeout: 5m
+  script:
+    - python3 scripts/check_no_stubs.py "$BASE"
+
+deps:
+  extends: [.on-fast, .uv]
+  stage: fast
+  timeout: 10m
+  script:
+    - scripts/run_deptry.sh
+    - uv run python scripts/check_mutmut_paths.py
+
+guards:
+  extends: [.on-fast, .base]
+  stage: fast
+  timeout: 10m
+  script:
+    - python3 scripts/check_c5_exceptions.py "$BASE"
+    - python3 scripts/check_test_assertions.py "$BASE"
+    - python3 scripts/check_root_files.py
+    - python3 scripts/check_gitignore_consistency.py
+    - scripts/install_tools.sh
+    - .tools/gitleaks git --no-banner .
+    - .tools/actionlint
+    - python -m pip install --quiet "uv==${UV_VERSION}"
+    - uvx zizmor@1.31.1 .github/workflows
+
+docs-prose:
+  extends: [.on-docs]
+  stage: fast
+  timeout: 10m
+  script:
+    - base=https://github.com/errata-ai/vale/releases/download/v3.24.0
+    - curl -sSL -o vale.tar.gz "$base/vale_3.24.0_Linux_64-bit.tar.gz"
+    - curl -sSL -o vale_checksums.txt "$base/vale_3.24.0_checksums.txt"
+    - grep 'vale_3.24.0_Linux_64-bit.tar.gz$' vale_checksums.txt | sed 's|vale_3.24.0_Linux_64-bit.tar.gz|vale.tar.gz|' | sha256sum -c -
+    - tar xzf vale.tar.gz -C /usr/local/bin vale
+    - vale sync
+    - |
+      files=$(for f in README.md ARCHITECTURE.md TECHNICAL_IMPLEMENTATION.md GLOSSARY.md docs/LESSONS.md AGENTS.md; do [ -f "$f" ] && echo "$f"; done)
+      [ -z "$files" ] && echo "no J1 files present" && exit 0
+      read -ra list <<< "$files"
+      vale --minAlertLevel=error --output=line "${list[@]}"
+
+docs-markdownlint:
+  extends: [.on-docs]
+  stage: fast
+  image: node:22-bookworm
+  timeout: 10m
+  script:
+    - npx -y markdownlint-cli2@0.23.3
+
+docs-links:
+  extends: [.on-docs]
+  stage: fast
+  timeout: 10m
+  script:
+    # The musl build is static: bookworm's glibc is too old for the gnu build.
+    - base=https://github.com/lycheeverse/lychee/releases/download/lychee-v0.24.2
+    - curl -sSL -o lychee.tar.gz "$base/lychee-x86_64-unknown-linux-musl.tar.gz"
+    - curl -sSL -o lychee.tar.gz.sha256 "$base/lychee-x86_64-unknown-linux-musl.tar.gz.sha256"
+    - echo "$(awk '{print $1}' lychee.tar.gz.sha256)  lychee.tar.gz" | sha256sum -c -
+    - tar xzf lychee.tar.gz
+    - install lychee-x86_64-unknown-linux-musl/lychee /usr/local/bin/lychee
+    - |
+      files=$(for f in README.md ARCHITECTURE.md TECHNICAL_IMPLEMENTATION.md GLOSSARY.md docs/LESSONS.md AGENTS.md; do [ -f "$f" ] && echo "$f"; done)
+      [ -z "$files" ] && echo "no J1 files present" && exit 0
+      read -ra list <<< "$files"
+      lychee --no-progress "${list[@]}"
+      lychee --no-progress --offline 'docs/**/*.md'
+
+docs-mermaid:
+  extends: [.on-docs]
+  stage: fast
+  image: node:22-bookworm
+  timeout: 15m
+  script:
+    # Headless Chrome (puppeteer) needs its system libraries; the sandbox is off through
+    # puppeteer-config.json, which scripts/check_mermaid.py already passes.
+    - apt-get update -qq
+    - apt-get install -y -qq libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libgbm1 libasound2 libpango-1.0-0 libcairo2 >/dev/null
+    - python3 scripts/check_mermaid.py
+
+# --- full stage: merge requests to main, milestone branches (ci-full) ---------------------------
+test-matrix:
+  extends: [.on-full, .uv]
+  stage: full
+  timeout: 25m
+  image: python:${PY}-bookworm
+  variables:
+    UV_PYTHON: ${PY}
+  parallel:
+    matrix:
+      - PY: ["3.12", "3.13"]
+  script:
+    - uv run ruff check .
+    - uv run mypy packages
+    - >-
+      uv run pytest -m "unit or golden or property or contract"
+      --cov=packages --cov-report=xml --cov-report=term-missing
+      --cov-fail-under=80 -q
+    - >-
+      uv run pytest -m "unit or golden or property or contract"
+      --cov=packages/normcore/src/normcore
+      --cov=packages/normalizers/src/normalizers
+      --cov-fail-under=90 -q
+  artifacts:
+    when: always
+    paths: [coverage.xml]
+
+license-and-audit:
+  extends: [.on-full, .uv]
+  stage: full
+  timeout: 10m
+  script:
+    - uv run python scripts/check_licenses.py
+    - uv run pip-audit --strict
+    - uv run pytest -m unit tests/unit/test_pii_masking.py -q
+
+splink-absence-check:
+  extends: [.on-full]
+  stage: full
+  timeout: 5m
+  script:
+    - |
+      if grep -riE "splink|record[_-]?linkage|probabilistic[_-]?matching" \
+           --include="*.py" --include="*.toml" --include="*.txt" \
+           -l packages/ pyproject.toml 2>/dev/null; then
+        echo "BLOCKED: Splink / record-linkage reference found. This project stops before Splink (Source.txt §135)." >&2
+        exit 1
+      fi
+      echo "OK: no Splink/record-linkage references found."
+
+integration:
+  extends: [.on-full, .docker-cli]
+  stage: full
+  timeout: 20m
+  cache:
+    key:
+      files: [services/libpostal/_data_cache/download_data.sh]
+    paths: [services/libpostal/_data_cache/*.tar.gz]
+  script:
+    - python -m pip install --quiet "uv==${UV_VERSION}"
+    - apt-get update -qq && apt-get install -y -qq --no-install-recommends libicu-dev pkg-config >/dev/null
+    - uv sync --all-extras
+    - *docker_setup
+    # Required before `docker build`: the Dockerfile COPYs these tarballs in (ADR-005).
+    - *libpostal_data
+    - docker compose -f compose.yaml build
+    - docker compose -f compose.yaml up -d
+    - *forward_ports
+    - |
+      expected=$(docker compose config --format json | python3 -c "import json,sys; c=json.load(sys.stdin); print(sum(1 for s in c['services'].values() if 'healthcheck' in s))")
+      count() { docker compose ps --format json | python3 -c "import json,sys; rows=[json.loads(l) for l in sys.stdin if l.strip()]; print(sum(1 for r in rows if r.get('Health') == 'healthy'))"; }
+      for i in $(seq 1 60); do
+        healthy=$(count); echo "healthy=$healthy/$expected (attempt $i)"
+        [ "$healthy" -eq "$expected" ] && break
+        sleep 5
+      done
+      docker compose ps
+      if [ "$(count)" -ne "$expected" ]; then
+        echo "Only $(count)/$expected services became healthy before timeout"
+        docker compose logs --tail=100
+        exit 1
+      fi
+    - curl -sf http://localhost:8081/health
+    - curl -sf http://localhost:8080/health
+    - uv run pytest -m integration -q
+  after_script:
+    - docker compose logs --tail=200 || true
+    - docker compose down -v || true
+
+# --- gate stage: milestone/** branches, or a web pipeline with MILESTONE set (gate.yml) --------
+# ci-full's jobs above also run on milestone branches (they replace gate.yml's full-suite).
+signoff-precondition:
+  extends: [.on-gate, .uv]
+  stage: gate
+  timeout: 5m
+  script:
+    - |
+      if [ -n "${MILESTONE:-}" ]; then M="$MILESTONE"; else M=$(echo "$CI_COMMIT_REF_NAME" | grep -oE 'M[0-9]+' | head -1); fi
+      echo "milestone=$M"
+      uv run python scripts/check_signoff.py --milestone "$M"
+
+benchmarks:
+  extends: [.on-gate, .uv]
+  stage: gate
+  needs: [signoff-precondition]
+  timeout: 30m
+  script:
+    - uv run pytest -m bench --benchmark-json=bench-results.json -q
+  artifacts:
+    paths: [bench-results.json]
+
+determinism-replay:
+  extends: [.on-gate, .docker-cli]
+  stage: gate
+  needs: [signoff-precondition]
+  timeout: 20m
+  cache:
+    key:
+      files: [services/libpostal/_data_cache/download_data.sh]
+    paths: [services/libpostal/_data_cache/*.tar.gz]
+  script:
+    - python -m pip install --quiet "uv==${UV_VERSION}"
+    - apt-get update -qq && apt-get install -y -qq --no-install-recommends libicu-dev pkg-config >/dev/null
+    - uv sync --all-extras
+    - *docker_setup
+    - *libpostal_data
+    - docker compose up -d
+    - *forward_ports
+    - sleep 15
+    - uv run pytest -m integration tests/integration/test_byte_identical_replay.py -q
+    - uv run pytest -m property tests/property/test_idempotency_determinism.py -q --hypothesis-seed=0
+  after_script:
+    - docker compose down -v || true
+
+mutation-testing:
+  extends: [.uv]
+  stage: gate
+  needs: [signoff-precondition]
+  timeout: 60m
+  rules:
+    - if: ($CI_COMMIT_BRANCH =~ /^milestone\/M8/ || $MILESTONE == "M8")
+  script:
+    # mutmut needs a flat src/ (see gate.yml for the root cause).
+    - mkdir -p src
+    - cp -r packages/normcore/src/normcore src/normcore
+    - cp -r packages/normalizers/src/normalizers src/normalizers
+    - uv run mutmut run || true
+    - uv run mutmut results
+    - uv run mutmut export-cicd-stats
+    - uv run python -m normcli mutation-score-gate --min-score 0.75
+
+e2e:
+  extends: [.docker-cli]
+  stage: gate
+  needs: [signoff-precondition]
+  timeout: 30m
+  rules:
+    - if: ($CI_COMMIT_BRANCH =~ /^milestone\/M[78]/ || $MILESTONE =~ /^M[78]$/)
+  cache:
+    key:
+      files: [services/libpostal/_data_cache/download_data.sh]
+    paths: [services/libpostal/_data_cache/*.tar.gz]
+  script:
+    - python -m pip install --quiet "uv==${UV_VERSION}"
+    - apt-get update -qq && apt-get install -y -qq --no-install-recommends libicu-dev pkg-config nodejs npm >/dev/null
+    - uv sync --all-extras
+    - *docker_setup
+    - *libpostal_data
+    - docker compose up -d --build
+    - *forward_ports
+    - npm --prefix ui ci
+    - npx --prefix ui playwright install --with-deps chromium
+    - npm --prefix ui run build
+    - npm --prefix ui run test:e2e
+  after_script:
+    - docker compose down -v || true
