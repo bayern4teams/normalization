@@ -588,6 +588,35 @@ stays as it is.
 
 ---
 
+## D16 — A held-out date test fails on `main` 🟠 HIGH
+
+**Verified state** (run on 2026-11-03 at commit `bfba05e`). The fast CI job (`ci-fast`) is red on
+`main`, on both GitHub and GitLab, and the same test fails when run locally:
+`tests/unit/test_confident_wrong.py::TestHeldOutFindings::test_a_time_is_no_day_or_month`. The
+job stops at the first failure (`--maxfail=1`). A local run of the same selection without that
+flag has this one failure and 3,216 passes, 24 skips and 1 xfail.
+
+- **What the test expects.** `11/30 10:30 p.m.` as a `DATETIME` with no country is `AMBIGUOUS`
+  (this half passes). With `country="NO"` (day/month/year order) it is `INVALID`, because there
+  is no month 30.
+- **What the code returns.** `AMBIGUOUS` for the Norway case too.
+- **When it was added.** Commit `41e7b41` (2026-10-17, "DATE: three findings of the held-out
+  run on real values"). The test file was changed since only by the C5 comment commit
+  `6acbeda`. The commit that broke it is **not known**: a bisect did not run, because a
+  second checkout has no PyICU build.
+- **Suspected cause, not confirmed.** `packages/normalizers/src/normalizers/date.py::_also_a_day_and_month`
+  takes no `date_order` argument, so it tries both orders of `30` and `11` even when the
+  order is stated. `_normalize_partial` calls it with `candidate` only.
+
+**Decision (owner, 2026-11-03):** leave it open and report it here. The test is not changed (rule
+L1). Whoever fixes it should confirm the intended Norway result against ADR-008 first.
+
+**Also not verified (2026-11-03):** the GitLab jobs `integration`, `determinism-replay` and `e2e`
+in `.gitlab-ci.yml` have never run. They need docker-in-docker and the libpostal model
+download. Owner decision: leave them unverified for now.
+
+---
+
 ## U1 — Replace the UI 🟠 HIGH
 
 **Verified state** (code read on 2026-10-25). `ui/` is React 19, Vite, TanStack Query and
