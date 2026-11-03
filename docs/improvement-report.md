@@ -594,7 +594,7 @@ stays as it is.
 `main`, on both GitHub and GitLab, and the same test fails when run locally:
 `tests/unit/test_confident_wrong.py::TestHeldOutFindings::test_a_time_is_no_day_or_month`. The
 job stops at the first failure (`--maxfail=1`). A local run of the same selection without that
-flag has this one failure and 3,216 passes, 24 skips and 1 xfail.
+flag has this one failure and 3,216 passes, 24 skips and 1 expected failure.
 
 - **What the test expects.** `11/30 10:30 p.m.` as a `DATETIME` with no country is `AMBIGUOUS`
   (this half passes). With `country="NO"` (day/month/year order) it is `INVALID`, because there
