@@ -39,6 +39,10 @@ See plan §8 phase tables; they stand unchanged.
 
 ## In flight
 
+- 2026-11-04 (laptop, single agent; box 10.10.9.41 unreachable): audit against the improvement
+  report written as FINAL_REPORT.md §7; gaps waiting for the owner. Owner answers this session:
+  box steps marked "not re-verified"; push to both remotes; `.handoff/` purge yes after the fold-in
+  check; §5.6 fix later; `test_a_time_is_no_day_or_month` recorded. Next: local re-checks, then §5.9.
 - 2026-11-01 §5.9 close IN PROGRESS: FINAL_REPORT.md written (folds all of `.handoff/` in),
   round-2 status line added to `docs/improvement-report.md`, every table row above now has a
   live verdict. OPEN (B3): the `.handoff/` purge — file list is FINAL_REPORT.md §6, awaiting

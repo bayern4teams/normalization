@@ -309,3 +309,92 @@ this report, exactly:
 .handoff/U1.laneC.report.md  .handoff/U1.test_docs_local.md
 .handoff/U1.verdict.md       .handoff/supervisor_dryrun.txt
 ```
+
+## 7. Audit against the improvement report (2026-11-04)
+
+Owner request 2026-11-04: check that everything round 2 asked for is implemented, tested and
+verified live, over "Part 1, round 2" and Part 2 "Round 2" (owner: "5. a and b"). Checked on
+`1bf565d` by reading the code and tests and by direct probes. The benchmark box `10.10.9.41` is
+unreachable since 2026-11-03 ("No route to host"), so every live result that needs it is the
+2026-11-01 run's record, **not re-verified**.
+
+Legend: **yes** = checked in this audit; **record** = the 2026-11-01 run's result, not re-checked;
+**gap** = not done or not true as written.
+
+### D13 — LANGUAGE
+
+| Requirement (report fix / plan §9) | Implemented | Tested | Live |
+|---|---|---|---|
+| Code is the contract; `display` never parsed again (R11); ADR-010 amended | yes (`language.py`, ADR-010) | yes (`test_language_code_contract.py`, pinned test now on `comparison`) | record: movies output fed back, 0 changed |
+| Code-or-name value is AMBIGUOUS unless row or column evidence settles it (R12) | yes. Probe 2026-11-04: `Ga`, `Mon`, `Dan`, `En` → AMBIGUOUS; `Mon`+MM → `mnw`; `Dan`+CI → `dnj` | yes | record: §5.8 acceptance cases |
+| Hyphen splits only a valid BCP 47 tag | yes. Probe: `Kuku-Yalanji` → `gvn`, `Judeo-Arabic` → `jrb`, `Mon-Khmer` → INVALID | yes (`test_language_free_text_hyphen.py`) | n/a |
+| Second-pass property test for country, currency, script, unit, language (R13) | yes | yes (`tests/property/test_second_pass_codes.py`) | n/a |
+| Probe over all pycountry languages: `comparison` fed back changes 0 | yes | — | record: 0 changed; display fed back 142 held AMBIGUOUS, 0 wrong (before 440) |
+
+### D14 — in-place mode removed
+
+| Requirement | Implemented | Tested | Live |
+|---|---|---|---|
+| `in_place` field, validator, branches, `staging_name`, both `swap_table` gone | yes (`grep` over `packages`, `ui/src`, top-level docs: only the removal test names it) | yes (`test_in_place_removed.py`) | record: POST `in_place` → 422 |
+| No writer built from a source connection; stored legacy job cannot write its origin | yes (`_require_separate_copy`) | yes (`test_same_origin_guard.py`) | record |
+| Writable fixture login removed "if nothing else uses it" | kept: it is the clone **destination** role, still used by integration fixtures and benchmark scripts. Correct per the report's condition | — | — |
+| README / ARCHITECTURE / GLOSSARY in-place text removed | yes | — | — |
+| Integration suite after removal | — | — | record: 33/33 |
+
+### D15 — local network only
+
+| Requirement | Implemented | Tested | Live |
+|---|---|---|---|
+| Allowed set: loopback, RFC 1918, `fc00::/7`, deployer `NORM_ALLOWED_NETWORKS`; `100.64.0.0/10` off by default | yes (`address_policy.py`). **Correction:** §1 above says "link-local"; the code has no link-local range | yes (`test_address_policy.py`, fixed RFC table) | — |
+| Caller middleware, `X-Forwarded-*` ignored, `TrustedHostMiddleware` | yes (`app.py`, `--no-proxy-headers`) | yes | record: LAN 200, outside 403, bad Host 400 |
+| Strict literal parse, every resolved address checked, connect to the checked address | yes (`resolve_and_check`; libpq `hostaddr`; ClickHouse `host=hostaddr`, `server_host_name=host`) | yes | record: query_log client `::ffff:10.10.9.137`. **Not checked live:** a real DNS name with several addresses (plan §9 "Live") |
+| Checked at save and at each use | yes (`routes.py` save; `clone_executor.py` both builders) | yes (`test_address_policy_wiring.py`) | record: save `8.8.8.8` → 422 |
+| DSN by `make_conninfo` | yes (`postgres_destination.py`) | yes (DSN round-trip test) | — |
+| Ports: API on the LAN address from `.env`, all others `127.0.0.1` | yes (`compose.yaml`, also the four demo databases) | yes | record: `ss` |
+| `NORM_SECRET_KEY` out of `compose.yaml`, read from `.env` | yes. The old key stays in `main` history (open item §4.5) | yes (gitleaks on the branch) | — |
+| Pin the Python minor version (report fix 7) | met by design instead: the policy never uses `is_private` (ADR-022); `requires-python` stays `>=3.12,<3.14` (plan Q6) | yes (fixed table) | — |
+
+### U1 — the new UI
+
+| Requirement | Implemented | Tested | Live |
+|---|---|---|---|
+| Five screens; others dropped (R19) | yes | yes (`test_u1_serving.py`, Playwright) | record: walk 2026-11-01 |
+| Connections: Test before Save, address error at the field | yes | yes | record: `8.8.8.8` refused |
+| New clone: **pick tables** and columns, check-answers page | **gap:** columns and check-answers yes; tables no. Every table of the origin is cloned because the API has no table filter (`NewClonePage.tsx` header comment). Not recorded in ADR-023 | — | — |
+| Jobs list + detail survive reload (R21) | yes | yes | record |
+| Review: distinct values by occurrences, one key each for accept/other/keep/undo, buttons, nothing pre-selected (R18) | yes. Keys `1`-`9` pick, `o` other, `k` keep, `u` undo; undo only while the decision is unsent (verdicts are append-only, ADR-018). **Correction:** §3 "j/k accept" and §4.4 "the k-key is a skip, not an undo" do not describe the code | yes (`review.spec.ts`: each key, modifiers, order, undo) | record: key→DOM 14 ms |
+| Speed: 0.1 s per key, 1 s per page | — | — | key: record (14 ms). **Not measured:** the 1 s page budget with hundreds of values (queue had 12) |
+| Served by the API, one port, no CORS, offline | yes | yes (`test_u1_serving.py`, Playwright offline test) | record |
+| `/docs` assets served locally | **gap:** `/docs` and `/redoc` are switched off (open item §4.3). ADR-023 still says "FastAPI's `/docs` assets are served locally" | — | — |
+| Raw value only in the review route; every other response, log, trace masked, a test for each (R23) | **gap:** the review route is built and tested (`test_u1_review_route.py`); job error text, `disguised_missing[].value`, `/preview`, `/field-test`, `/runs/{id}/values` still carry raw values (open item §4.2). ADR-023 says "a test asserts that for each" | partly | — |
+| English only, no login, no dark mode (R10); React + Mantine pinned (R8, Q7) | yes | yes | — |
+| Screenshot audit of the old UI (R25) | replaced by plan Q4 ("agents doesn't need present UI screenshot"): closed | — | — |
+
+### Part 2 research, carried into the build
+
+| Research point | State |
+|---|---|
+| Docker Engine ≥ 28.3.3 (loopback leak fixes) | record: 29.7.1 |
+| ClickHouse address pinning (no documented option) | built as `host=hostaddr` + `server_host_name` |
+| FastAPI self-hosted docs assets | not built: see the `/docs` gap |
+| TanStack Virtual, keyset paging | not needed: R22 chose a plain list, no server paging |
+| `Intl`/ICU/FHIR code-versus-display, langcodes `find()` precedent | built as D13's contract and AMBIGUOUS rule |
+| Streamlit and Appsmith telemetry | not chosen (R8) |
+
+### Inconsistencies in this report and its sources
+
+- ZoomInfo 100k rows: §3 says 599,853, HANDOFF.md (2026-11-01 §5.5) says 699,853. Its Experience
+  cell repeats the 1M value 999,611. Cannot be re-measured while the box is down.
+- §1 "link-local", §3 "j/k accept", §4.4 "k-key is a skip": corrected in the tables above.
+- Eight test files point in their docstrings at `.handoff/` paths that the purge would leave
+  dangling: `tests/property/test_second_pass_codes.py`, `tests/unit/test_in_place_removed.py`,
+  `test_language_code_contract.py`, `test_lineage_d3_acceptance.py`, `test_name_d11_acceptance.py`,
+  `test_typed_destination_d5_acceptance.py`, `test_u1_review_route.py`, `test_u1_serving.py`.
+- §5.7 says screenshots were taken; plan Q4 says agents need not take them. No rule broken.
+
+### Gaps that need the owner (not built, per the owner's "7. a")
+
+1. New clone cannot pick tables (needs an API table filter, or the report text changed).
+2. `/docs` offline: add `swagger-ui-dist` or rule `/docs` out and fix ADR-023 (open item §4.3).
+3. R23 masking outside the review route (open item §4.2); ADR-023 overstates it.
+4. Not measured live: the 1 s page budget with hundreds of values; DNS with several addresses.
