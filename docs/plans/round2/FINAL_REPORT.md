@@ -2,7 +2,7 @@
 
 Owner: single local agent, branch `feat/round2-fixes`, run 2026-10-29 → 2026-11-01
 (LOCAL_RUN.md). This report folds in the cloud-phase handoff notes (`.handoff/`, purged after
-this commit — everything that mattered is carried below, nothing links to a deleted file).
+`673c0b0` — everything that mattered is carried below, nothing links to a deleted file).
 Every number is measured; "not checked" marks what was not checked.
 
 The plan of record is `docs/plans/ROUND2_IMPLEMENTATION_PLAN.md`; the checklist is
@@ -289,8 +289,11 @@ plan does not describe → §6 stop-line: reported, left unfixed, owner decision
 - License check for psycopg server-side cursors (§5.6 option 1): psycopg 3 is LGPL-3.1 with
   exception, already a dependency — `scripts/check_licenses.py` runs in CI and passed (§5.1);
   no new dependency either way.
-- `.handoff/` purge: file list shown to the owner below; deletion needs the owner's yes for
-  that exact list (B3) — **not deleted in this commit**.
+- `.handoff/` purge: done 2026-11-07 in `673c0b0` after the owner's yes and the fold-in check (§6).
+- Every live check that needs the benchmark box `10.10.9.41` (§5.3 LAN caller and client address,
+  §5.4, §5.5, §5.6, §5.8 D13 movies): the 2026-11-01 record, not re-verified (box unreachable since
+  2026-11-03; owner "1. a").
+- A host name with several addresses, live: needs a system DNS or hosts change; unit-tested only.
 
 ## 6. `.handoff/` fold-in (files to delete once the owner says yes)
 
@@ -426,3 +429,62 @@ Legend: **yes** = checked in this audit; **record** = the 2026-11-01 run's resul
 
 Owner decisions 2026-11-07 on these gaps: "1. a" (1 recorded as a limit), "2. a" (`/docs` ruled
 out), "3. a" (recorded as open), "4. a" (page budget measured). ADR-023 now states all three.
+
+## 8. Phase 5 close: ponytail steps and local re-checks (2026-11-07)
+
+### Re-checks on this laptop (box unreachable)
+
+ruff, ruff format, mypy (99 files), C5, test-assertions, root-files and gitignore guards, deptry,
+actionlint, zizmor: clean. gitleaks `main..HEAD`: no leaks (full history: the 1 known
+`NORM_SECRET_KEY`). pytest CI selection in 4 capped batches: 3,483 passed, 24 skipped, 1 xfailed,
+1 failed (`test_a_time_is_no_day_or_month`, recorded, owner "4. aaa"). Property, defects, golden:
+298 passed, 12 skipped (2 of the skips were libpostal while it was down; `test_m4_corpus.py` 24
+passed once the stack ran). UI lint clean; Playwright 48/48. Compose stack: 7 services healthy,
+ports exactly `10.10.9.137:8080` and `127.0.0.1` for the rest; `pytest -m integration` 33 passed.
+Live on the Docker API: `/health` 200, foreign Host 400, `in_place` POST 422, save `8.8.8.8` 422,
+outside caller via `r2-outside` (203.0.113.2) 403.
+
+### `/ponytail-review` over `main...HEAD` (findings, not fixed)
+
+1. **Legacy Postgres jobs all get the same source identity.** `clone_executor.py::_connector_source_identity`
+   reads the SQLAlchemy URL, but a Postgres connector is built from a libpq string with a
+   `creator`, so the URL is empty. Measured: the helper returns
+   `postgresql+psycopg://None@None:None/None` for any server. Two jobs stored before
+   `source_identity` existed, on different servers, then share one verdict scope, so a person's
+   verdict on one source's value can be reused for the other's. Smallest fix: build it with the
+   existing `source_identity(connection, database, schema)` from the job's stored connection and
+   delete the helper.
+2. **The review route silently stops at 100,000 entries.** `routes.py::list_review_entries` reads at
+   most `_MAX_REVIEW_ENTRIES = 100_000` pending entries and drops the total that `list_queue`
+   returns. R22 assumed "hundreds"; the measured ZoomInfo 100k run left 193,708 queue rows and the
+   1M run 1,914,572. The screen would show "1 of 100000" and never say that the rest exist, after a
+   response of roughly 140 MB (2.7 GB / 1.9M rows ≈ 1.4 KB per row; size not measured).
+   Smallest fix: return the total (as `/errors` does with `X-Total-Count`) and show it on the
+   screen; whether to also lower the cap is an R22 decision.
+3. Should fix: a decision sent with `keepalive` on page close and then refused is dropped
+   unseen (`ReviewPage.tsx`, `.catch(() => undefined)`).
+4. Lean: `ui/src/index.css` (71 lines, no class used) and its import in `main.tsx` can go.
+
+### `/ponytail-audit` (whole repo, deep only where round 2 changed code)
+
+5. **Native runs write app data inside the repo.** `.env.example` sets
+   `NORM_SIDECAR_DUCKDB_PATH`, `NORM_SIDECAR_PARQUET_ROOT` and `NORM_CACHE_PATH` to `./data/sidecar/`,
+   and `.gitignore` does not list it. This is how `1bf565d` committed `cache.duckdb` and
+   `catalog.duckdb` (both empty). The Parquet root holds normalized column values, so a later
+   `git add` could commit dataset values (B6). Smallest fix: add `data/sidecar/` to `.gitignore`
+   and untrack the two files.
+6. Known and deferred by the owner: the start-up full-queue load (§3, §5.6).
+
+Not read in depth: the round-1 normalizers outside LANGUAGE, the MySQL and Mongo connectors, the
+benchmark scripts.
+
+### `/ponytail-debt`
+
+The branch adds 4 markers, all with an upgrade path: `ui/src/lib/reviewQueue.ts` (5 s undo
+hold; undo only while unsent), `ui/src/lib/reviewJobs.ts` (2 s poll), `normalizers/language.py::_known_variants`
+(IANA variant registry not installed). The whole repo has 50 marker lines; `docs/PONYTAIL_DEBT.md`
+(2026-10-27) lists 36. Writing the ledger again needs the owner's yes.
+
+### `/ponytail-gain`
+
+Shows the ponytail benchmark only (39 tasks × 5 runs); no number for this repo exists.

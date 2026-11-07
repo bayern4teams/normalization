@@ -39,11 +39,11 @@ See plan §8 phase tables; they stand unchanged.
 
 ## In flight
 
-- 2026-11-07 local re-checks: ruff, format, mypy, the four guards, deptry, actionlint, zizmor,
-  gitleaks main..HEAD clean; pytest CI selection 3,483 passed / 24 skipped / 1 xfailed / 1 failed
-  (the recorded `test_a_time_is_no_day_or_month`); property+defects+golden 298 passed / 12 skipped;
-  UI lint clean, Playwright 48/48. G4 page budget measured (LOCAL_VERIFY U1). IN PROGRESS: full
-  compose stack + `pytest -m integration` (D14). Then the purge and `[ROUND2 COMPLETE]`.
+- 2026-11-07 STOPPED before `[ROUND2 COMPLETE]` (§6 stop line, owner "7. a"): re-checks all
+  done and green except the recorded test; `.handoff/` purged (`673c0b0`); ponytail review, audit,
+  debt, gain in FINAL_REPORT §8. Waiting for the owner: review findings 1 (legacy source identity)
+  and 2 (review route stops silently at 100,000), audit finding 5 (`data/sidecar/` not ignored),
+  and the small ones 3-4. Then STATUS `next=complete lock=none` and `[ROUND2 COMPLETE]`.
 - 2026-11-04 (laptop, single agent; box 10.10.9.41 unreachable): audit against the improvement
   report written as FINAL_REPORT.md §7; gaps waiting for the owner. Owner answers this session:
   box steps marked "not re-verified"; push to both remotes; `.handoff/` purge yes after the fold-in
