@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from normcore import (
     CloneJobStatus,
@@ -193,6 +193,8 @@ class CloneJobCreateRequest(BaseModel):
     (a column absent from its table's map, or mapped to null, is
     passthrough)."""
 
+    model_config = ConfigDict(extra="forbid")  # a removed or misspelt option is an error
+
     source_connection_id: str
     source_database: str
     # Postgres only: the namespace inside `source_database` that table names
@@ -201,10 +203,8 @@ class CloneJobCreateRequest(BaseModel):
     # job with no tables that still reported COMPLETED. One schema per job,
     # so the clone's own table names stay unqualified.
     source_schema: str | None = None
-    # Empty is valid only for in_place, which derives both from the
-    # source (see the validator below).
-    destination_connection_id: str = ""
-    destination_database: str = ""
+    destination_connection_id: str = Field(min_length=1)
+    destination_database: str = Field(min_length=1)
     # Off by default: a column absent from `field_configs` is cloned
     # verbatim. Detection still runs and the plan (`GET .../plan`) shows its
     # suggestion per column with the share of sampled values that validate;
@@ -271,21 +271,19 @@ class CloneJobCreateRequest(BaseModel):
     # kept, and goes to the review queue. Off by default: every clone reports
     # those answers in its quality report either way.
     calibrated_abstention: bool = False
-    # Normalize the source database in place instead of cloning it into a
-    # second one. Each table is built beside its original under a staging
-    # name and swapped in, so peak extra storage is the largest SINGLE
-    # table rather than a whole second copy — for sources too large to
-    # duplicate. The source is REPLACED: originals survive only in the
-    # error report, so it is off by default and never inferred.
-    in_place: bool = False
 
     @model_validator(mode="after")
-    def _destination_required_unless_in_place(self) -> CloneJobCreateRequest:
-        """A clone needs somewhere to go; in-place already knows where it
-        goes. Caught here rather than as a confusing "no such connection:
-        ''" from the executor."""
-        if not self.in_place and not (self.destination_connection_id and self.destination_database):
-            msg = "destination_connection_id and destination_database are required unless in_place"
+    def _destination_is_not_the_origin(self) -> CloneJobCreateRequest:
+        """ADR-013: the origin is never written. The same connection and the same
+        database is the origin itself; anything else is a separate copy."""
+        if (
+            self.destination_connection_id == self.source_connection_id
+            and self.destination_database == self.source_database
+        ):
+            msg = (
+                "The destination is the origin. Choose another database: "
+                "every clone writes a separate copy."
+            )
             raise ValueError(msg)
         return self
 
@@ -306,7 +304,7 @@ class CloneJobAmendRequest(BaseModel):
     autodetect got right. `field_configs` merges per table and per column;
     an explicit null on a column clears it back to passthrough.
 
-    Absent on purpose: the connections, the databases, `in_place` and the
+    Absent on purpose: the connections, the databases and the
     table list. Those are what the job is, and nothing has been built yet,
     so a job pointed somewhere else is cheap to create rather than amend.
     """
@@ -342,6 +340,20 @@ class AdjudicationQueueEntry(BaseModel):
     occurrences: int
     decided: bool
     verdicts: list[AdjudicationVerdict] = Field(default_factory=list)
+
+
+class ReviewEntry(BaseModel):
+    """One open question for the review screen (ADR-023, R23). The only
+    response that carries the raw value and the unmasked candidate readings.
+    No field names a preferred reading: the person chooses (R18)."""
+
+    key: str
+    semantic_type: FieldSemanticType
+    original: str
+    context: dict[str, Any]
+    detail: dict[str, Any]
+    occurrences: int
+    decided: bool
 
 
 class AdjudicationVerdictRequest(BaseModel):

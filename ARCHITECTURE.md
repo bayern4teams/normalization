@@ -16,7 +16,7 @@ records.
 ```mermaid
 flowchart LR
     user([User]) --> ui[UI: React + Vite]
-    ui -->|HTTP /normalization| api[API: normapi]
+    ui -->|same origin /normalization| api[API: normapi]
     cli[normcli] --> analysis[normanalysis]
     api -->|reads| origin[(Origin database)]
     api -->|write| dest[(Destination database)]
@@ -26,8 +26,7 @@ flowchart LR
 ```
 
 Caption: the API reads the origin, writes the destination, and keeps its own
-state in a separate metadata database. In in-place mode the destination is the
-origin database. `normcli` calls analysis code directly
+state in a separate metadata database. `normcli` calls analysis code directly
 and never the API.
 
 Boundaries:
@@ -38,13 +37,14 @@ Boundaries:
 - The lineage collector is optional. `packages/normapi/src/normapi/lineage.py::_forward`
   posts events only when `NORM_OPENLINEAGE_URL` is set. A missing collector
   never fails a job.
-- The UI is a separate static app. `compose.yaml` has no UI service and the
-  API does not serve it. The UI calls `VITE_API_BASE_URL`, default
-  `http://localhost:8080` (`ui/src/api/client.ts::API_BASE`).
+- The API serves the built UI at `/` on its own port, so there is no UI service in
+  `compose.yaml` and no CORS ([ADR-023](docs/adr/ADR-023-ui-scope-and-technology.md)).
+  The image builds `ui/` in a Node stage (`packages/normapi/Dockerfile`). `/docs` and
+  `/redoc` are off; `/openapi.json` stays.
 
 ## Deployment
 
-<!-- verified: 9f27526 -->
+<!-- verified: 544cd37 -->
 
 ```mermaid
 flowchart LR
@@ -74,6 +74,11 @@ port 8080, `/health` check).
 
 Port 5535 is deliberate: other local stacks often hold 5433.
 
+Ports bind addresses ([ADR-022](docs/adr/ADR-022-network-and-database-address-policy.md)): the API
+binds `NORM_BIND_ADDR`, the host's private LAN address from `.env`. libpostal and every database
+bind `127.0.0.1`. The API answers only callers inside loopback, RFC 1918 and `fc00::/7`, checks the
+`Host` header, and refuses database hosts that resolve outside that set.
+
 ### Configuration
 
 All settings are environment variables. The default is the value in code.
@@ -82,16 +87,19 @@ All settings are environment variables. The default is the value in code.
 | Variable | Default | Effect |
 |---|---|---|
 | `NORM_PG_DSN` | none (`compose`: the `postgres` service) | Metadata database. Required for clone jobs. |
-| `NORM_SECRET_KEY` | none | Fernet key that encrypts saved connection passwords. Required to save a connection. |
+| `NORM_SECRET_KEY` | none (`compose`: required, from `.env`) | Fernet key that encrypts saved connection passwords. Required to save a connection. |
+| `NORM_BIND_ADDR` | none (`compose`: required, from `.env`) | Host address the API port is published on. Use the private LAN address. |
+| `NORM_ALLOWED_HOSTS` | empty | Extra `Host` header names. `localhost`, `127.0.0.1` and `NORM_BIND_ADDR` are always allowed. |
+| `NORM_ALLOWED_NETWORKS` | empty | Extra networks (CIDR) allowed as callers and database targets, for example `100.64.0.0/10`. |
 | `NORM_LIBPOSTAL_URL` | `http://localhost:8081` (`compose`: `http://libpostal:8081`) | Address parsing service. |
 | `NORM_CACHE_PATH` | `:memory:` (`compose`: `/data/sidecar/cache.duckdb`) | DuckDB file for the value cache. |
 | `NORM_LIBPOSTAL_MODEL_SHA256` | unset | Hash of the libpostal model data. It feeds `env_id`. |
 | `NORM_DICTIONARIES_DIR` | `data/dictionaries` (`compose`: `/app/data/dictionaries`) | Shipped dictionaries. |
 | `NORM_CUSTOM_DICTIONARIES_DIR` | `data/custom-dictionaries` | User dictionaries. |
 | `NORM_MAX_RUN_ROWS` | 40,000 | Row limit for one `POST /runs`. |
-| `NORM_CORS_ORIGINS` | empty | Extra allowed browser origins. The Vite dev and preview origins (`localhost` and `127.0.0.1`, ports 5173 and 4173) are always allowed. |
+| `NORM_UI_DIR` | `ui/dist` in the repository | The built UI the API serves at `/` ([ADR-023](docs/adr/ADR-023-ui-scope-and-technology.md)). |
 | `NORM_OPENLINEAGE_URL` | empty (do not forward) | Lineage collector URL. |
-| `NORM_API_HOST`, `NORM_API_PORT` | `0.0.0.0`, 8080 | Used by `python -m normapi.main`. |
+| `NORM_API_HOST`, `NORM_API_PORT` | `0.0.0.0`, 8080 | Used by `python -m normapi.main`. Inside the container only; the host publishes on `NORM_BIND_ADDR`. |
 | `NORM_CLONE_WORKERS` | 3 (capped at CPU count) | Normalization worker processes, about 175 MB each. |
 | `NORM_CLONE_HEARTBEAT_TIMEOUT_SECONDS` | 900 | When a RUNNING job reports `stale`. |
 | `NORM_CLONE_AUTODETECT_MIN_CONFIDENCE` | 0.9 | Minimum detector confidence for a suggestion. |
@@ -183,10 +191,6 @@ and `FAILED` (`packages/normcore/src/normcore/enums.py::CloneJobStatus`). A
 `SCHEMA_READY`, `RUNNING` or `FAILED` job can be started again
 (`packages/normapi/src/normapi/pg_persistence.py::PgPersistence.claim_clone_job`).
 
-An in-place clone writes into the origin database under staging names and
-swaps each table in, replacing the original. It needs no `CREATE DATABASE`
-step and uses the origin connection for writing.
-
 ## Data contract
 
 <!-- verified: 9f27526 -->
@@ -267,7 +271,10 @@ Rules that matter to a database administrator:
 - The queue holds one row per ambiguous value and context, with an
   occurrence count. Verdict rows are append-only. The newest row for a key wins.
 - Clone job errors are keyed by job, row index, table and field.
-- A queue row holds the raw original. The API returns a masked preview.
+- A queue row holds the raw original. The API returns a masked preview, except
+  `GET /adjudication/review` (ADR-023, R23): it returns the raw value, at most
+  100,000 pending entries, most frequent first, and the full pending count in
+  `X-Total-Count`.
 - `normalization_connections.encrypted_password` is a Fernet token.
 
 ### Destination data
@@ -300,7 +307,7 @@ Rules that matter to a database administrator:
 | Guarantee | How it holds |
 |---|---|
 | A normal clone never writes the origin. | `SourceConnector` has no write method. Demo origins have a database-level read-only user (`tests/integration/test_readonly_connectors.py`). The destination uses its own connection. |
-| In-place mode is explicit. | `in_place` is off by default and never inferred. It replaces the origin's tables, and originals survive only in the error report (`packages/normapi/src/normapi/schemas.py::CloneJobCreateRequest`). |
+| The origin is never written. | Every clone writes a separate copy. The schema refuses unknown fields and a destination equal to the origin (`packages/normapi/src/normapi/schemas.py::CloneJobCreateRequest`). |
 | No guess on ambiguous input. | Normalizers return `AMBIGUOUS` and keep the original. `1,234` has no locale to settle it. |
 | Precision is kept, not invented. | A year stays a year. Nothing fills in a month or day. |
 | The original survives. | `original` is never overwritten. A failed value keeps its original in a text destination column. A typed column stores NULL and an error row. |
@@ -326,7 +333,7 @@ Known limits:
 
 ## Security and personal data
 
-<!-- verified: 9f27526 -->
+<!-- verified: 544cd37 -->
 
 | Topic | Rule | Code |
 |---|---|---|
@@ -335,8 +342,10 @@ Known limits:
 | Previews | The API returns a masked preview unless `pii_visibility` allows more. | `packages/normcore/src/normcore/pii.py::safe_preview` |
 | Credentials | Saved passwords are encrypted with Fernet. They are decrypted in memory at connect time. | `packages/normapi/src/normapi/secrets.py` |
 | Error rows and queue | Hold the raw original. Restrict database access to the metadata database. | `packages/normapi/src/normapi/pg_persistence.py::_SCHEMA` |
-| Demo key | `compose.yaml` sets a fixed development `NORM_SECRET_KEY`. Generate your own for any other deployment. | `compose.yaml` |
-| CORS | Only the Vite dev and preview origins are allowed by default. `NORM_CORS_ORIGINS` adds more. | `packages/normapi/src/normapi/app.py` |
+| Secret key | `compose.yaml` holds no key; it reads `NORM_SECRET_KEY` from the uncommitted `.env`. | `compose.yaml` |
+| Callers and `Host` | Middleware refuses a peer outside loopback, RFC 1918 and `fc00::/7`, and a `Host` outside the allowlist. `X-Forwarded-For` is ignored. | `packages/normapi/src/normapi/app.py::LocalCallersOnly` |
+| Database targets | A host must be a strict literal or resolve only to allowed addresses. The connection uses the checked address. Checked on save and on every use. | `packages/normapi/src/normapi/address_policy.py::resolve_and_check` |
+| CORS | None. The API serves the UI on its own port, so no browser origin needs access. | `packages/normapi/src/normapi/app.py::create_app` |
 
 The API has no authentication layer in the code. Put it behind your own
 gateway.

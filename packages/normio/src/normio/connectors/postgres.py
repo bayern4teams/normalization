@@ -8,7 +8,7 @@ import sqlalchemy as sa
 
 from normio.connector import ColumnInfo
 from normio.connectors._sql_base import SqlConnectorBase
-from normio.connectors.postgres_destination import quote_identifier
+from normio.connectors.postgres_destination import engine_from_dsn, quote_identifier
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -42,18 +42,11 @@ class PostgresConnector(SqlConnectorBase):
         """
         self.source_id = source_id
         self._schema = schema
-        # postgresql+psycopg:// selects the psycopg3 driver explicitly
-        # rather than relying on SQLAlchemy's default (psycopg2, not a
-        # project dependency).
-        normalized_dsn = dsn.replace("postgresql://", "postgresql+psycopg://", 1)
-        self._engine = sa.create_engine(
-            normalized_dsn,
-            # Sets the session to PostgreSQL's native read-only transaction
-            # mode — any INSERT/UPDATE/DELETE/DDL on this connection fails
-            # at the database level, not just because our code never issues
-            # one. Confirmed in tests/integration/test_readonly_connectors.py.
-            execution_options={"postgresql_readonly": True},
-        )
+        # Sets the session to PostgreSQL's native read-only transaction
+        # mode — any INSERT/UPDATE/DELETE/DDL on this connection fails
+        # at the database level, not just because our code never issues
+        # one. Confirmed in tests/integration/test_readonly_connectors.py.
+        self._engine = engine_from_dsn(dsn, execution_options={"postgresql_readonly": True})
 
     def list_databases(self) -> Sequence[str]:
         """Server-level database discovery (decision #1) — queried from

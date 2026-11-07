@@ -11,6 +11,10 @@
 `confidence=` counts, `ptype`'s availability), the plan's §8 "Pre-findings" records what the code says.
 **Round 2 (2026-10-25):** D13-D15 and U1 added to Part 1, with their research in Part 2 and
 four new resource files (Appendix G). Proposal only; no code changed.
+**Round 2 status (2026-11-01):** D13, D14, D15 and U1 implemented and verified on branch
+`feat/round2-fixes`; measured results, the memory diagnosis and the open owner items are in
+[`plans/round2/FINAL_REPORT.md`](plans/round2/FINAL_REPORT.md). The D13 "Verified state" tables below
+describe the state before this fix.
 **Scope confirmed with project owner** (Q&A round, 2026-09-30)
 
 ---
@@ -375,7 +379,9 @@ D1-D12 are implemented and merged
 ([`archive/plans/defects/PART1_COMPLETE.md`](archive/plans/defects/PART1_COMPLETE.md)).
 The items below were found later: D13 by the property tests that prompt 4 added, D14 by the
 docs rewrite (prompt 2), D15 by the research for this round, and U1 at the owner's request.
-**Nothing here is implemented yet.** The research is in Part 2, "Round 2"; the sources are in
+**Implemented on branch `feat/round2-fixes`** (status line at the top; results in
+[`plans/round2/FINAL_REPORT.md`](plans/round2/FINAL_REPORT.md)). The "not built" notes below
+describe the state on 2026-10-25. The research is in Part 2, "Round 2"; the sources are in
 the four `_raw-*` files that Appendix G lists under round 2.
 
 The zizmor findings on the CI workflow files are not part of this report. They are CI

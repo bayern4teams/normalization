@@ -1,12 +1,8 @@
 import { defineConfig, devices } from "@playwright/test";
 
-// Real end-to-end suite (Source.txt Gate model, M7 §89-§121): drives a
-// production build of the UI (`vite preview`, port 4173 — matches
-// normapi's default CORS allowlist, see packages/normapi/src/normapi/app.py)
-// against a REAL running normapi server. CI (.github/workflows/gate.yml's
-// `e2e` job) starts that server via `docker compose up -d --build` before
-// invoking this suite; for local runs, start it yourself first (see
-// README below) — this config does not start normapi itself, only the UI.
+// Browser suite (Source.txt Gate model, M7 §89-§121): drives a production build
+// of the UI (`vite preview`, port 4173). Every spec stubs the API with
+// page.route (`e2e/stub-api.ts`), so no normapi server is needed (ADR-023).
 export default defineConfig({
   testDir: "./e2e",
   fullyParallel: false,

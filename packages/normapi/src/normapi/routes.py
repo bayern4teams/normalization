@@ -59,6 +59,7 @@ from normanalysis import (
     suggest_semantic_type,
 )
 from normapi import adjudication, clone_executor, secrets
+from normapi.address_policy import resolve_and_check
 from normapi.clone_executor import CloneJobNotFoundError, CloneJobStateError
 from normapi.dependencies import (
     get_cache,
@@ -93,6 +94,7 @@ from normapi.schemas import (
     ProfileRollbackRequest,
     ProfileSuggestionResponse,
     ProfileVersionRequest,
+    ReviewEntry,
     RunExecutionRequest,
     TypeSuggestionResponse,
 )
@@ -765,6 +767,7 @@ def create_connection(
     body: ConnectionCreateRequest,
     connections: Annotated[PgPersistence, Depends(get_connections)],
 ) -> Connection:
+    resolve_and_check(body.host)  # ADR-022: refuse a non-local target when it is saved
     connection_id = str(uuid.uuid4())
     row = connections.save_connection(
         connection_id,
@@ -931,7 +934,7 @@ def create_clone_job(
             connections,
             # model_dump, not a hand-copied dict: the hand-copied version
             # listed 8 of the request's fields and silently dropped the
-            # rest, so `typed_destination_columns` and `in_place` were
+            # rest, so `typed_destination_columns` was
             # unreachable over HTTP however they were sent. mode="json"
             # also does the FieldSemanticType -> str conversion that copy
             # was doing by hand.
@@ -948,12 +951,20 @@ def create_clone_job(
     return CloneJobCreateResponse(
         job_id=job["job_id"],
         status=CloneJobStatus(job["status"]),
-        # In-place reuses the source database, so there is nothing for the
-        # operator to create and Phase 1 verifies nothing.
-        create_database_sql=(
-            "" if body.in_place else clone_executor.create_database_sql(body.destination_database)
-        ),
+        create_database_sql=clone_executor.create_database_sql(body.destination_database),
     )
+
+
+@router.get("/clone-jobs")
+def list_clone_jobs(
+    connections: Annotated[PgPersistence, Depends(get_connections)],
+) -> list[dict[str, Any]]:
+    """Every job in the shape of `GET /clone-jobs/{id}` (ADR-023: the Jobs screen), without
+    `quality`: that is read per job from `/quality`, and carries raw values (R23)."""
+    return [
+        {**{k: v for k, v in job.items() if k != "quality"}, "stale": clone_executor.is_stale(job)}
+        for job in connections.list_clone_jobs()
+    ]
 
 
 @router.get("/clone-jobs/{job_id}")
@@ -1066,7 +1077,10 @@ def start_clone_job(
     request). Also the resume entry point (decision #10): calling this
     again on an orphaned RUNNING job re-streams and skips already-
     committed rows rather than redoing the whole table."""
-    started = clone_executor.start_phase2(connections, dispatcher, cache, job_id)
+    try:
+        started = clone_executor.start_phase2(connections, dispatcher, cache, job_id)
+    except CloneJobStateError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     if not started:
         job = connections.get_clone_job(job_id)
         if job is None:
@@ -1138,6 +1152,7 @@ def get_clone_job_errors(
 # --- Adjudication (ADR-018): the exit for AMBIGUOUS ---
 
 _MAX_QUEUE_PAGE_SIZE = 1000
+_MAX_REVIEW_ENTRIES = 100_000  # R22: no server paging; far above hundreds of distinct values
 
 
 def _mask_leaves(value: Any) -> Any:
@@ -1203,6 +1218,43 @@ def list_adjudication_queue(
     )
     response.headers["X-Total-Count"] = str(total)
     return [_queue_view(row) for row in rows]
+
+
+def _review_view(row: dict[str, Any]) -> ReviewEntry:
+    return ReviewEntry(
+        key=row["key"],
+        semantic_type=FieldSemanticType(row["semantic_type"]),
+        original=row["original"],
+        context=json.loads(row["context"]),
+        detail=json.loads(row["detail"]),
+        occurrences=row["occurrences"],
+        decided=bool(row["decided"]),
+    )
+
+
+@router.get("/adjudication/review", response_model=list[ReviewEntry])
+def list_review_entries(
+    response: Response,
+    connections: Annotated[PgPersistence, Depends(get_connections)],
+) -> list[ReviewEntry]:
+    """Every pending entry, most frequent first, raw value included (R23). One
+    unpaged list (R22); past the cap, `X-Total-Count` tells the screen how many
+    exist, as on `/errors` (ZoomInfo 100k left 193,708 pending entries)."""
+    total, rows = connections.list_queue(
+        semantic_type=None, decided=False, limit=_MAX_REVIEW_ENTRIES, offset=0
+    )
+    response.headers["X-Total-Count"] = str(total)
+    return [_review_view(row) for row in rows]
+
+
+@router.get("/adjudication/review/{key}", response_model=ReviewEntry)
+def get_review_entry(
+    key: str, connections: Annotated[PgPersistence, Depends(get_connections)]
+) -> ReviewEntry:
+    row = connections.get_queue_entry(key)
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"No such queue entry: {key}")
+    return _review_view(row)
 
 
 @router.get("/adjudication/queue/{key}", response_model=AdjudicationQueueEntry)

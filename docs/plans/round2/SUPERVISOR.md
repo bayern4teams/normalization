@@ -35,9 +35,10 @@ force-push; never change "autonomy" in STATUS.
    locked, EXIT as in step 2.
 3b. Read docs/plans/round2/HANDOFF.md and docs/plans/ROUND2_IMPLEMENTATION_PLAN.md sections 2-9.
    AGENTS.md is already loaded through CLAUDE.md; do not read it again.
-4. If graphify or codebase-memory-mcp is not on PATH, run bash scripts/cloud_setup.sh; if
-   graphify-out/graph.json is missing, run `uv sync --all-extras && uv run python
-   scripts/refresh_graphs.py`. Either still missing is a [BLOCKED] (step 8). graft is optional: if
+4. If graphify or codebase-memory-mcp is not on PATH, or graphify-out/graph.json is missing, run
+   `bash scripts/cloud_setup.sh` (system headers, Python 3.12, `uv sync`, then the graphs); never a
+   bare `uv sync`, which skips the headers and may pick another Python. A tool or graph still missing
+   is a [BLOCKED] (step 8). graft is optional: if
    its install hangs or fails, note it once in HANDOFF.md and continue. Bound every install with
    `timeout -k 5 600`.
 5. Resume before starting anything new (plan §7.3): for each line under "In flight" in HANDOFF.md,

@@ -417,7 +417,7 @@ column that is 93% AMBIGUOUS is telling you it is missing context.
 A table appears in the report as it completes, so a long job's numbers are
 readable while it runs. Kept off `GET /clone-jobs/{id}` on purpose: the UI
 polls that every two seconds and this is a row per configured column.
-- Diff origin vs. destination directly to confirm normalized-in-place
+- Diff origin vs. destination directly to confirm normalized
   values, untouched passthrough columns, and — most importantly — that
   the origin is byte-for-byte unchanged:
 

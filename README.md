@@ -17,7 +17,7 @@ flowchart LR
 ```
 
 Caption: a normal clone only reads the origin and writes a normalized copy
-next to it. The opt-in in-place mode is the exception (see Limits).
+next to it. Every clone writes a separate copy; the origin is never written.
 
 ## Why it matters
 
@@ -39,7 +39,7 @@ next to it. The opt-in in-place mode is the exception (see Limits).
 All milestones M0 to M8 are complete. Part 1 of the improvement report
 (defects D1 to D12) is complete and measured on public data
 ([record](docs/archive/plans/defects/PART1_COMPLETE.md)). Round 2 of Part 1
-(D13 to D15 and a new UI, U1) is researched and planned, not built
+(D13 to D15 and a new UI, U1) is built in the cloud and waits for the owner's local checks
 ([report](docs/improvement-report.md#part-1-round-2-2026-10-25--found-after-d1-d12-were-closed)). Postgres and
 ClickHouse are supported for the clone feature. MySQL, Mongo and file sources
 exist as read-only connectors, and the clone feature does not use them
@@ -61,6 +61,13 @@ Fetch the address model data once (about 813 MB):
 bash services/libpostal/_data_cache/download_data.sh
 ```
 
+Create your settings file. Set `NORM_SECRET_KEY` (the file says how to generate one) and
+`NORM_BIND_ADDR` (this host's private LAN address):
+
+```bash
+cp .env.example .env
+```
+
 Start the app:
 
 ```bash
@@ -68,17 +75,17 @@ docker compose up -d postgres libpostal api
 ```
 
 ```bash
-curl -s http://localhost:8080/health
+curl -s http://$NORM_BIND_ADDR:8080/health
 ```
 
-Start the UI:
+The API serves the UI at `http://$NORM_BIND_ADDR:8080/`. For UI development:
 
 ```bash
-cd ui && npm install && npm run dev
+cd ui && npm ci && npm run dev
 ```
 
-The compose file sets a fixed development `NORM_SECRET_KEY`. Generate your own
-for any other use. To clone a real database, follow the
+The compose file has no secret key; it reads `NORM_SECRET_KEY` from your `.env`.
+To clone a real database, follow the
 [end-to-end guide](docs/clone-e2e-guide.md).
 
 ## Worked example: measure accuracy
@@ -142,13 +149,14 @@ Measured on public data. Full tables, environment and reproduction:
   per job ([REPORT §11.8](docs/benchmarks/REPORT.md)).
 - Postgres and ClickHouse only, and the origin and destination must use the
   same engine.
-- In-place mode (`in_place`, off by default) replaces the origin's tables with
-  normalized ones. Originals then survive only in the error report. It needs a
-  writable origin login.
+- A clone needs disk space for a full copy of the origin. There is no mode that
+  writes into the origin.
 - The app never runs `CREATE DATABASE`. You run it once by hand.
 - Column type autodetect is off by default. It once turned French company
   numbers into phone numbers ([REPORT](docs/benchmarks/REPORT.md) headline).
-- The API has no authentication in the code. Put it behind your own gateway.
+- The API has no authentication in the code. It answers only callers on the local network
+  (loopback, private ranges) and refuses database hosts outside it
+  ([ADR-022](docs/adr/ADR-022-network-and-database-address-policy.md)).
 - Saved connection passwords need `NORM_SECRET_KEY`.
 
 ## License

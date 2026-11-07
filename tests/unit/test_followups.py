@@ -132,7 +132,6 @@ def _run(
         planner=DistinctValuePlanner(build_dispatcher(env_id="e"), None),
         pool=None,
         progress=job["progress"],
-        in_place=False,
         entity_countries={},
         adjudication=None,
     )
@@ -202,7 +201,6 @@ class TestDistinctValuesAreRememberedAcrossChunks:
             planner=DistinctValuePlanner(dispatcher, None),
             pool=None,
             progress=job["progress"],
-            in_place=False,
             entity_countries={},
             adjudication=None,
         )

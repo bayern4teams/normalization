@@ -231,10 +231,6 @@ def test_start_rejects_job_not_yet_schema_ready(client: TestClient) -> None:
 # with the reason it cannot:
 _NOT_STORED = frozenset(
     {
-        # in_place derives both from the source, so the request's values
-        # are ignored on purpose.
-        "destination_connection_id",
-        "destination_database",
         # Creation-time switches: they decide what `field_configs` ends up
         # containing and mean nothing afterwards.
         "autodetect_field_types",
@@ -252,7 +248,7 @@ def test_every_request_field_reaches_the_stored_job(
 ) -> None:
     """Regression, twice over: the route used to hand-copy 8 of the
     request's fields into the executor's dict, so
-    `typed_destination_columns` and `in_place` were unreachable over HTTP
+    `typed_destination_columns` was unreachable over HTTP
     however they were sent. Then `source_schema` was added and reached the
     discovery read but not the SAVED job, so Phase 1 reopened the source
     without it and raised `NoSuchTableError` on a table the job had just
@@ -300,7 +296,8 @@ def test_every_request_field_reaches_the_stored_job(
         "source_connection_id": connection_id,
         "source_database": "src",
         "source_schema": "diffbot",
-        "in_place": True,
+        "destination_connection_id": connection_id,
+        "destination_database": "dst",
         "country": "GB",
         "locale": "en-GB",
         "typed_destination_columns": False,
@@ -323,10 +320,6 @@ def test_every_request_field_reaches_the_stored_job(
     # stored — so adding one cannot quietly skip this test either.
     unchecked = set(CloneJobCreateRequest.model_fields) - set(sent) - _NOT_STORED
     assert unchecked == set(), f"new request field(s) not covered here: {sorted(unchecked)}"
-
-    # in_place derives the destination from the source rather than taking
-    # it from the request.
-    assert job["destination_database"] == "src"
 
 
 class _PlanSource:

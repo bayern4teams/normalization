@@ -59,12 +59,22 @@ def source_identity(connection: Mapping[str, Any], database: str, schema: str | 
 
 def _question(context: NormalizationContext) -> NormalizationContext:
     """The context a value is asked and decided in. What a column's values
-    prove (a day/month order, a decimal mark) is derived from the data, not
+    prove (a day/month order, a decimal mark, a language form) is derived from the data, not
     part of the question: a verdict stays found when that evidence appears,
     and wins over it."""
-    if context.column_date_order is None and context.column_decimal_mark is None:
+    if (
+        context.column_date_order is None
+        and context.column_decimal_mark is None
+        and context.column_language_form is None
+    ):
         return context  # the common case keeps its cached hash
-    return context.model_copy(update={"column_date_order": None, "column_decimal_mark": None})
+    return context.model_copy(
+        update={
+            "column_date_order": None,
+            "column_decimal_mark": None,
+            "column_language_form": None,
+        }
+    )
 
 
 def verdict_key(

@@ -10,10 +10,10 @@ from __future__ import annotations
 import logging
 import os
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import blake3
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi import FastAPI, Request
 from normalizers.address import AddressNormalizer, LibpostalClient
 from normalizers.boolean import BooleanNormalizer
 from normalizers.company import CompanyNormalizer
@@ -35,7 +35,11 @@ from normalizers.unit import UnitNormalizer
 from normalizers.url import URLNormalizer
 from normexec.cache import NormalizationCache
 from normexec.env_fingerprint import current_env_id
+from starlette.middleware.trustedhost import TrustedHostMiddleware
+from starlette.responses import JSONResponse, PlainTextResponse
+from starlette.staticfiles import StaticFiles
 
+from normapi.address_policy import AddressPolicyError, check_caller
 from normapi.adjudication import migrate_sources
 from normapi.pg_persistence import PgPersistence
 from normapi.routes import router
@@ -43,6 +47,9 @@ from normapi.scaffold_profile import SCAFFOLD_PROFILE
 from normapi.store import DEFAULT_MAX_RUN_ROWS, InMemoryStore
 from normcore import Dispatcher, NormalizerRegistry
 from normdict import CustomDictionaryStore, DictionaryLoader
+
+if TYPE_CHECKING:
+    from starlette.types import ASGIApp, Receive, Scope, Send
 
 logger = logging.getLogger(__name__)
 
@@ -80,25 +87,12 @@ _DEFAULT_CUSTOM_DICTIONARIES_DIR = Path(
     os.environ.get("NORM_CUSTOM_DICTIONARIES_DIR", "data/custom-dictionaries")
 )
 
-# The M7 UI (ui/) is a separate origin from the API — without CORS
-# headers the browser blocks every fetch outright (caught by actually
-# loading the UI in a real browser against a real running server, not by
-# reasoning about the two processes in isolation). Comma-separated so a
-# deployment can widen this without a code change; both Vite's dev-server
-# origin (5173) and its `vite preview`/production-build origin (4173,
-# what the Playwright e2e suite builds and serves) are included by
-# default since both are this milestone's own consumers.
-_DEFAULT_CORS_ORIGINS = [
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
-    "http://localhost:4173",
-    "http://127.0.0.1:4173",
-]
-_EXTRA_CORS_ORIGINS = [
-    origin.strip()
-    for origin in os.environ.get("NORM_CORS_ORIGINS", "").split(",")
-    if origin.strip()
-]
+# ADR-023: the API serves the built UI itself (one port, no CORS). The path
+# is the repository layout (/app in the image, where the Dockerfile copies
+# the build); an absent directory means an API-only checkout.
+_UI_DIST_DIR = Path(
+    os.environ.get("NORM_UI_DIR") or Path(__file__).resolve().parents[4] / "ui" / "dist"
+)
 
 # §103's normalization cache — defaults to an in-process-only DuckDB
 # (":memory:") so a fresh `InMemoryStore` and a fresh cache always start
@@ -207,6 +201,37 @@ def build_dispatcher(loader: DictionaryLoader | None = None, *, env_id: str) -> 
     )
 
 
+def _allowed_hosts() -> list[str]:
+    """Host-header allowlist (the DNS-rebinding defence, ADR-022): loopback
+    names, the LAN address compose binds, and any names the deployer lists."""
+    extra = [
+        os.environ.get("NORM_BIND_ADDR", ""),
+        *os.environ.get("NORM_ALLOWED_HOSTS", "").split(","),
+    ]
+    return ["localhost", "127.0.0.1", *(h.strip() for h in extra if h.strip())]
+
+
+class LocalCallersOnly:
+    """Refuses a peer outside the allowed set (ADR-022). `X-Forwarded-For` is
+    never read: there is no proxy in front of this app."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] in ("http", "websocket"):
+            client = scope.get("client")
+            if not check_caller(client[0] if client else None):
+                if scope["type"] == "http":
+                    await PlainTextResponse("Forbidden: caller outside the local network", 403)(
+                        scope, receive, send
+                    )
+                else:
+                    await send({"type": "websocket.close", "code": 1008})
+                return
+        await self.app(scope, receive, send)
+
+
 def create_app(
     *,
     dictionaries_dir: Path | None = None,
@@ -219,14 +244,20 @@ def create_app(
         title="Normalization Engine API",
         description="Source.txt §98 API surface.",
         version="0.1.0",
+        # ADR-023: Swagger UI and ReDoc load their code from a CDN. No allowed
+        # dependency supplies them locally, so they are off; /openapi.json stays.
+        docs_url=None,
+        redoc_url=None,
     )
 
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=[*_DEFAULT_CORS_ORIGINS, *_EXTRA_CORS_ORIGINS],
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
+    # ADR-022. add_middleware puts the last one added outermost, so the caller
+    # check runs first, then the Host check.
+    @app.exception_handler(AddressPolicyError)
+    async def _address_refused(_request: Request, exc: AddressPolicyError) -> JSONResponse:
+        return JSONResponse(status_code=422, content={"detail": str(exc)})
+
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=_allowed_hosts())
+    app.add_middleware(LocalCallersOnly)
 
     loader = DictionaryLoader(dictionaries_dir or _DEFAULT_DICTIONARIES_DIR)
     custom_store = CustomDictionaryStore(
@@ -268,5 +299,10 @@ def create_app(
     @app.get("/health")
     def health() -> dict[str, str]:
         return {"status": "ok"}
+
+    # Last, so no API route is shadowed. The UI uses hash routes: a reload of
+    # `/#/jobs/x` is still `/`.
+    if (_UI_DIST_DIR / "index.html").is_file():
+        app.mount("/", StaticFiles(directory=_UI_DIST_DIR, html=True), name="ui")
 
     return app

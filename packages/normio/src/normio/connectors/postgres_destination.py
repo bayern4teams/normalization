@@ -7,9 +7,12 @@ anyway, so sharing the class would be misleading, not lazy).
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import re
+from typing import TYPE_CHECKING, Any
 
+import psycopg
 import sqlalchemy as sa
+from psycopg.conninfo import make_conninfo
 
 from normio.connectors._sql_base import DESTINATION_INSERT_CHUNK_ROWS
 
@@ -68,32 +71,68 @@ def quote_identifier(name: str) -> str:
     return '"' + name.replace('"', '""') + '"'
 
 
+def build_postgres_dsn(
+    host: str,
+    port: int,
+    username: str,
+    password: str,
+    database: str,
+    *,
+    hostaddr: str | None = None,
+) -> str:
+    """A libpq connection string. Built by libpq's own quoting, never an f-string:
+    a password or name holding `@`, `/`, `,` or `?` cannot change the server or
+    the options (ADR-022). `hostaddr` is the address already checked; libpq
+    connects to it and keeps `host` as the name."""
+    extra = {"hostaddr": hostaddr} if hostaddr else {}
+    return make_conninfo(
+        host=host, port=port, user=username, password=password, dbname=database, **extra
+    )
+
+
+def engine_from_dsn(dsn: str, **kwargs: Any) -> sa.Engine:
+    """An engine for a libpq connection string (`build_postgres_dsn`) or a SQLAlchemy URL.
+    SQLAlchemy cannot carry `hostaddr` in a URL, so for a connection string psycopg
+    opens the connection. A `postgresql://` URL gets the psycopg3 driver explicitly,
+    not SQLAlchemy's default (psycopg2, not a project dependency)."""
+    if re.match(r"[A-Za-z][A-Za-z0-9+.-]*://", dsn):  # a libpq string starts with `host=`
+        return sa.create_engine(dsn.replace("postgresql://", "postgresql+psycopg://", 1), **kwargs)
+    return sa.create_engine("postgresql+psycopg://", creator=lambda: psycopg.connect(dsn), **kwargs)
+
+
 class PostgresDestination:
     """Write-capable, server-level (no `database` at construction — mirrors
     the server-level saved-connection shape, decision #13). No
     `postgresql_readonly` execution option: this one writes."""
 
-    def __init__(self, host: str, port: int, username: str, password: str) -> None:
+    def __init__(
+        self, host: str, port: int, username: str, password: str, hostaddr: str | None = None
+    ) -> None:
         self._host = host
         self._port = port
         self._username = username
         self._password = password
+        self._hostaddr = hostaddr
         # One connection per call site (database_exists queries the
         # always-present `postgres` catalog database) — cheap, and this
         # method is called once per job verification, not per row.
-        self._admin_engine = sa.create_engine(self._dsn("postgres"))
+        self._admin_engine = engine_from_dsn(self._dsn("postgres"))
         self._db_engines: dict[str, sa.Engine] = {}
 
     def _dsn(self, database: str) -> str:
-        return (
-            f"postgresql+psycopg://{self._username}:{self._password}"
-            f"@{self._host}:{self._port}/{database}"
+        return build_postgres_dsn(
+            self._host,
+            self._port,
+            self._username,
+            self._password,
+            database,
+            hostaddr=self._hostaddr,
         )
 
     def _engine_for(self, database: str) -> sa.Engine:
         engine = self._db_engines.get(database)
         if engine is None:
-            engine = sa.create_engine(self._dsn(database))
+            engine = engine_from_dsn(self._dsn(database))
             self._db_engines[database] = engine
         return engine
 
@@ -192,37 +231,6 @@ class PostgresDestination:
             params = [{f"c{i}": row[c] for i, c in enumerate(columns)} for row in chunk]
             with engine.begin() as conn:
                 conn.execute(insert_sql, params)
-
-    def swap_table(self, database: str, table: str, staging: str) -> None:
-        """Replace `table` with `staging`, then drop the original.
-
-        For in-place normalization, where there is no second database to
-        write into. Peak extra storage becomes the largest SINGLE table
-        rather than a whole copy of the source, because the staging table
-        is swapped in and the original dropped one table at a time.
-
-        The two renames are one transaction, so a crash leaves either the
-        original or the normalized table in place and never neither. The
-        DROP is deliberately outside it: holding the original's storage
-        until commit would defeat the point of the exercise.
-
-        ponytail: index and constraint names still follow the ORIGINAL
-        table (Postgres does not rename them with the table), so the
-        swapped-in table carries names like "t__norm_pkey". Cosmetic, and
-        renaming every constraint is a lot of DDL for a cosmetic win —
-        revisit if something reads constraint names.
-        """
-        retired = f"{staging}_retired"
-        q = quote_identifier
-        with self._engine_for(database).begin() as conn:
-            conn.execute(sa.text(f"ALTER TABLE {q(table)} RENAME TO {q(retired)}"))
-            conn.execute(sa.text(f"ALTER TABLE {q(staging)} RENAME TO {q(table)}"))
-        with self._engine_for(database).begin() as conn:
-            conn.execute(sa.text(f"DROP TABLE {q(retired)}"))
-
-    def drop_table(self, database: str, table: str) -> None:
-        with self._engine_for(database).begin() as conn:
-            conn.execute(sa.text(f"DROP TABLE IF EXISTS {quote_identifier(table)}"))
 
     def close(self) -> None:
         self._admin_engine.dispose()

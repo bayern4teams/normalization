@@ -1,42 +1,52 @@
 import { expect, test } from "@playwright/test";
+import { stubApi } from "./stub-api";
 
-// Real end-to-end smoke test — every assertion here reads text that only
-// appears if the live fetch to the real normapi server actually
-// succeeded (no mocked routes anywhere in this suite).
-test("overview loads real aggregated data from the live API", async ({ page }) => {
-  await page.goto("/");
-  await expect(page.getByRole("heading", { name: "Normalization Overview" })).toBeVisible();
-  await expect(page.getByText("Fields analyzed")).toBeVisible();
-  // A real number (possibly 0), never "Loading…" once resolved and never
-  // the error state — proves the CORS-enabled fetch round-tripped.
-  await expect(page.getByText("Loading…")).toHaveCount(0);
-  await expect(page.getByText(/Request failed/)).toHaveCount(0);
+const SCREENS = ["Connections", "New clone", "Jobs", "Review", "Quality"];
+
+test.beforeEach(async ({ page }) => {
+  await stubApi(page, {
+    "GET /connections": () => ({ body: [] }),
+    "GET /quality": () => ({ body: { metrics: [] } }),
+  });
 });
 
-test("nav links every page in Source.txt §89 without a client error", async ({ page }) => {
-  const pages = [
-    "Overview",
-    "Profiles",
-    "Fields",
-    "Rules",
-    "Preview",
-    "Runs",
-    "Warnings",
-    "Collisions",
-    "Dictionaries",
-    "Quality",
-    "Settings",
-  ];
+test("navigation shows exactly the five screens: Connections, New clone, Jobs, Review, Quality", async ({ page }) => {
   await page.goto("/");
-  for (const label of pages) {
+  const links = page.getByRole("navigation", { name: "Main" }).getByRole("link");
+  await expect(links).toHaveText(SCREENS);
+  await expect(page).toHaveURL(/#\/connections$/);
+});
+
+test("each navigation entry changes the address to its own screen", async ({ page }) => {
+  await page.goto("/");
+  const addresses = ["connections", "new-clone", "jobs", "review", "quality"];
+  for (const [i, label] of SCREENS.entries()) {
     await page.getByRole("link", { name: label, exact: true }).click();
-    await expect(page.getByText(/Request failed/)).toHaveCount(0);
+    await expect(page).toHaveURL(new RegExp(`#/${addresses[i]}$`));
   }
 });
 
-test("mode switch changes what expert/admin-only content renders", async ({ page }) => {
-  await page.goto("/#/settings");
-  await expect(page.getByText("Current mode:")).toContainText("normal");
-  await page.getByRole("button", { name: "expert", exact: true }).click();
-  await expect(page.getByText("Current mode:")).toContainText("expert");
+test("an address that is not one of the five screens shows page not found", async ({ page }) => {
+  await page.goto("/#/no-such-screen");
+  await expect(page.getByRole("heading", { name: "Page not found" })).toBeVisible();
+});
+
+test("English only, no UI mode choice, no login and no dark-mode toggle", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.locator("html")).toHaveAttribute("lang", "en");
+  await expect(page.getByRole("radiogroup")).toHaveCount(0);
+  await expect(page.getByText(/log ?in|sign ?in/i)).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /dark|theme|language/i })).toHaveCount(0);
+});
+
+test("offline: no request leaves the page's own origin on any screen", async ({ page, baseURL }) => {
+  const foreign: string[] = [];
+  page.on("request", (request) => {
+    if (new URL(request.url()).origin !== new URL(baseURL as string).origin) foreign.push(request.url());
+  });
+  for (const address of ["connections", "new-clone", "jobs", "review", "quality"]) {
+    await page.goto(`/#/${address}`);
+    await page.waitForLoadState("networkidle");
+  }
+  expect(foreign).toEqual([]);
 });

@@ -213,7 +213,6 @@ class TestClickHouseRestartCountsOnce:
             progress=job["progress"],
             dest=_TruncatingDest(),
             job=job,
-            write_target=TABLE,
             persistence=env.persistence,
             job_id=job_id,
         )

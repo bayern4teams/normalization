@@ -58,7 +58,6 @@ names where the concept lives in the code (`path::symbol`).
 | Phase 1 | Creates every destination table empty, after the user has run `CREATE DATABASE` by hand. | `packages/normapi/src/normapi/clone_executor.py::verify_and_create_schema` |
 | Phase 2 | Streams, normalizes and writes the rows on a background thread. | `packages/normapi/src/normapi/clone_executor.py::start_phase2` |
 | Checkpoint | The last committed row offset of a table, always at a block boundary. A resumed job starts after it. | `packages/normapi/src/normapi/clone_executor.py::_resume_point` |
-| In-place clone | An opt-in clone that writes into the origin database under staging names and swaps each table in, replacing the original. | `packages/normapi/src/normapi/clone_executor.py::verify_and_create_schema` |
 | Type autodetect | Suggesting a semantic type per column from a sample. It is off by default and writes nothing unless a column is opted in. | `packages/normapi/src/normapi/clone_executor.py::_suggest_field_types` |
 | Typed destination | Destination columns typed for numbers, money, booleans and date bounds instead of all text. | `packages/normapi/src/normapi/clone_executor.py::_destination_plan` |
 | Companion column | An extra destination column beside a normalized one, such as `<col>_code`. | `packages/normapi/src/normapi/clone_executor.py::_apply_value` |

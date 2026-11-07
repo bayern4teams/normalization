@@ -68,7 +68,7 @@ Rules between modules:
 | `packages/normanalysis/src/normanalysis` | `gold.py`, `calibration.py`, `type_detection.py`, `disguised_missing.py`, `profiling.py`, `impact.py`, `collisions.py`, `quality.py`, `handoff.py` | Measurement and diagnostics. |
 | `packages/normapi/src/normapi` | `app.py`, `routes.py`, `clone_executor.py`, `adjudication.py`, `pg_persistence.py`, `store.py`, `lineage.py`, `secrets.py`, `schemas.py` | HTTP API, clone jobs, metadata storage. |
 | `packages/normcli/src/normcli` | `cli.py`, `traceability.py`, `mutation_gate.py` | Command line. |
-| `ui/src` | `pages/`, `api/client.ts`, `app/` | React UI. 18 pages. |
+| `ui/src` | `pages/`, `api/`, `app/`, `lib/review*.ts` | React + Mantine UI, five screens (Connections, New clone, Jobs, Review, Quality), hash routes ([ADR-023](docs/adr/ADR-023-ui-scope-and-technology.md)). Review keys: `lib/reviewKeys.ts`. Only `GET /adjudication/review` returns raw values. |
 | `services/libpostal` | `Dockerfile` | Address parsing sidecar. |
 | `data/dictionaries` | `honorifics`, `legal-entity-suffixes`, `missing-values`, `name-suffixes` | Shipped dictionaries. |
 | `scripts` | `refresh_graphs.py`, `cloud_setup.sh`, `cloud_environment_setup.sh`, `check_*.py`, `generate_*.py`, `license_policy.toml` | Repository tooling and generators. `refresh_graphs.py::PINS` is the one home of the graph-tool versions. |
@@ -293,7 +293,7 @@ override and outputs stay outside the repository.
 
 ## Algorithms and techniques
 
-<!-- verified: 9f27526 -->
+<!-- verified: a80d9bf -->
 
 | Module | Technique | Why |
 |---|---|---|
@@ -305,6 +305,7 @@ override and outputs stay outside the repository.
 | `normalizers/phone.py` | `phonenumbers`. Letters that the parser would drop give `AMBIGUOUS`. With an extension, `comparison` is the RFC 3966 URI. | Silent letter drops gave confident wrong numbers ([REPORT §10 item 4](docs/benchmarks/REPORT.md)). |
 | `normalizers/identifier.py::tax_id_module_for` | Pick the `python-stdnum` module for the country from the package list of `python-stdnum`. A number that no offline validator can decide is `UNKNOWN`. | A hand table covered four countries (D7). |
 | `normalizers/url.py::_registrable` | Registrable domain from the bundled Public Suffix List, offline. | Network access is off by construction. |
+| `normalizers/language.py` | The stored code (`comparison`) is the contract; `display` is output only. A value that is both an ISO 639 code and another language's name (`Ga`, `Mon`) is `AMBIGUOUS` unless the row's country (CLDR `territory_languages`) or the column's own values (codes or names) settle it. A hyphen splits only a valid BCP 47 tag. | Feeding the English names back changed 440 of 7,910 languages ([D13](docs/improvement-report.md), ADR-010). |
 | `normalizers/name.py` | Double Metaphone and Beider-Morse codes for Latin names. Cyrillic and Arabic names get the two language-aware keys only. | Soundex is Anglo-centric (D11). |
 | `normcore/dispatch.py::Dispatcher._reads_as_a_value` | A normalizer that rejects a negative control string proves something by accepting a token. | `NA` is Namibia to one type and Nauru to another. |
 | `normanalysis/type_detection.py::suggest_semantic_type` | Name match plus a sample check against the normalizer, using the same negative control. | A type that accepts anything is no evidence. |
@@ -344,7 +345,7 @@ Rejected libraries: `Unidecode`, `text-unidecode`, `wordfreq`, `abydos`, `deeppa
 
 ## Tests and CI
 
-<!-- verified: 12c1dd5 -->
+<!-- verified: 544cd37 -->
 
 | Marker | Where | Needs |
 |---|---|---|
@@ -355,6 +356,12 @@ Rejected libraries: `Unidecode`, `text-unidecode`, `wordfreq`, `abydos`, `deeppa
 | `integration` | `tests/integration` | docker compose services |
 | `e2e` | declared, no Python test uses it. UI specs are Playwright files in `ui/e2e`. | running stack |
 | `bench` | `tests/bench` | nothing |
+
+`tests/conftest.py` gives every Starlette `TestClient` a loopback peer and the `localhost` host,
+because the app refuses the client's default peer (`testclient`) and host (`testserver`) under
+[ADR-022](docs/adr/ADR-022-network-and-database-address-policy.md). The policy itself is never
+replaced. Address rules live in `packages/normapi/src/normapi/address_policy.py`; the fixed
+address table that guards them is `tests/unit/test_address_policy.py`.
 
 `tests/defects` holds the scorer and the captured before-snapshots for the
 defect fixes. The default test paths are in `pyproject.toml` under

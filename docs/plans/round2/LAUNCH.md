@@ -96,7 +96,7 @@ after a limit stop is normal; the next hourly tick resumes after the reset.
 
 ## 8. After `[ROUND2 COMPLETE]`
 
-Run `LOCAL_VERIFY.md` on your machine, review its "Test changes to review" section, then decide the
+The rest runs locally since 2026-10-29: [LOCAL_RUN.md](LOCAL_RUN.md) is the guide for the local agent. Run `LOCAL_VERIFY.md` on your machine, review its "Test changes to review" section, then decide the
 merge.
 
 ## Stop switch

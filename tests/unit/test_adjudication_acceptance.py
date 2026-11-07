@@ -89,9 +89,6 @@ class _Dest:
     def bulk_insert(self, database: str, table: str, rows: list[dict[str, Any]], **kw: Any) -> None:
         self.inserted.extend(copy.deepcopy(rows))
 
-    def swap_table(self, *a: Any, **k: Any) -> None:  # pragma: no cover - in_place unused
-        raise AssertionError("not an in-place test")
-
 
 class _Crash(RuntimeError):
     pass
@@ -193,7 +190,6 @@ class _Env:
             planner=DistinctValuePlanner(build_dispatcher(env_id=env_id), None),
             pool=None,
             progress=job["progress"],
-            in_place=False,
             entity_countries={},
             adjudication=self.adjudication() if adjudication == "default" else adjudication,
         )
@@ -753,7 +749,6 @@ class TestAttackShapes:
                 planner=DistinctValuePlanner(build_dispatcher(env_id="e"), None),
                 pool=None,
                 progress=job["progress"],
-                in_place=False,
                 entity_countries={"e1": "LI"},
                 adjudication=env.adjudication(),
             )

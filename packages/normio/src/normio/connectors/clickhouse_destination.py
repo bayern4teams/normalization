@@ -71,8 +71,11 @@ class ClickHouseDestination:
     """Write-capable, server-level (no `database` at construction). Unlike
     `ClickHouseConnector`, no readonly profile is requested."""
 
-    def __init__(self, host: str, port: int, username: str, password: str) -> None:
+    def __init__(
+        self, host: str, port: int, username: str, password: str, hostaddr: str | None = None
+    ) -> None:
         self._host = host
+        self._hostaddr = hostaddr
         self._port = port
         self._username = username
         self._password = password
@@ -82,7 +85,9 @@ class ClickHouseDestination:
         client = self._clients.get(database)
         if client is None:
             client = clickhouse_connect.get_client(
-                host=self._host,
+                # ADR-022: connect to the checked address, keep the name for the TLS check.
+                host=self._hostaddr or self._host,
+                server_host_name=self._host if self._hostaddr else None,
                 port=self._port,
                 username=self._username,
                 password=self._password,
@@ -206,35 +211,10 @@ class ClickHouseDestination:
         data = [[row[c] for c in columns] for row in rows]
         client.insert(full_table, data, column_names=columns)
 
-    def swap_table(self, database: str, table: str, staging: str) -> None:
-        """Replace `table` with `staging`, then drop the original.
-
-        `EXCHANGE TABLES` is atomic in ClickHouse (Atomic database engine,
-        the default), so there is no window where the table is missing.
-        Used for in-place normalization: peak extra storage is the largest
-        SINGLE table, not a second copy of the whole database.
-
-        `ALTER TABLE ... UPDATE` was the obvious alternative and is the
-        wrong tool — a mutation rewrites whole parts asynchronously, so it
-        costs the same storage anyway and gives no point at which the
-        table is known to be done.
-        """
-        client = self._client_for(database)
-        db = quote_identifier(database)
-        client.command(
-            f"EXCHANGE TABLES {db}.{quote_identifier(table)} AND {db}.{quote_identifier(staging)}"
-        )
-        client.command(f"DROP TABLE {db}.{quote_identifier(staging)}")
-
     def truncate_table(self, database: str, table: str) -> None:
         """Empty a table a resumed job writes again from its first row."""
         self._client_for(database).command(
             f"TRUNCATE TABLE IF EXISTS {quote_identifier(database)}.{quote_identifier(table)}"
-        )
-
-    def drop_table(self, database: str, table: str) -> None:
-        self._client_for(database).command(
-            f"DROP TABLE IF EXISTS {quote_identifier(database)}.{quote_identifier(table)}"
         )
 
     def close(self) -> None:
