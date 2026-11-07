@@ -14,7 +14,10 @@ four new resource files (Appendix G). Proposal only; no code changed.
 **Round 2 status (2026-11-01):** D13, D14, D15 and U1 implemented and verified on branch
 `feat/round2-fixes`; measured results, the memory diagnosis and the open owner items are in
 [`plans/round2/FINAL_REPORT.md`](plans/round2/FINAL_REPORT.md). The D13 "Verified state" tables below
-describe the state before this fix.
+describe the state before this fix. Merged to `main` on 2026-11-07 (`ccc2fdf`).
+**Round 3 (2026-11-07):** the items round 2 left open are added to Part 1 (D16-D24) or moved to
+Part 3 by the rule in §0; Part 2 adds the research for a self-adapting engine and for the app as
+services; Part 3 adds the round 3 target architecture (§3.8). Proposal only; no code changed.
 **Scope confirmed with project owner** (Q&A round, 2026-09-30)
 
 ---
@@ -25,6 +28,7 @@ describe the state before this fix.
 - [0.1 Correction to the earlier audit](#01-correction-to-the-earlier-audit)
 - [Part 1 — Defects and fixes to apply now](#part-1--defects-and-fixes-to-apply-now)
   - [Part 1, round 2 (2026-10-25)](#part-1-round-2-2026-10-25--found-after-d1-d12-were-closed)
+  - [Part 1, round 3 (2026-11-07)](#part-1-round-3-2026-11-07--left-open-by-round-2)
 - [Part 2 — Research, cited](#part-2--research-cited)
 - [Part 3 — Architecture](#part-3--architecture)
 - [Part 4 — Appendices](#part-4--appendices)
@@ -64,6 +68,24 @@ recommendation depends on one, it is cited by question number.
 | Q23 | Priority order | **Correctness depth → Auditability/provenance → Automation → Throughput.** |
 | Q24 | Budget | **One person, ongoing.** |
 | Q25 | Deliverable | **ADRs first, then a sequenced roadmap.** |
+
+### Round 3 constraints (2026-11-07)
+
+**Where an item goes.** Owner, 2026-11-07: "part 1 is now fixing that could happen without
+changing architecture if somethin caused to change architecture goes to part 3 and when nothing
+remain on part 1 we go for part 3". So Part 1 holds fixes inside today's architecture; an item
+that needs an architecture change moves to Part 3; Part 3 starts only when Part 1 is empty.
+Rounds 1 and 2 already worked this way (the D1 scope line in
+[`DEFECTS_IMPLEMENTATION_PLAN.md`](archive/plans/DEFECTS_IMPLEMENTATION_PLAN.md)); round 3 writes
+it down.
+
+| # | Question | Answer (owner's words, 2026-11-07) |
+|---|----------|--------|
+| Q26 | Which machines? | "C1. a": three. The **laptop** (i5-13600K, 16 GB) runs only the app. The **database machine** (64 GB RAM, Core Ultra 9 285K, 2 TB) holds the real databases. The **benchmark machine** (remote) holds the test databases, libpostal and every other external service. |
+| Q27 | Where do libpostal and the destination live? | "c2. a": libpostal on the benchmark machine. "c3. in real run (a)": the destination is on the database machine, in the same ClickHouse as the source. |
+| Q28 | Scale and SLA (refines Q7, Q20) | 1 billion rows in total in one ClickHouse database ("K. clickhouse"), cloned and normalized in "less than 1 hour". "c4. a": keep the target, measure a 10M-row slice first, then set the realistic target from the numbers. |
+| Q29 | Tests | "c5. a": tests that need a database or libpostal run against the benchmark machine. |
+| Q30 | The app's own metadata Postgres | "d. a": on the laptop, in the app's compose stack. |
 
 ---
 
@@ -646,6 +668,50 @@ Rules for the build:
 
 **Still open:** a screenshot audit of the current UI, once the owner has started the stack
 (R25).
+
+---
+
+## Part 1, round 3 (2026-11-07) — left open by round 2
+
+Round 2 is merged. These are the items it left open, from
+[`plans/round2/FINAL_REPORT.md`](plans/round2/FINAL_REPORT.md) §4, §6 and §7. The rule in §0
+"Round 3 constraints" sorts them. Owner, 2026-11-07: "B. a", the split proposed that day.
+None is built.
+
+**Moved to Part 3** because each changes the architecture (§3.8): the API start-up memory
+(FINAL_REPORT §5.6), the Docker API that cannot reach the benchmark machine (§4.11), and
+`/docs` (§4.3). **Owner action, not code:** rotate `NORM_SECRET_KEY`. The old dev key is in
+`main` history, and gitleaks flags it (§4.5).
+
+### D16-D24 at a glance
+
+| # | Problem (evidence) | Fix inside today's architecture | Test first (D3, L3) |
+|---|---|---|---|
+| **D16** 🟠 | **Raw values outside the review route** (R23). Job error text, `disguised_missing[].value`, `/preview`, `/field-test` and `/runs/{id}/values` carry raw values (FINAL_REPORT §4.2). | Owner, 2026-11-07, "R. a": a raw value appears only in the direct answer to the caller who sent it. So `/preview` and `/field-test` may echo their own input. Job errors, `/runs/{id}/values` and logs are masked. "d16. c": `disguised_missing[].value` stays raw, because D4 needs the placeholder itself. | One test per route and log path, asserting that a planted raw value never appears. |
+| **D17** 🟠 | **`Host: localhost:80@evil.com` is accepted.** Measured 2026-11-07 on the installed Starlette 1.6.0: 200. | Reject a `Host` with userinfo (`@`), and anything but a host and optional port, before `TrustedHostMiddleware`. | Regression test with that header: 400. |
+| **D18** 🟡 | **A bad `NORM_ALLOWED_NETWORKS` gives a 500 on every request** (§6). It fails closed, but the message comes too late and in the wrong place. | Parse at start-up; exit with a message naming the bad entry and the fix (J11). | Start-up test with a bad entry: exit and message. |
+| **D19** 🟡 | **`PATCH /clone-jobs/{id}/plan` drops unknown keys** silently; `POST` forbids them (§6). | The same `extra="forbid"` on PATCH: 422. | PATCH with an unknown key: 422. |
+| **D20** 🟡 | **LANGUAGE edge cases** (§6). Lower-case `mon`/`MON` read as the code `mn`, and `Kuku_Yalanji` with an underscore is INVALID (was `ukv`). The report never said which way either should go. | Owner, 2026-11-07: "d20a. a": lower-case `mon`/`MON` stays AMBIGUOUS like `Mon` (case does not reliably mean "code", Q16). "d20b. a": `_` is read as `-` only inside a valid locale tag (`en_US` → `en-US`, UTS #35); `Kuku_Yalanji` stays INVALID. | `mon` → AMBIGUOUS; `en_US` → `en-US`; `Kuku_Yalanji` → INVALID. |
+| **D21** 🟡 | **D13 row evidence is incomplete** (R12). Within a row, only a COUNTRY column gives LANGUAGE its country. PHONE and POSTCODE give one only across tables (`clone_executor.py`, `provides_country`). R12 named "country country code phone code". | A phone in international form names its country by its calling code (E.164 country code). Use that as row evidence. A postcode alone does not name a country, so it stays cross-table only. | `Mon` with `+95…` in the same row → `mnw`; with a national-format phone → AMBIGUOUS. |
+| **D22** 🟡 | **Two saved connections to one server** under different host names are not caught (HANDOFF D14 row). | At save and start, compare the checked addresses (D15 already resolves them), port and database of origin and destination. | Two names, one address: refused. |
+| **D23** 🟡 | **New clone cannot pick tables.** Every table is cloned (FINAL_REPORT §7 "Gaps", item 1). | A table list on clone-job create, checked against the origin, and the UI's table picker. | Create with 1 of 3 tables: only that table is cloned. |
+| **D24** 🟢 | **Tests and records.** See the list below. | — | — |
+
+**D24, item by item:**
+
+- `test_a_time_is_no_day_or_month` has failed since 2026-11-01, on `main` too, and looks
+  calendar-sensitive. Diagnose first. If the test and the spec disagree, stop and ask (L1).
+- `test_groups_cost_is_linear_in_pairs` fails under load (§4.6). Changing the test needs the
+  owner's yes (L1).
+- Live re-checks of every round 2 result marked "record": the benchmark machine is reachable
+  again (SSH answered on 2026-11-07). Also a host name with several addresses, live.
+- The ZoomInfo 100k count: 599,853 in FINAL_REPORT, 699,853 in HANDOFF. Re-measure.
+- `docs/PONYTAIL_DEBT.md` lists 36 markers; the code has 50. Rewriting the ledger needs a yes.
+- AGENTS.md §4: `$BENCH_DIR` points to a missing folder, and the memory example uses `ulimit -v`.
+  `ulimit -v` limits address space, not memory, and did not protect the laptop on 2026-11-07
+  ([`LESSONS.md`](LESSONS.md)). Replace it with `systemd-run --user --scope -p MemoryMax=…`.
+- Two test changes without the `TEST-CHANGE:` form (`57d8cbc`, `bb162ca`): record them in the
+  plan §2.9 table.
 
 ---
 
