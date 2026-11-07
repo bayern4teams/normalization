@@ -1554,6 +1554,15 @@ Round 2 (2026-10-25), fetched in that round:
 | [`_raw-ui-ux.md`](research/resources/_raw-ui-ux.md) | 150 | U1: UI technology families, review-queue tools, UX guidance, HITL studies |
 | **Round 2 total** | **274 entries** | |
 
+Round 3 (2026-11-07), researched by subagents in that round:
+
+| File | Entries | Domain |
+|---|---|---|
+| [`_raw-resource-adaptive-processing.md`](research/resources/_raw-resource-adaptive-processing.md) | 28 | Engines for 1B rows on one machine, cgroup and PSI signals, AIMD, source-side distinct values, bounded caches |
+| [`_raw-service-api.md`](research/resources/_raw-service-api.md) | 53 | API standards, Postgres job queues, generated clients, containers, LAN security, streaming; the API gap list |
+| [`_raw-in-database-apply.md`](research/resources/_raw-in-database-apply.md) | 25 | ClickHouse joins and dictionaries, `INSERT … SELECT` speed, cast gate, resume, the 1-hour feasibility |
+| **Round 3 total** | **106 entries** | |
+
 ---
 
 # Recommended sequence
@@ -1601,6 +1610,14 @@ would optimize a system whose correctness is not yet measurable.
     the hyphen fix, and the second-pass test for every code-based type.
 14. **U1** — the new UI, after D15 (it is served by the API) and D14.
 
+## Phase 6 — Round 3 (2026-11-07)
+
+15. **D16-D24** (Part 1, round 3), each in its own branch.
+16. **Measure** (§3.8 "First step") on the benchmark machine. It sets the realistic target for
+    1 billion rows.
+17. **Part 3 §3.8**, only when Part 1 is empty (§0): the governor and the §5.6 fix, then the
+    `/v1` API and the job table, then the in-database apply if the measurement supports it.
+
 ---
 
 ## Next deliverable
@@ -1617,3 +1634,7 @@ alternatives deferred — matching the format of ADR-001 through ADR-017.
 Round 2 (proposed, not written): an amendment to ADR-010 for D13; amendments to ADR-013 and
 ADR-017 for D14 (the origin is always read-only); a new ADR for D15 (network and database-
 address policy); a new ADR for U1 (UI scope and technology).
+
+Round 3 (proposed, not written): an amendment to ADR-016 for the governor and the in-database
+apply (decisions L, M, N); a new ADR for the three-machine deployment (Q26-Q30); a new ADR for
+the `/v1` service API and the job table (decisions O, P); an amendment to ADR-023 for `/docs`.
