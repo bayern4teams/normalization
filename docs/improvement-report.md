@@ -1425,6 +1425,27 @@ a time, memory capped. The research file's "What to measure first" has the full 
 
 The realistic target for 1 billion rows is set from these numbers (Q28).
 
+### Open questions for the owner (not asked yet)
+
+From the research file's last section. Each must be answered before the part it names is
+built:
+
+1. **The distinct ratio on real data.** May one read-only `uniq((value, context))` query per
+   column run on the database machine?
+2. **Entity country across tables** (`_build_entity_country_map`). Options: compute it in
+   ClickHouse from a rule table the app writes; keep it in the app; or drop it on the H-b path.
+3. **Errors at 1B rows.** One error row per bad cell, or exact counts plus samples per (column,
+   status), with the review queue per distinct value?
+4. **ClickHouse users.** One user with grants, or a separate `readonly` user for the source? Is
+   there an admin who can create settings profiles and quotas?
+5. **Destination layout.** May the destination be partitioned, and by what, so that a range can
+   be swapped in atomically?
+6. **A static source.** Is the source frozen during a run, or written to meanwhile?
+7. **Workers on the database machine.** If the distinct count is large, is that allowed? Q26
+   says no today.
+8. **The ClickHouse version** on the database machine. Several defaults changed in 26.x.
+9. **A smaller context key.** May a type that never depends on the country drop it from its key?
+
 ### Decision register, round 3
 
 | # | Decision | Reason | Alternative deferred, and why |
