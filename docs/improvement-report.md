@@ -1258,12 +1258,183 @@ relitigated:
 - **Relational schema normalization** (Q1) — a separate future project.
 - **Throughput work** — Polars, PyO3, FSTs (Q23 ranks throughput last;
   revisit once the SLA in Q20 is measured and actually missed).
+  **Round 3:** Q28 now sets the SLA (1 billion rows in under 1 hour), so throughput is
+  in scope through §3.8. PyO3 and FSTs stay deferred until a measurement points to them.
 - **ER-engine-specific output columns** — blocked on Q11.
 - **Distributed execution** — ADR-016 chose single-node deliberately.
+  **Round 3:** still deferred; owner "m. a" (no Spark, Kafka or Ray, Part 2 "Round 3").
 - **A real task queue** replacing `threading.Thread` — marked in
-  `clone_executor.py:902`.
+  `clone_executor.py:902`. **Round 3:** planned as the existing job table, extended (owner
+  "o. a", §3.8).
 - **Pushdown filter on resume** — marked in `clone_executor.py:1885`;
-  currently resume skips rows client-side.
+  currently resume skips rows client-side. **Round 3:** the in-database apply resumes per
+  key range instead (§3.8).
+
+## 3.8 Round 3 target (2026-11-07) — services and a self-adapting engine
+
+Part 3 of rounds 1 and 2, checked against the code on 2026-11-07:
+
+- **Built:** the adjudication queue and verdicts, the resolve stage, `decided_by`, the
+  OpenLineage events (`normapi/lineage.py`) and the review UI (U1).
+- **Not built:** per-source `calibration_bins`, the agent decider, conformal sets wired into
+  dispatch, a Marquez deployment. They stay as written in §3.3-§3.6.
+
+This section is the next architecture step. By the rule in §0 it starts only when D16-D24 are
+done. The research is in Part 2, "Round 3"; the owner's answers of 2026-11-07 are quoted by
+letter.
+
+### Where each part runs (Q26, Q27, Q30)
+
+```mermaid
+flowchart LR
+    subgraph LAP["Laptop: the app only"]
+        API["🆕 api container<br/>normapi + UI + /docs"]
+        WRK["🆕 worker containers<br/>normalize distinct values"]
+        META[("metadata Postgres<br/>jobs, queue, verdicts")]
+    end
+    subgraph DB["Database machine: 64 GB"]
+        SRC[("ClickHouse source<br/>read-only, 1B rows")]
+        DST[("ClickHouse destination")]
+        MAP[("🆕 mapping tables")]
+    end
+    subgraph BENCH["Benchmark machine"]
+        LP["libpostal"]
+        TDB[("test databases")]
+    end
+    API --> META
+    WRK --> META
+    WRK -- "distinct values" --> SRC
+    WRK -- "mapping" --> MAP
+    MAP -- "INSERT … SELECT" --> DST
+    SRC -- "INSERT … SELECT" --> DST
+    WRK --> LP
+```
+
+Tests that need a database or libpostal use the benchmark machine (Q29). The laptop's compose
+file has no libpostal and no source database. That also removes the Docker network problem of
+FINAL_REPORT §4.11, provided the api and worker containers can reach both machines' LAN
+addresses (ADR-022's allowed set).
+
+### One clone, step by step (owner "h. b", "j. a", "n. a")
+
+```mermaid
+sequenceDiagram
+    participant W as Worker (laptop)
+    participant S as ClickHouse source
+    participant M as Mapping (database machine)
+    participant D as ClickHouse destination
+    W->>S: distinct (value, context) per column, with counts
+    W->>W: normalize each pair once (cache, verdicts, libpostal)
+    W->>M: mapping rows, then verify the count
+    loop each key range
+        W->>D: INSERT … SELECT source JOIN mapping into staging
+        W->>D: check: no unmatched key, no OK value cast to NULL, counts equal
+        W->>D: swap the range in
+    end
+    W->>W: queue entries from the mapping, error counts and samples, lineage
+```
+
+The constraints that must hold (all from the research file's "Design constraints"):
+
+- **Mapping key.** The key is (column, raw value, context key), where the context key is the same
+  input that `context_hash` uses today, the row's country included
+  (`clone_executor.py::_group_by_country`). There is one implementation of that rule (F5).
+- **No silent default.** An unmatched key fails the range, never falls back to a default value.
+  A source that changes during the run is caught this way.
+- **Cast gate (ADR-020).** The typed value comes from `storage_types.coerce` in the app, because
+  ClickHouse truncates silently (F-CH-TRUNC).
+- **Read-only source by grants.** SELECT on the source; DDL and INSERT only on the destination.
+- **Resume.** Resume per (table, key range), with source and destination counts compared by
+  direct SQL (D1).
+- **Errors.** At 1B rows, one error row per bad cell can mean hundreds of millions of rows. See
+  the open questions.
+
+H-b needs the source and the destination on the same ClickHouse server (Q27). Any other pair
+keeps today's path, rows through the app, and the governor below applies to both.
+
+### The resource governor (owner "F. a", "G. a", "I. a")
+
+**The outer limit, which the app cannot exceed even with a bug:**
+
+- compose memory limits per container;
+- a committed `systemd-run` unit for a run outside Docker;
+- a ClickHouse settings profile for the app's user on the database machine (`max_threads`,
+  `max_memory_usage`, spill thresholds).
+
+**The inner loop:**
+
+- It reads the container's `memory.current`, `memory.events` and PSI every few seconds.
+- Additive increase, multiplicative decrease, on the worker count and on the batch size in
+  bytes. One step up after a calm period; halve on pressure; pause new batches at 80 % of the
+  budget (the Dask ladder); never below one worker.
+- The budget is the smaller of 8 GB and 60 % of the memory free at that moment (owner "f2. a").
+- Disk (owner "l. a"): the laptop's spill and cache use at most 10 GB, and a run refuses to
+  start with less free; ClickHouse spill on the database machine is capped at 200 GB.
+- The same loop backs off when source queries or libpostal calls slow down, under a hard
+  maximum of parallel queries set by the owner.
+- Queues between stages are bounded in bytes.
+- DuckDB and Polars get explicit memory, thread and spill limits.
+
+**The §5.6 start-up memory** (moved from Part 1): no code path may load an unbounded number of
+rows. `migrate_sources` gets FINAL_REPORT §5.6 option 1 (SQL pre-filter, server-side cursor),
+and a test fails if any start-up path reads the whole queue.
+
+### The app as a service (owner "6. a", "P. b", "Q. a", "R. a", "S. a", "T. a", "U. a", "V. a")
+
+- **Every route under `/v1`.** The UI changes in the same step. Errors are RFC 9457 problem
+  details. No auth: local network only (ADR-022).
+- **`POST /v1/normalize`** for one value or a batch:
+  - It takes a semantic type, options, an optional `profile_id` and version, and caller keys.
+  - It returns the normalized value, `AMBIGUOUS` or `INVALID`, per key.
+  - It writes to the review queue only with `enqueue=true`.
+  - It may echo the raw value back to its own caller, and nowhere else.
+- **One job resource for clone and batch jobs.** A POST answers `202` with an operation that
+  has `done`, progress and `error`. Status is by polling, and job-starting POSTs take
+  idempotency keys for 24 hours. A batch job reads a source table and column, or inline JSON up
+  to a size limit. No file uploads.
+- **Workers claim jobs from the existing job table**, with heartbeats. Cancel and retry are
+  added there. No queue library (owner "o. a").
+- **Configuration through the API:**
+  - A read-only `GET /v1/config`, with no secrets, so a caller can see the active settings.
+  - Per-job overrides for worker and batch limits, within the governor's outer limit.
+  - The gap list in [`_raw-service-api.md`](research/resources/_raw-service-api.md) names
+    every UI action and setting that still has no route: cancel, connection update, plan
+    editing, paging and others.
+- **`/docs`** is served by the app itself from pinned Swagger UI files, with no CDN (moved from
+  Part 1). Owner, 2026-11-07, "s2. a": this "S. a" replaces the same day's earlier "2. a" (`/docs`
+  ruled out, FINAL_REPORT §7), and ADR-023 is amended when it is built.
+- **A generated Python client, a Typer CLI and Schemathesis contract tests.** Each needs the
+  owner's yes and a pinned version when it is built.
+
+### First step: measure (owner "c4. a")
+
+Before any build, on the benchmark machine with a 10M-row, about 20-column table, one change at
+a time, memory capped. The research file's "What to measure first" has the full plan:
+
+1. A plain `INSERT … SELECT` copy, which gives this machine's write ceiling.
+2. `uniq(value)` and `uniq((value, context))` per normalized column. This number decides
+   whether the hour is reachable.
+3. Distinct extraction by `GROUP BY` and its alternatives: time, memory, spill.
+4. Mapping apply for 1 column, then for N columns: rows/s and bytes per key at our widths.
+5. The cast gate in SQL against `coerce` on the same values.
+6. A kill in the middle of a range, then resume, with no duplicate rows.
+7. The normalizer speed on distinct values only, on the laptop, with libpostal on the
+   benchmark machine.
+8. The load on the source, seen as another user's query latency.
+9. Equivalence: the H-b output equals today's output, value by value.
+
+The realistic target for 1 billion rows is set from these numbers (Q28).
+
+### Decision register, round 3
+
+| # | Decision | Reason | Alternative deferred, and why |
+|---|---|---|---|
+| **L** | One machine for the app, plus a governor | The cost is the Python normalizers; a cluster runtime adds memory and does not touch it | Spark, Ray, Kafka: no gain for a bounded batch (owner "m. a") |
+| **M** | ClickHouse writes the destination from a mapping (H-b) | The 1B rows never cross the network; the laptop handles only distinct pairs | Rows through the app: measured at 9-90k rows/s, which is 3-28 h for 1B rows |
+| **N** | The typed value travels in the mapping | ClickHouse truncates silently; the cast gate stays in one place | Casting in SQL: a second cast rule that disagrees with `coerce` |
+| **O** | Our own job table, not a queue library | It already claims jobs and has heartbeats; nothing new to run | procrastinate: a new dependency for what exists (owner "o. a") |
+| **P** | `/v1` with problem details and one job resource | One shape for every caller; the UI is the only caller today | Unversioned routes: every later change breaks callers |
+| **Q** | Measure before building | The hour depends on a ratio nobody has measured | Building H-b first: weeks of work that the ratio may not repay |
 
 ---
 
