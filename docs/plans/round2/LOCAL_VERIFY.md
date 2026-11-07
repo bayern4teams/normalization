@@ -145,3 +145,9 @@ Review the diff of each and confirm the test still checks the same behaviour.
   values" budget was NOT measured as a controlled 250-value page (this stack's queue holds 12
   distinct entries) — recorded as not checked. `( cd ui && npm run test:e2e )`: 48 passed.
   Screenshots kept outside the repo in `reports/2026-10-29_round2_local/ui/`.
+  2026-11-07 (owner "4. a"): measured with **300** distinct values (1,203 rows of day/month-ambiguous
+  dates cloned from `norm_r2_src_ui300` on the compose Postgres; native API on `10.10.9.137:8090`
+  under `MemoryMax=3G`, job records in `norm_app_r2_ui300`). Playwright, headless Chromium, a new page
+  per run: navigation to the first review value on screen **130-160 ms** (5 runs; budget 1 s); the
+  `/adjudication/review` request 9-14 ms. Key `k` to the next value: **3-16 ms** (10 presses; budget
+  0.1 s). PASS.

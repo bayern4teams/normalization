@@ -363,7 +363,7 @@ Legend: **yes** = checked in this audit; **record** = the 2026-11-01 run's resul
 | New clone: **pick tables** and columns, check-answers page | **gap:** columns and check-answers yes; tables no. Every table of the origin is cloned because the API has no table filter (`NewClonePage.tsx` header comment). Not recorded in ADR-023 | — | — |
 | Jobs list + detail survive reload (R21) | yes | yes | record |
 | Review: distinct values by occurrences, one key each for accept/other/keep/undo, buttons, nothing pre-selected (R18) | yes. Keys `1`-`9` pick, `o` other, `k` keep, `u` undo; undo only while the decision is unsent (verdicts are append-only, ADR-018). **Correction:** §3 "j/k accept" and §4.4 "the k-key is a skip, not an undo" do not describe the code | yes (`review.spec.ts`: each key, modifiers, order, undo) | record: key→DOM 14 ms |
-| Speed: 0.1 s per key, 1 s per page | — | — | key: record (14 ms). **Not measured:** the 1 s page budget with hundreds of values (queue had 12) |
+| Speed: 0.1 s per key, 1 s per page | — | — | yes, 2026-11-07 with 300 distinct values on this laptop: page 130-160 ms, key 3-16 ms (LOCAL_VERIFY U1) |
 | Served by the API, one port, no CORS, offline | yes | yes (`test_u1_serving.py`, Playwright offline test) | record |
 | `/docs` assets served locally | **gap:** `/docs` and `/redoc` are switched off (open item §4.3). ADR-023 still says "FastAPI's `/docs` assets are served locally" | — | — |
 | Raw value only in the review route; every other response, log, trace masked, a test for each (R23) | **gap:** the review route is built and tested (`test_u1_review_route.py`); job error text, `disguised_missing[].value`, `/preview`, `/field-test`, `/runs/{id}/values` still carry raw values (open item §4.2). ADR-023 says "a test asserts that for each" | partly | — |
@@ -397,4 +397,8 @@ Legend: **yes** = checked in this audit; **record** = the 2026-11-01 run's resul
 1. New clone cannot pick tables (needs an API table filter, or the report text changed).
 2. `/docs` offline: add `swagger-ui-dist` or rule `/docs` out and fix ADR-023 (open item §4.3).
 3. R23 masking outside the review route (open item §4.2); ADR-023 overstates it.
-4. Not measured live: the 1 s page budget with hundreds of values; DNS with several addresses.
+4. Not measured live: DNS with several addresses (needs a system DNS or hosts change). The 1 s page
+   budget was measured on 2026-11-07 (row above).
+
+Owner decisions 2026-11-07 on these gaps: "1. a" (1 recorded as a limit), "2. a" (`/docs` ruled
+out), "3. a" (recorded as open), "4. a" (page budget measured). ADR-023 now states all three.
