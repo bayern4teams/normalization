@@ -39,6 +39,9 @@ See plan §8 phase tables; they stand unchanged.
 
 ## In flight
 
+- 2026-11-07 G4 IN PROGRESS: measuring the U1 1 s page budget with ~300 distinct review values on
+  this laptop: compose `postgres` only, native API on 10.10.9.137:8090 (MemoryMax=3G), databases
+  `norm_app_r2_ui300`, `norm_r2_src_ui300`, `norm_r2_out_ui300` on 127.0.0.1:5535. Then local re-checks, then §5.9.
 - 2026-11-04 (laptop, single agent; box 10.10.9.41 unreachable): audit against the improvement
   report written as FINAL_REPORT.md §7; gaps waiting for the owner. Owner answers this session:
   box steps marked "not re-verified"; push to both remotes; `.handoff/` purge yes after the fold-in
