@@ -965,6 +965,75 @@ The tools that rewrite tables in place (gh-ost, pt-online-schema-change, pg_repa
 structure, not values, and still keep or offer to keep the old table. The data-cleaning tools
 (OpenRefine, Dataprep, dbt) never write back to the source.
 
+## Round 3 (2026-11-07)
+
+The research was done by subagents on 2026-11-07. Entries marked **not checked** in the raw files
+were not verified. The claims below that decide anything were re-checked directly on the laptop
+or on PyPI that day; the "Checked" column says how.
+
+### Using limited resources (Q20, Q28)
+
+Owner, 2026-11-07: "i want to write something that automatically adapt it self with resource
+limitation", and "should we use spark? kafka?". Sources:
+[`_raw-resource-adaptive-processing.md`](research/resources/_raw-resource-adaptive-processing.md).
+
+| Option | Finding | Verdict for this project | Checked |
+|---|---|---|---|
+| Spark (local mode) | Adds a JVM. Python UDFs still run per value, with Arrow only for the transfer (§1.1). | No. The cost is the Python normalizers and libpostal, not shuffle. ADR-016's rejection stands. | doc summary |
+| Kafka, Redpanda | An event log for continuous consumers. Nothing for a bounded, one-shot table read (§1.2). Redpanda is BSL. | No for batch. Only if incremental runs are built later (owner "n. a"). | doc summary |
+| Ray, Dask | A scheduler process each. Ray's memory monitor kills at 95 % by default (§1.3). Dask's worker ladder (spill 60/70 %, pause 80 %, kill 95 %) is a good model (§1.4). | No runtime. Copy Dask's ladder. | doc summary |
+| Polars 2.x, DuckDB 2.0 | Both spill to disk. Polars 2.0's default spill budget (64 GB) is larger than the laptop's free disk (§1.5, §1.6). | Set explicit memory, thread and spill limits. The repo pins Polars 1.43.2 and DuckDB 1.5.5; an upgrade is a separate decision. | PyPI: Polars 2.0.0 on 2026-10-06, DuckDB 2.0.0 on 2026-10-21 |
+| cgroup v2 `memory.high` / `memory.max`, PSI | `memory.high` throttles without killing; `memory.max` is the last defence; `/proc/pressure/memory` measures stall time (§2.1, §2.2). | The signals for the governor (§3.8). | Laptop: cgroup2fs, PSI readable, user units have the memory controller |
+| AIMD (Chiu and Jain, 1989) | Additive increase and multiplicative decrease converges to a fair, stable share (§2.5). No mature Python library exists; `adaptive-concurrency` 0.1.1 is alpha (§2.6). | A small loop of our own. | doc summary |
+| Distinct values on the source | ClickHouse `GROUP BY` with per-query limits (`max_memory_usage`, `max_execution_time`) sends only distinct values (§3.1). | Yes (owner "h. b"); see "In-database apply" below. | doc summary |
+| §5.6 start-up memory | A SQL pre-filter plus a server-side cursor is enough (§5.1, FINAL_REPORT §5.6 option 1). | Part of §3.8. | FINAL_REPORT measurement |
+
+The laptop had about 6 GB free while the research ran, not 16. So the budget must be read at
+run time, never set once.
+
+### The app as services (Q24, Q26)
+
+Owner, 2026-11-07: "make it as services and api and docker container. how we should use all
+functionality of app through api. all possible configurations". Sources:
+[`_raw-service-api.md`](research/resources/_raw-service-api.md), which also holds the full gap
+list between today's 48 routes and the UI.
+
+| Topic | Finding | Use here | Checked |
+|---|---|---|---|
+| Errors | RFC 9457 `application/problem+json` (entry 1). AMBIGUOUS and INVALID are results, not errors. | Every error in that form, with a `code` extension and the fix (J11). | spec |
+| Long jobs | Google AIP-151: `202`, an operation resource with `done`, `metadata.progress` and `error` (entry 2). | Clone jobs and batch jobs share one job resource. | spec |
+| Retries | IETF Idempotency-Key, draft 08, not an RFC (entry 3). | On job-starting POSTs; keys kept 24 h (owner "V. a"). | spec |
+| Batch precedent | The OpenRefine reconciliation API keys a batch by caller ids (entry 4). | `/v1/normalize` takes caller keys. | not checked (the spec page returned only its title) |
+| Job queue | procrastinate 3.10.0 (MIT): abort, retries (entry 17). Postgres `SKIP LOCKED` (entry 20). Temporal, Hatchet and DBOS add a server or a rewrite (entries 21, 22, 27). | Owner "o. a": our own job table, which already claims jobs and sends heartbeats. No library. | PyPI: procrastinate 3.10.0 on 2026-09-23 |
+| Client and CLI | openapi-python-client had a high advisory on 2026-08-30: a malicious schema generates code (entry 29). Typer (entry 32). Schemathesis contract tests (entry 33). | Generate only from our own schema, pinned. Each tool needs a yes (owner "V. a"). | advisory: GitHub metadata |
+| Host header | Newer Starlette rejects `@` in `Host` (entry 37). | D17. | not checked upstream; installed 1.6.0 accepts it (measured) |
+| Auth | The API can read and write databases with stored credentials (entry 42). | Owner "P. b": no auth, local network only (ADR-022). | — |
+| Streaming (see the next table for the batch path) | Debezium, Kafka, NATS (entries 47-51). Postgres logical decoding needs a replication slot on the source, which keeps WAL there (entry 47): a write-side effect on a source that must stay read-only. | Future only (owner "5. a"). | doc summary |
+
+### ClickHouse builds the destination itself (Q28)
+
+Owner, 2026-11-07, "h. b": the app normalizes only the distinct values, sends back a mapping,
+and ClickHouse writes the destination with `INSERT … SELECT`, so the rows never leave the
+database machine. Sources: [`_raw-in-database-apply.md`](research/resources/_raw-in-database-apply.md).
+
+| Topic | Finding | Use here | Checked |
+|---|---|---|---|
+| Applying the mapping | Hash join: about 96 B per row of the right table at 100M rows; `parallel_hash` about 2x faster at 2x the memory; `grace_hash` spills (entry 1). A hashed dictionary: about 134 B per key at 1M keys (§1). | Try a `COMPLEX_KEY_HASHED` dictionary first, then `parallel_hash`, with `grace_hash` as the fallback. The per-key figures come from narrow examples and must be measured at our value widths. | blog numbers, not re-measured |
+| Write speed | About 4M rows/s on one 59-core cloud node, `INSERT SELECT` from object storage, no join (entry 8). About 506k rows/s for 105 columns, from a 2017 talk (entry 9). | The 1-hour target (278k rows/s) is far below both, but neither figure includes a join, wide rows or this machine. | not measured here |
+| Cast gate (ADR-020) | ClickHouse truncates extra fraction digits silently: `12.34565` → `12.3456`, no error row (F-CH-TRUNC). | The typed value comes from `storage_types.coerce` in the app and travels in the mapping. SQL does only a lossless `accurateCastOrNull` and a per-range check that no OK value became NULL. | yes: `docs/benchmarks/REPORT.md`, D5 row |
+| Resume | A plain MergeTree deduplicates inserts only when `non_replicated_deduplication_window` is above 0 (§5). | Per-range staging, a count check, then an atomic partition swap. Do not rely on dedup tokens. | doc summary |
+| Read-only source | `readonly` is a per-user setting, not per database (entry 15). | Grants: SELECT on the source, write only on the destination; a test proves that an INSERT into the source fails. | not checked in the docs |
+| Lineage | No ClickHouse emitter for OpenLineage exists (entry 21). | The app emits the events, as today (`normapi/lineage.py`). | doc summary |
+| Executable UDFs, chDB (§8) | Python normalizers called by the database server itself. | Not chosen: libpostal and Python would run in the database machine's process tree, which Q26 does not allow. | search snippet only |
+
+**What decides the hour.** The write side looks feasible on published figures. The deciding
+unknown is the number of distinct (value, context) pairs that the laptop must normalize. At
+an example speed of 10,000 pairs per second (the distinct-only speed is not measured), 36M
+pairs take an hour and 3.6M take 6 minutes (arithmetic,
+the research file's "Feasibility" table). If free text, IDs or addresses make the pairs close to
+the row count, no ClickHouse setting saves the hour. Measuring this ratio on real data is the
+first step of §3.8.
+
 ---
 
 # Part 3 — Architecture
