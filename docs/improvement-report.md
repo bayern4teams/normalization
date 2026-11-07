@@ -379,7 +379,9 @@ D1-D12 are implemented and merged
 ([`archive/plans/defects/PART1_COMPLETE.md`](archive/plans/defects/PART1_COMPLETE.md)).
 The items below were found later: D13 by the property tests that prompt 4 added, D14 by the
 docs rewrite (prompt 2), D15 by the research for this round, and U1 at the owner's request.
-**Nothing here is implemented yet.** The research is in Part 2, "Round 2"; the sources are in
+**Implemented on branch `feat/round2-fixes`** (status line at the top; results in
+[`plans/round2/FINAL_REPORT.md`](plans/round2/FINAL_REPORT.md)). The "not built" notes below
+describe the state on 2026-10-25. The research is in Part 2, "Round 2"; the sources are in
 the four `_raw-*` files that Appendix G lists under round 2.
 
 The zizmor findings on the CI workflow files are not part of this report. They are CI

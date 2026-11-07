@@ -310,6 +310,30 @@ this report, exactly:
 .handoff/U1.verdict.md       .handoff/supervisor_dryrun.txt
 ```
 
+### Fold-in check (2026-11-07)
+
+Every `.handoff/` file was read again before the purge (owner: "4. aaa", purge after the check).
+The list above has **18** files, not 19 as first written; the names are unchanged. These findings
+were in `.handoff/` but not yet in this report:
+
+- **D13 row evidence (R12).** Within a row, only a COUNTRY column gives LANGUAGE its country
+  (`clone_executor.py`: `provides_country = semantic_type is FieldSemanticType.COUNTRY`). PHONE and
+  POSTCODE give a country only across tables, through `cross_table_entity_key`, because they also
+  consume a country (comment at that line). R12 named "country country code phone code".
+- D13: lower-case `mon`/`MON` read as the code `mn` (the report does not say which way); `Kuku_Yalanji`
+  with an underscore is INVALID (was `ukv`).
+- D14: `PATCH /clone-jobs/{id}/plan` drops unknown keys silently, while `POST` uses `extra="forbid"`.
+  It cannot repoint a job (no destination field), so no origin write.
+- D15: a bad `NORM_ALLOWED_NETWORKS` entry makes every request a 500 (fails closed).
+- U1: two test changes were made without the plan 2.9 `TEST-CHANGE:`/`C5:` form: the `/docs` test
+  moved out in `57d8cbc` (now the parked text in this report §4.3) and `JS_NOT_FETCHED` widened in
+  `bb162ca` (library message hosts, checked as never fetched).
+- U1: a decision sent with `keepalive` when the page closes and then refused is not shown to the
+  person (`ReviewPage.tsx`, `.catch(() => undefined)`).
+- U1 orphans: `ui/src/index.css` (71 lines, no class used by any component, still imported by
+  `main.tsx`); the header of `ui/playwright.config.ts` still says the suite runs "against a REAL
+  running normapi" (the specs stub the API).
+
 ## 7. Audit against the improvement report (2026-11-04)
 
 Owner request 2026-11-04: check that everything round 2 asked for is implemented, tested and
