@@ -13,7 +13,7 @@ Names assumed: the five existing normalizer classes and `.normalize(value, ctx)`
 `FieldSemanticType.QUANTITY` (the only type `UnitNormalizer` supports).
 
 Run: ( ulimit -v 16777216; uv run pytest -p no:cacheprovider --import-mode=importlib -q \
-    .handoff/D13.test_second_pass_property.py )
+    tests/property/test_second_pass_codes.py )
 """
 
 from __future__ import annotations

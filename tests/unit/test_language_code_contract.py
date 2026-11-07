@@ -13,7 +13,7 @@ Names assumed (the existing public surface only):
   639-3 code (the report's own rows: `ga`, `gaa`, `ukv`, `mn`, `da`).
 
 Run: ( ulimit -v 16777216; uv run pytest -p no:cacheprovider --import-mode=importlib -q \
-    .handoff/D13.test_language_code_contract.py )
+    tests/unit/test_language_code_contract.py )
 """
 
 from __future__ import annotations

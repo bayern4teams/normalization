@@ -2,12 +2,10 @@
 
 Written from docs/improvement-report.md D14, plan 2.4 / 2.9 / 9 and the 2026-10-27 amendments of
 ADR-013 and ADR-017 ("every clone writes a separate copy, and the schema refuses an `in_place`
-field"). No implementation was read. Run with importlib mode (the file name contains a dot):
+field"). No implementation was read. Run:
 
     ( ulimit -v 16777216; uv run pytest -p no:cacheprovider --import-mode=importlib -q \
-        .handoff/D14.test_in_place_removed.py )
-
-When implementing, move this file to tests/unit/ (for example test_d14_in_place_removed.py).
+        tests/unit/test_in_place_removed.py )
 """
 
 from __future__ import annotations

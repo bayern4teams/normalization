@@ -6,12 +6,10 @@ only"), owner decisions R18, R22, R23; plan 2.4, 2.6 (test client address), 9 (U
 Written before any U1 implementation existed. Existing code was read only to build fixtures
 (how a queue entry gets into the metadata store: the same executor path production uses).
 
-Run (the file name contains a dot, so use importlib mode):
+Run:
 
     ( ulimit -v 16777216; uv run pytest -p no:cacheprovider --import-mode=importlib -q \
-        .handoff/U1.test_review_route.py )
-
-When implementing, move the file to tests/unit/ (rename, e.g. test_u1_review_route.py).
+        tests/unit/test_u1_review_route.py )
 
 THE LEAD SETS THE TWO ROUTE CONSTANTS BELOW. They are the only guess-free way to write this
 before the route exists: the report says "the review route" but names no path.

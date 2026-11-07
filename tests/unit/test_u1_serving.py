@@ -9,7 +9,7 @@ U1 implementation existed.
 Run:
 
     ( ulimit -v 16777216; uv run pytest -p no:cacheprovider --import-mode=importlib -q \
-        .handoff/U1.test_serving.py )
+        tests/unit/test_u1_serving.py )
 
 Tests that read ui/dist need the build first (`npm --prefix ui ci && npm --prefix ui run build`).
 A missing ui/dist is a FAILURE, not a skip (AGENTS.md C5): the item delivers a built UI.
