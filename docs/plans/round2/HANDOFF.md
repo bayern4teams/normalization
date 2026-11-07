@@ -39,9 +39,11 @@ See plan §8 phase tables; they stand unchanged.
 
 ## In flight
 
-- 2026-11-07 G4 IN PROGRESS: measuring the U1 1 s page budget with ~300 distinct review values on
-  this laptop: compose `postgres` only, native API on 10.10.9.137:8090 (MemoryMax=3G), databases
-  `norm_app_r2_ui300`, `norm_r2_src_ui300`, `norm_r2_out_ui300` on 127.0.0.1:5535. Then local re-checks, then §5.9.
+- 2026-11-07 local re-checks: ruff, format, mypy, the four guards, deptry, actionlint, zizmor,
+  gitleaks main..HEAD clean; pytest CI selection 3,483 passed / 24 skipped / 1 xfailed / 1 failed
+  (the recorded `test_a_time_is_no_day_or_month`); property+defects+golden 298 passed / 12 skipped;
+  UI lint clean, Playwright 48/48. G4 page budget measured (LOCAL_VERIFY U1). IN PROGRESS: full
+  compose stack + `pytest -m integration` (D14). Then the purge and `[ROUND2 COMPLETE]`.
 - 2026-11-04 (laptop, single agent; box 10.10.9.41 unreachable): audit against the improvement
   report written as FINAL_REPORT.md §7; gaps waiting for the owner. Owner answers this session:
   box steps marked "not re-verified"; push to both remotes; `.handoff/` purge yes after the fold-in
