@@ -20,8 +20,10 @@ the Playwright specs of those pages (Q14). Their API routes stay.
 **Technology (R8, Q7).** React + Mantine (`@mantine/core`, `@mantine/hooks`, exact versions).
 `ui/` is replaced in place (Q5); the API client and types carry over where they still fit.
 
-**One port.** The API serves the built UI, so there is no CORS. FastAPI's `/docs` assets are
-served locally. No CDN, no web fonts, no telemetry.
+**One port.** The API serves the built UI, so there is no CORS. No CDN, no web fonts, no
+telemetry. `/docs` and `/redoc` are switched off, because their Swagger and ReDoc assets come
+from a CDN and no allowed dependency (Q7) supplies them; `/openapi.json` stays. Owner decision
+2026-11-07: "2. a" (rule `/docs` out, no new dependency).
 
 **Review screen.** One distinct value at a time, ordered by occurrences. One key each for
 accept, other value, keep ambiguous and undo, and buttons for the same. No reading is
@@ -30,12 +32,19 @@ pre-selected: people accept a shown suggestion more often, right or wrong, so "o
 the full list loads once, with no server paging (R22).
 
 **Raw value only in review (R23).** Only the review route returns the raw value and its
-candidate readings. Every other response, log, trace and error report stays masked, and a test
-asserts that for each.
+candidate readings (tested: `tests/unit/test_u1_review_route.py`).
 
 **English only; no login, no WCAG target, no dark mode (R10).**
 
 ## Limits
+
+- **R23 is met only for the review route.** These still carry raw values: the clone-job error
+  text (`clone_executor.py`, "e.g. ..."), `disguised_missing[].value` in the job and quality
+  responses (D4's confirm step needs the exact values), and `/preview`, `/field-test` and
+  `/runs/{id}/values`. Owner decision 2026-11-07: "3. a" (recorded as open, not built).
+- **New clone cannot pick tables.** Every table of the origin database is cloned, because the
+  clone API has no table filter; the screen picks columns and their semantic types only. Owner
+  decision 2026-11-07: "1. a" (recorded as a limit).
 
 - Agents take no screenshots (Q4). Every screen is checked against the running stack by the
   owner (`docs/plans/round2/LOCAL_VERIFY.md`).

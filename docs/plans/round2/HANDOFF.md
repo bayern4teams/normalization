@@ -165,6 +165,18 @@ messages)
 
 (the owner answers a `[BLOCKED]` here, then sets `next=work` in STATUS)
 
+- 2026-11-04 to 2026-11-07, local session (box 10.10.9.41 unreachable). Owner's words, with the
+  question's option: "1. a" box-dependent checks marked "not re-verified, box unreachable";
+  "2. b" push to both remotes; "4. aaa" `.handoff/` purge yes after checking the fold-in, §5.6
+  memory fix later as a separate task, `test_a_time_is_no_day_or_month` recorded only;
+  "5. a and b" audit over Part 1 and Part 2 round 2; "6. a" audit in FINAL_REPORT §7;
+  "7. a" stop and ask on gaps; "8. a" fix the stale "Nothing here is implemented yet" line;
+  "9. a" audit, then local re-checks, then §5.9. Gaps (2026-11-07): "1. a" table picking
+  recorded as a limit; "2. a" `/docs` ruled out; "3. a" R23 outside review recorded as open;
+  "4. a" measure the 1 s page budget locally; "5. a" repoint `.handoff/` docstrings in the purge
+  commit; "6. a" push the audit now. Still unanswered: whether to untrack the two empty
+  `data/sidecar/*.duckdb` files that `1bf565d` committed.
+
 - 2026-10-28, to the D13 [BLOCKED] (graph build fails): owner: "Yes, fix it". Fixed in the setup, do not
   continue without graphs: `scripts/cloud_setup.sh` now exports `UV_PYTHON=3.12`, and SUPERVISOR step 4
   runs `cloud_setup.sh` whenever a tool or `graphify-out/graph.json` is missing. If `.venv` was already
