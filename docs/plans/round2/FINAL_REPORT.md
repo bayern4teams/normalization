@@ -493,3 +493,22 @@ hold; undo only while unsent), `ui/src/lib/reviewJobs.ts` (2 s poll), `normalize
 ### `/ponytail-gain`
 
 Shows the ponytail benchmark only (39 tasks × 5 runs); no number for this repo exists.
+
+### Re-run after the fixes (2026-11-07)
+
+The first re-run froze the laptop: the previous boot's log stops at 06:47:35 with no OOM-kill line,
+while the full compose stack, the langfuse stack, mypy and the pytest batches ran at once. Cause
+not proven; `ulimit -v` caps address space, not resident memory, so it did not protect the machine
+(`docs/LESSONS.md`). The re-run used `systemd-run --scope -p MemoryMax=... -p MemorySwapMax=0` for
+every heavy command, one at a time, with a free-memory check before each, and only the containers
+a step needs:
+
+- ruff, format, mypy (99 files), C5, test-assertions, root-files, gitignore, deptry: clean.
+- pytest CI selection: 3,484 passed, 24 skipped, 1 xfailed, 1 failed (the recorded
+  `test_a_time_is_no_day_or_month`). Property, defects, golden: 298 passed, 12 skipped.
+- UI build and lint clean; Playwright 51/51 (48 + the 3 new tests).
+- Integration: 27 passed with the five databases only, then 30 passed (the address integration file
+  and `test_m4_corpus.py`) with libpostal alone: 33 of 33 integration tests. Lowest free memory
+  seen: 7.2 GB.
+- `uv run` without extras tries to sync from the network; the runs used `uv run --no-sync` after
+  `uv sync --all-extras --locked --offline --dry-run` reported "Would make no changes".

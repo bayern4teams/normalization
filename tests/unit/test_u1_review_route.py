@@ -31,6 +31,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
+import normapi.routes
 import pytest
 from fastapi.testclient import TestClient
 from normapi.adjudication import Adjudication
@@ -304,8 +305,6 @@ def test_review_list_reports_the_total_when_the_cap_cuts_it(
 ) -> None:
     """A run can leave far more than hundreds of values (ZoomInfo 100k left 193,708). When the
     cap cuts the list, the total must still reach the screen, or the rest are never seen."""
-    import normapi.routes
-
     env, _ = seeded
     monkeypatch.setattr(normapi.routes, "_MAX_REVIEW_ENTRIES", 2)
     r = env.client.get(REVIEW_LIST_ROUTE)
