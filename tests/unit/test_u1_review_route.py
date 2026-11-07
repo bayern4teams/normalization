@@ -299,6 +299,22 @@ def test_review_list_is_ordered_by_occurrences_descending(seeded: tuple[Env, str
 
 
 @pytest.mark.unit
+def test_review_list_reports_the_total_when_the_cap_cuts_it(
+    seeded: tuple[Env, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A run can leave far more than hundreds of values (ZoomInfo 100k left 193,708). When the
+    cap cuts the list, the total must still reach the screen, or the rest are never seen."""
+    import normapi.routes
+
+    env, _ = seeded
+    monkeypatch.setattr(normapi.routes, "_MAX_REVIEW_ENTRIES", 2)
+    r = env.client.get(REVIEW_LIST_ROUTE)
+    assert r.status_code == 200, r.text
+    assert len(_entries(r.json())) == 2
+    assert r.headers.get("X-Total-Count") == str(len(PLANTED) + 1)  # three dates and RAW_MONEY
+
+
+@pytest.mark.unit
 def test_review_list_is_one_unpaged_response_within_the_page_budget(env: Env) -> None:
     """R22: hundreds of distinct values, "a plain list; no server paging". 250 distinct ambiguous
     dates (both parts <= 12 and different: 132 per year) must all come back from one call with

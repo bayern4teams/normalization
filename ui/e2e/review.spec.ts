@@ -44,6 +44,8 @@ const raw = (page: Page) => page.getByTestId("raw-value");
 
 interface Setup {
   entries?: unknown[];
+  /** Sent as `X-Total-Count` (the API's count of pending values) when given. */
+  total?: number;
   verdict?: (request: Request) => Promise<{ status: number; body: unknown }>;
 }
 
@@ -57,7 +59,8 @@ async function open(page: Page, setup: Setup = {}) {
     const path = new URL(request.url()).pathname.replace(/^\/normalization/, "");
     if (request.method() === "GET" && path === "/adjudication/review") {
       lists.push(request);
-      return route.fulfill({ json: setup.entries ?? [B, C, A] }); // deliberately not in occurrence order
+      const headers = setup.total === undefined ? undefined : { "X-Total-Count": String(setup.total) };
+      return route.fulfill({ json: setup.entries ?? [B, C, A], headers }); // deliberately not in occurrence order
     }
     if (request.method() === "POST" && /^\/adjudication\/queue\/.+\/verdicts$/.test(path)) {
       verdicts.push(request);
@@ -181,6 +184,16 @@ test("shows the most frequent value first with its count, all readings, and n of
   // No pre-selected reading: no pressed/checked/selected/active state anywhere on the card.
   await expect(page.locator('[aria-pressed="true"], [aria-checked="true"], [aria-selected="true"], [data-active], [data-checked], [data-selected]')).toHaveCount(0);
   await expect(page.locator("input:checked, option:checked")).toHaveCount(0);
+});
+
+test("a list cut by the API's cap says how many values are pending in all", async ({ page }) => {
+  await open(page, { total: 193708 });
+  await expect(page.getByTestId("truncated")).toContainText("3 of 193,708");
+});
+
+test("a complete list shows no cut notice", async ({ page }) => {
+  await open(page, { total: 3 });
+  await expect(page.getByTestId("truncated")).toHaveCount(0);
 });
 
 test("order is by occurrences, 9 then 5 then 3, and the list is requested once", async ({ page }) => {
@@ -348,6 +361,18 @@ test("leaving the screen sends a decision that is still held back", async ({ pag
   await page.evaluate(() => (window.location.hash = "#/does-not-exist"));
   await expect.poll(() => verdicts.length).toBe(1);
   expect(verdicts[0].postDataJSON().decided_value).toBe(dmy(A));
+});
+
+test("a decision sent on leaving and refused by the API is shown on return", async ({ page }) => {
+  const { verdicts } = await open(page, {
+    verdict: async () => ({ status: 422, body: { detail: "decided_value does not parse" } }),
+  });
+  await page.keyboard.press("1");
+  await expect(raw(page)).toHaveText(B.original);
+  await page.evaluate(() => (window.location.hash = "#/does-not-exist"));
+  await expect.poll(() => verdicts.length).toBe(1);
+  await page.evaluate(() => (window.location.hash = "#/review"));
+  await expect(page.getByTestId("lost-on-leave")).toContainText("decided_value does not parse");
 });
 
 test("an empty list says so, and no request goes to another origin", async ({ page }) => {

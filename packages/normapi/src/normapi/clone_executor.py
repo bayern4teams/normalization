@@ -36,7 +36,6 @@ from collections import Counter
 from concurrent.futures import ProcessPoolExecutor
 from importlib import resources
 from typing import TYPE_CHECKING, Any
-from urllib.parse import urlparse
 
 from normalizers.date import column_date_evidence
 from normalizers.language import column_language_evidence
@@ -2385,22 +2384,6 @@ def _resume_point(
     return -1
 
 
-def _connector_source_identity(job: dict[str, Any], source: Any, source_engine: str) -> str:
-    """Identity of a job created before source_identity existed (or a test fixture).
-
-    Connectors expose different attrs than connection dicts, so build identity
-    directly from the connector instead of calling source_identity().
-    """
-    if source_engine == "clickhouse":
-        u = urlparse(source._client.url)
-        return f"clickhouse://{u.hostname}:{u.port}/{source._client.database}"
-    url = source._engine.url
-    identity = f"{url.drivername}://{url.username}@{url.host}:{url.port}/{url.database}"
-    if job.get("source_schema"):
-        identity += f"/{url.database}/{job['source_schema']}"
-    return identity
-
-
 def _normalize_table(
     table: str,
     *,
@@ -2456,8 +2439,6 @@ def _normalize_table(
     bounds_columns: dict[str, list[str]] = table_plan.get("bounds_columns", {})
     region_columns: dict[str, str] = table_plan.get("region_columns", {})
     stats = {column: _ColumnStats() for column in configured_columns}
-    if "source_identity" not in job:
-        job["source_identity"] = _connector_source_identity(job, source, source_engine)
     _column_evidence(job, source, table, configured_columns)
     # Only this table's own key column matters: a table that does not carry
     # it gets no cross-table country, which is the behaviour without the

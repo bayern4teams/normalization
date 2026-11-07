@@ -74,6 +74,10 @@ graphify-out/
 # Downloaded public benchmark data (never committed; SOURCE.md files are local too)
 data/benchmarks/
 
+# App data of a native run (.env.example's sidecar and cache paths): DuckDB files and
+# Parquet columns that can hold normalized dataset values (B6), never committed.
+data/sidecar/
+
 # Pinned local guard binaries (gitleaks, actionlint) — downloaded by
 # scripts/install_tools.sh with checksum verification; CI uses the pinned
 # GitHub Actions instead. Local convenience, never committed.

@@ -99,7 +99,7 @@ deptry 3 pre-existing transitive findings.
 
 33/33 integration tests pass on the compose stack (before: in-place paths had no integration
 coverage; the suite failed `KeyError: 'source_identity'` on a legacy-job fixture — fixed by
-the `_connector_source_identity` fallback, `ed1c3e7`/`55981e0`).
+a fallback later found to be test-only and deleted on 2026-11-07, §8 item 1).
 
 ### §5.3 D15 live (before: `0.0.0.0` binds, no caller/Host check)
 
@@ -446,24 +446,29 @@ outside caller via `r2-outside` (203.0.113.2) 403.
 
 ### `/ponytail-review` over `main...HEAD` (findings, not fixed)
 
-1. **Legacy Postgres jobs all get the same source identity.** `clone_executor.py::_connector_source_identity`
-   reads the SQLAlchemy URL, but a Postgres connector is built from a libpq string with a
-   `creator`, so the URL is empty. Measured: the helper returns
-   `postgresql+psycopg://None@None:None/None` for any server. Two jobs stored before
-   `source_identity` existed, on different servers, then share one verdict scope, so a person's
-   verdict on one source's value can be reused for the other's. Smallest fix: build it with the
-   existing `source_identity(connection, database, schema)` from the job's stored connection and
-   delete the helper.
+1. **Corrected 2026-11-07: not a production bug.** First reported as "legacy Postgres jobs all
+   get the same source identity". The helper `_connector_source_identity` did return
+   `postgresql+psycopg://None@None:None/None` for any Postgres server (measured), but
+   `_run_phase2`, the only production caller, sets `source_identity` from the stored connection
+   before `_normalize_table` runs, so only a test that calls `_normalize_table` directly reached
+   it. **Fixed:** the helper is deleted and that test's job carries `source_identity`
+   (`docs/LESSONS.md`, 2026-11-07).
 2. **The review route silently stops at 100,000 entries.** `routes.py::list_review_entries` reads at
    most `_MAX_REVIEW_ENTRIES = 100_000` pending entries and drops the total that `list_queue`
    returns. R22 assumed "hundreds"; the measured ZoomInfo 100k run left 193,708 queue rows and the
    1M run 1,914,572. The screen would show "1 of 100000" and never say that the rest exist, after a
    response of roughly 140 MB (2.7 GB / 1.9M rows ≈ 1.4 KB per row; size not measured).
-   Smallest fix: return the total (as `/errors` does with `X-Total-Count`) and show it on the
-   screen; whether to also lower the cap is an R22 decision.
-3. Should fix: a decision sent with `keepalive` on page close and then refused is dropped
-   unseen (`ReviewPage.tsx`, `.catch(() => undefined)`).
-4. Lean: `ui/src/index.css` (71 lines, no class used) and its import in `main.tsx` can go.
+   **Fixed:** the route sends the pending count in `X-Total-Count`, and the Review screen says
+   "N of TOTAL" and to reload for the next ones when the list is cut. The 100,000 cap is unchanged
+   (R22). Tests: `test_review_list_reports_the_total_when_the_cap_cuts_it` (failed first: no
+   header), Playwright "a list cut by the API's cap ..." (failed first: no notice).
+3. A decision sent with `keepalive` on leaving the page and then refused was dropped unseen.
+   **Fixed:** the refusal is kept in memory and shown when Review opens again (the value stays
+   pending, so it is in the list). A refusal after a real tab close is still not shown
+   (`shortcut:` comment in `ReviewPage.tsx`). Test: Playwright "a decision sent on leaving and
+   refused by the API is shown on return" (failed first).
+4. **Fixed:** `ui/src/index.css` (71 lines, no class used) and its import deleted; the stale
+   `ui/playwright.config.ts` header rewritten.
 
 ### `/ponytail-audit` (whole repo, deep only where round 2 changed code)
 
@@ -471,8 +476,8 @@ outside caller via `r2-outside` (203.0.113.2) 403.
    `NORM_SIDECAR_DUCKDB_PATH`, `NORM_SIDECAR_PARQUET_ROOT` and `NORM_CACHE_PATH` to `./data/sidecar/`,
    and `.gitignore` does not list it. This is how `1bf565d` committed `cache.duckdb` and
    `catalog.duckdb` (both empty). The Parquet root holds normalized column values, so a later
-   `git add` could commit dataset values (B6). Smallest fix: add `data/sidecar/` to `.gitignore`
-   and untrack the two files.
+   `git add` could commit dataset values (B6). **Fixed:** `data/sidecar/` is in `.gitignore` and
+   the two files are untracked (kept on disk). They stay in the history of `1bf565d`.
 6. Known and deferred by the owner: the start-up full-queue load (§3, §5.6).
 
 Not read in depth: the round-1 normalizers outside LANGUAGE, the MySQL and Mongo connectors, the

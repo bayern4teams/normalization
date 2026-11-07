@@ -271,7 +271,10 @@ Rules that matter to a database administrator:
 - The queue holds one row per ambiguous value and context, with an
   occurrence count. Verdict rows are append-only. The newest row for a key wins.
 - Clone job errors are keyed by job, row index, table and field.
-- A queue row holds the raw original. The API returns a masked preview.
+- A queue row holds the raw original. The API returns a masked preview, except
+  `GET /adjudication/review` (ADR-023, R23): it returns the raw value, at most
+  100,000 pending entries, most frequent first, and the full pending count in
+  `X-Total-Count`.
 - `normalization_connections.encrypted_password` is a Fernet token.
 
 ### Destination data

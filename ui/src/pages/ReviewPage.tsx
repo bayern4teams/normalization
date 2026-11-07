@@ -13,8 +13,13 @@ import { initialQueue, isCurrent, queueReducer, UNDO_WINDOW_MS } from "../lib/re
 import { extractNotes, extractReadings } from "../lib/reviewReadings";
 
 const DECIDED_BY = "human:reviewer";
+// shortcut: kept in memory, so a refusal after a real tab close is never shown (the page is gone);
+// upgrade path: store it in sessionStorage if decisions are lost that way.
+const lostOnLeave: string[] = [];
 
 export function ReviewPage() {
+  // Refusals of decisions sent while leaving; read once when the screen opens again.
+  const [lost] = useState(() => lostOnLeave.splice(0));
   const query = useQuery({
     queryKey: ["review-entries"],
     queryFn: getReviewEntries,
@@ -27,7 +32,7 @@ export function ReviewPage() {
   });
   // The API already sends most frequent first; sorting again keeps the order if it ever does not.
   const entries = useMemo(
-    () => (query.data ? [...query.data].sort((a, b) => b.occurrences - a.occurrences) : null),
+    () => (query.data ? [...query.data.entries].sort((a, b) => b.occurrences - a.occurrences) : null),
     [query.data],
   );
 
@@ -36,6 +41,11 @@ export function ReviewPage() {
       <Title order={1} mb="md">
         Review
       </Title>
+      {lost.length > 0 && (
+        <Alert color="red" title="Decisions sent when you left were not saved" mb="md" data-testid="lost-on-leave">
+          The values are still pending and are in the list below. {lost.join(" ")}
+        </Alert>
+      )}
       {query.isPending && <Loader size="sm" aria-label="Loading" />}
       {query.isError && (
         <Alert color="red" title="Could not load the review list">
@@ -47,6 +57,13 @@ export function ReviewPage() {
           Nothing to review. Values that cannot be normalized without a guess appear here after a clone job runs; see{" "}
           <Link to="/jobs">Jobs</Link>.
         </Text>
+      )}
+      {entries && query.data && query.data.total !== null && query.data.total > entries.length && (
+        <Alert color="yellow" title="Not every pending value is shown" mb="md" data-testid="truncated">
+          This list holds the {entries.length.toLocaleString("en-US")} most frequent of{" "}
+          {query.data.total.toLocaleString("en-US")} pending values ({entries.length.toLocaleString("en-US")} of{" "}
+          {query.data.total.toLocaleString("en-US")}). Reload the page after deciding these to get the next ones.
+        </Alert>
       )}
       {entries && entries.length > 0 && <ReviewSession entries={entries} />}
     </Container>
@@ -139,7 +156,7 @@ function ReviewSession({ entries }: { entries: ReviewEntry[] }) {
           it.key,
           { decided_value: it.value ?? "", decided_by: DECIDED_BY, rationale: it.rationale ?? "" },
           { keepalive: true },
-        ).catch(() => undefined);
+        ).catch((error: unknown) => lostOnLeave.push(apiMessage(error)));
       }
     };
     window.addEventListener("pagehide", flush);

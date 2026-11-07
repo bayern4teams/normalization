@@ -75,8 +75,12 @@ async function get<T>(path: string): Promise<{ body: T; headers: Headers }> {
   return { body: (await resp.json()) as T, headers: resp.headers };
 }
 
-export async function getReviewEntries(): Promise<ReviewEntry[]> {
-  return (await get<ReviewEntry[]>("/adjudication/review")).body;
+/** The pending list (most frequent first) and the API's count of all pending values, which is
+ * larger when the API's cap cut the list (`X-Total-Count`). */
+export async function getReviewEntries(): Promise<{ entries: ReviewEntry[]; total: number | null }> {
+  const { body, headers } = await get<ReviewEntry[]>("/adjudication/review");
+  const total = Number(headers.get("X-Total-Count"));
+  return { entries: body, total: Number.isFinite(total) && headers.has("X-Total-Count") ? total : null };
 }
 
 /** `keepalive` lets a held decision still reach the API while the page closes. */

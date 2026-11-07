@@ -1234,13 +1234,16 @@ def _review_view(row: dict[str, Any]) -> ReviewEntry:
 
 @router.get("/adjudication/review", response_model=list[ReviewEntry])
 def list_review_entries(
+    response: Response,
     connections: Annotated[PgPersistence, Depends(get_connections)],
 ) -> list[ReviewEntry]:
     """Every pending entry, most frequent first, raw value included (R23). One
-    unpaged list: a run has hundreds of distinct values at most (R22)."""
-    _, rows = connections.list_queue(
+    unpaged list (R22); past the cap, `X-Total-Count` tells the screen how many
+    exist, as on `/errors` (ZoomInfo 100k left 193,708 pending entries)."""
+    total, rows = connections.list_queue(
         semantic_type=None, decided=False, limit=_MAX_REVIEW_ENTRIES, offset=0
     )
+    response.headers["X-Total-Count"] = str(total)
     return [_review_view(row) for row in rows]
 
 
