@@ -39,11 +39,8 @@ See plan §8 phase tables; they stand unchanged.
 
 ## In flight
 
-- 2026-11-07 STOPPED before `[ROUND2 COMPLETE]` (§6 stop line, owner "7. a"): re-checks all
-  done and green except the recorded test; `.handoff/` purged (`673c0b0`); ponytail review, audit,
-  debt, gain in FINAL_REPORT §8. Waiting for the owner: review findings 1 (legacy source identity)
-  and 2 (review route stops silently at 100,000), audit finding 5 (`data/sidecar/` not ignored),
-  and the small ones 3-4. Then STATUS `next=complete lock=none` and `[ROUND2 COMPLETE]`.
+- 2026-11-07 DONE: owner "fix all review finding": fixed and re-verified in `27026ce` (FINAL_REPORT
+  §8). Round 2 closed with `[ROUND2 COMPLETE]`. Open owner items: FINAL_REPORT §4, §6 fold-in, §7.
 - 2026-11-04 (laptop, single agent; box 10.10.9.41 unreachable): audit against the improvement
   report written as FINAL_REPORT.md §7; gaps waiting for the owner. Owner answers this session:
   box steps marked "not re-verified"; push to both remotes; `.handoff/` purge yes after the fold-in
@@ -162,6 +159,10 @@ markdownlint-cli2 (changed files), gitleaks on `main..HEAD`: pass. pytest (unit 
 see Open escalations). NOT run: Vale, lychee, zizmor, Docker jobs. GitHub runs not checked this tick (billing-refusal pattern in Phases 1-2).
 /ponytail-review of the phase diff: lean; the one addition (`_known_variants`) carries a `ponytail:` comment naming its limit.
 Graphs built this session (cloud_setup on Python 3.12 worked).
+
+[ROUND2 COMPLETE] 2026-11-07. D13, D14, D15, U1 verified (FINAL_REPORT.md §3, §7, §8). Live checks that
+need the benchmark box are the 2026-11-01 record (box unreachable since 2026-11-03). Open owner items:
+FINAL_REPORT §4, the §6 fold-in list and the §7 gaps.
 
 (append `[PHASE n DONE]`, `[BLOCKED]` and `[ROUND2 COMPLETE]` entries; the same prefixes go in commit
 messages)
