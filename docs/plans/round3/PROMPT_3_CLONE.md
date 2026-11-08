@@ -32,9 +32,10 @@ Per item:
   values alone.
 - **D32.** Amend ADR-020's sentence to cover configured columns only. A configured column that
   is also a primary or sort key keeps the source value; its normalized value goes to a new
-  companion column (owner "b8b. a"). If the D32 row still says its name "waits for the owner
-  (B8c)", build everything except that column and tell the owner. Update ARCHITECTURE.md's data
-  contract in the same commit.
+  companion column `<col>_normalized` (owner "b8b. a", C5 "a"). Every existing companion stays.
+  In the same commit, list every companion in ARCHITECTURE.md's data contract and correct
+  ADR-020's "Key columns get no companions" to what the code does (C6 "a"). If a source column
+  already has a companion's name, stop and ask.
 
 Stop and ask the owner when a sort key cannot be copied safely and the report does not say what
 the job should do, or when a fix changes what an existing clone writes.

@@ -742,7 +742,7 @@ under concurrency) goes to Part 3 §3.8.
 | **D29** 🟡 | **An INVALID currency leaves no error row** (finding 5). `XYZ` → INVALID with an empty error list (reproduced), so the clone writes no error row and the error report says nothing. | "b5. a": an error message with how to fix it, as `country.py::_unresolved` does. "b5b. a": `XTS` and `XXX` (ISO 4217's test and "no currency" codes) are INVALID with a message. | `XYZ`, `XTS`, `XXX` → INVALID with a message; a clone writes one error row each. |
 | **D30** 🟡 | **`$5` with no country is answered** (finding 6): amount `5`, currency empty, NORMALIZED (reproduced). `$` is used by many currencies (AUD, CAD, MXN, NZD, SGD, USD in seven locales checked; 27 in CLDR per the research, not re-counted). | "b6. a": AMBIGUOUS, the amount kept, the currencies that use `$` as readings, so it reaches the review queue. A bare `5` with no symbol stays NORMALIZED. ADR-011 is amended. | `$5` → AMBIGUOUS with readings; `$5` with country US → `5 USD`; `5` → NORMALIZED. |
 | **D31** 🟡 | **Autodetect leaves most typed columns untyped on small tables** (finding 7). The clone applies a type at confidence ≥ 0.9 (`clone_executor._AUTODETECT_MIN_CONFIDENCE`); LANGUAGE (0.85) and NUMERIC (0.6) have no sample validator (`type_detection._SAMPLE_VALIDATORS`), so they never reach it. One date column was typed DATETIME. | "b7. a": the source column's own type decides DATE versus DATETIME; a language-code validator, used only with a matching column name; the 0.9 line stays; NUMERIC and FREE_TEXT are never inferred from values alone (a wrong NUMERIC loses leading zeros). | A `date` source column → DATE; a `lang` column of valid tags → LANGUAGE; a column of `00123` values → not NUMERIC. |
-| **D32** 🟢 | **Passthrough and key columns keep their source type** (finding 8), while ADR-020 says "key columns included, stays TEXT/String" (`postgres_destination.py::PostgresDestination.create_table`). | "b8. a": the code is right; ADR-020's sentence is limited to configured columns. "b8b. a": a configured column that is also a primary or sort key keeps the source value exactly; its normalized value goes to a companion column, so two keys can never collide (`A@B.com` and `a@b.com`). That companion is new: today the only one is a MONEY column's `<column>_currency` (`clone_executor._CURRENCY_SUFFIX`, checked 2026-11-08). Its name, proposed `<column>_normalized`, waits for the owner (B8c); it changes the data contract in ARCHITECTURE.md. | A key column `email` with `A@B.com` and `a@b.com`: both rows kept, key unchanged, companion holds `a@b.com`. |
+| **D32** 🟢 | **Passthrough and key columns keep their source type** (finding 8), while ADR-020 says "key columns included, stays TEXT/String" (`postgres_destination.py::PostgresDestination.create_table`). | "b8. a": the code is right; ADR-020's sentence is limited to configured columns. "b8b. a": a configured column that is also a primary or sort key keeps the source value exactly; its normalized value goes to a companion column, so two keys can never collide (`A@B.com` and `a@b.com`). That companion is new; today's companions are `<col>_currency` (MONEY), `<col>_code` (COUNTRY, LANGUAGE, PHONE), `<col>_region` (PHONE) and `<col>__from`/`<col>__to` (DATE, DATETIME), all in `clone_executor._destination_plan` (checked 2026-11-08). Owner, 2026-11-08, approving C1-C6 "a": the new one is `<col>_normalized`; every existing companion stays (C1-C4); ARCHITECTURE.md's data contract lists all of them, and ADR-020's "Key columns get no companions" is corrected to the code, which skips only the date bounds for key columns (C6). Research: Part 2, "Companion columns". | A key column `email` with `A@B.com` and `a@b.com`: both rows kept, key unchanged, companion holds `a@b.com`. |
 
 ---
 
@@ -1069,9 +1069,11 @@ first step of §3.8.
 
 For D25-D32 and §3.8's throughput item. Sources:
 [`_raw-country-currency-findings.md`](research/resources/_raw-country-currency-findings.md)
-(findings 3-6) and
+(findings 3-6),
 [`_raw-clone-detect-throughput-findings.md`](research/resources/_raw-clone-detect-throughput-findings.md)
-(findings 2, 7, 8, 9).
+(findings 2, 7, 8, 9) and
+[`_raw-companion-columns.md`](research/resources/_raw-companion-columns.md) (the owner's
+question of 2026-11-08: why companion columns at all).
 
 | Finding | What the sources say | Checked |
 |---|---|---|
@@ -1082,6 +1084,7 @@ For D25-D32 and §3.8's throughput item. Sources:
 | `$5` (D30) | FHIR Money and price-parser allow an amount without a currency, so today's answer is defensible; but only AMBIGUOUS reaches the review queue (ADR-018). | doc summaries; babel symbols, run 2026-11-08 |
 | Autodetect (D31) | Sherlock, Sato, DoDuo and Pythagoras all find numeric columns hard. Frictionless infers from 100 rows with a 0.9 match share. Google DLP and Presidio show weak results to a person and do not apply them. | doc summaries |
 | Key types (D32) | ADR-017 and the `create_table` docstring justify native types by the same-engine scope. | repo read |
+| Companion columns (D32) | ISO 20022 and FHIR Money define an amount as value plus currency; the Postgres wiki ("Don't Do This") says `numeric` plus a currency column, not the `money` type; Kimball keeps both columns. Splink and Senzing take separate columns with standard codes. FHIR, EDTF and Wikidata keep a partial date as stated. ClickHouse ReplacingMergeTree merges rows whose sort key becomes equal. libphonenumber derives the region from E.164 alone (`+1 416…` → CA, checked), but SQL cannot. | doc summaries; libphonenumber run 2026-11-08 |
 | Throughput (§3.8) | anyio's 40-token thread limit is not reached at 16 users. One uvicorn process, no `--workers` (checked in `packages/normapi/Dockerfile`). No lock in the normalizers or dispatcher (checked). | repo read |
 
 ---
@@ -1644,6 +1647,7 @@ Benchmark findings (2026-11-08), researched by subagents in that round:
 |---|---|---|
 | [`_raw-country-currency-findings.md`](research/resources/_raw-country-currency-findings.md) | 24 | D27-D30: withdrawn codes, English country names, currency symbols, invalid codes |
 | [`_raw-clone-detect-throughput-findings.md`](research/resources/_raw-clone-detect-throughput-findings.md) | 30 | D26, D31, D32 and §3.8: ClickHouse sort keys, type detection, key column types, API throughput |
+| [`_raw-companion-columns.md`](research/resources/_raw-companion-columns.md) | 21 | D32: money, codes, phone region, partial dates and key columns with or without companion columns |
 
 ---
 
