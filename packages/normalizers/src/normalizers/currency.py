@@ -71,8 +71,13 @@ _ALPHA_TOKEN_RE = re.compile(r"[^\W\d_]+")
 _NUMERIC_CODE_RE = re.compile(r"^\d{3}$")
 
 
+# ISO 4217 reserves these for "no currency" and "testing": listed codes that
+# name no money, so a value holding one is INVALID (owner, D29 "b5b. a").
+NON_CURRENCY_CODES = frozenset({"XXX", "XTS"})
+
+
 def _is_real_iso_code(code: str) -> bool:
-    return pycountry.currencies.get(alpha_3=code) is not None
+    return code not in NON_CURRENCY_CODES and pycountry.currencies.get(alpha_3=code) is not None
 
 
 # Symbols safe to look for ANYWHERE in the value ("₹1,234"). A symbol
@@ -135,7 +140,15 @@ class CurrencyNormalizer:
             # `N/A`) is INVALID, so a sentinel is visible (PART1 N7).
             shared = _shared_symbol(cleaned.strip())
             if shared is None:
-                return _ambiguous(value, ctx, status=NormalizationStatus.INVALID)
+                return _ambiguous(
+                    value,
+                    ctx,
+                    status=NormalizationStatus.INVALID,
+                    errors=[
+                        "not an ISO 4217 currency, or a reserved code (XXX no currency, "
+                        "XTS testing): replace it with a real code such as USD"
+                    ],
+                )
             return _ambiguous(value, ctx, candidates=shared.split())
 
         structured = {
@@ -195,6 +208,10 @@ class CurrencyNormalizer:
                 plain_language="Currency symbol is ambiguous without country/locale context.",
                 technical="AMBIGUOUS: bare symbol, no disambiguating context",
             )
+        if result.normalization_status is NormalizationStatus.INVALID:
+            return ExplanationText(
+                plain_language="Names no currency.", technical=f"errors={result.errors}"
+            )
         return ExplanationText(
             plain_language=f"Resolved to {result.display}.",
             technical=f"structured={result.structured}",
@@ -230,7 +247,7 @@ def _resolve_iso_code(cleaned: str) -> str | None:
 
     if _NUMERIC_CODE_RE.match(cleaned):
         by_numeric = pycountry.currencies.get(numeric=cleaned)
-        if by_numeric is not None:
+        if by_numeric is not None and by_numeric.alpha_3 not in NON_CURRENCY_CODES:
             return str(by_numeric.alpha_3)
 
     return None
@@ -321,6 +338,7 @@ def _ambiguous(
     *,
     candidates: list[str] | None = None,
     status: NormalizationStatus = NormalizationStatus.AMBIGUOUS,
+    errors: list[str] | None = None,
 ) -> NormalizedValue:
     structured: dict[str, object] = {"original_currency": value, "canonical_currency": None}
     if candidates:
@@ -332,6 +350,7 @@ def _ambiguous(
         validation_status=status.value,
         normalization_status=status,
         confidence=0.0,
+        errors=errors or [],
         trace=[_resolve_trace_step(value, changed=False)],
         lossiness=Reversibility.LOSSLESS,
         profile_version="",
