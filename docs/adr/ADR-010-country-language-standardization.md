@@ -96,3 +96,13 @@ code back changed none. The decisions:
   `comparison`, not `display` (owner approval 2026-10-27, Q3 "a").
 - **Limit:** CLDR's territory-to-language data lists languages spoken, not a proof of what a cell
   means. It settles a collision only when exactly one reading is a language of the row's territory.
+
+## Amendment 2026-11-08 — LANGUAGE: case does not mean "code" (round 3, D20)
+
+Owner, 2026-11-07: "d20a. a", "d20b. a".
+
+- **A code in a form the engine does not store meets language names in any case.** `mon`, `MON` and
+  `Mon` are all `AMBIGUOUS` (Mongolian or Mon). The stored code (`en`, `ga`, `gaa`) stays a code, so
+  feeding `comparison` back changes nothing. By this rule the 13 three-letter codes of languages with
+  a two-letter code that are also another language's name (`mon`, `ron`, `tha`, ...) are `AMBIGUOUS`.
+- **`_` reads as `-` only inside a valid locale tag:** `en_US` equals `en-US`; `Kuku_Yalanji` stays `INVALID`.

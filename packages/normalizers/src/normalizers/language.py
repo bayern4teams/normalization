@@ -99,7 +99,7 @@ class LanguageNormalizer:
         cleaned, _ = text_ops.strip_enclosing_separators(value)
         cleaned = cleaned.strip()
         code_reading, tag_parts = _code_reading(cleaned)
-        name_reading = _exact_name(cleaned)
+        name_reading = _name_reading(cleaned, code_reading)
         evidence: str | None = None
         language: pycountry.db.Data | None
         if (
@@ -277,6 +277,15 @@ def _exact_name(cleaned: str) -> pycountry.db.Data | None:
     if found is not None and found.name == cleaned:
         return cast("pycountry.db.Data", found)
     return None
+
+
+def _name_reading(cleaned: str, code_reading: pycountry.db.Data | None) -> pycountry.db.Data | None:
+    """The name that competes with a code reading. Case does not say "code" (D20,
+    `mon`/`MON`), so a code in a form we do not store meets names in any case;
+    the stored code itself (`en`, `ga`, `gaa`) is a fixed point and stays a code."""
+    if code_reading is None or cleaned.casefold() == _code_of(code_reading):
+        return _exact_name(cleaned)
+    return cast("pycountry.db.Data | None", pycountry.languages.get(name=cleaned))
 
 
 def _resolve_name(cleaned: str) -> pycountry.db.Data | None:
