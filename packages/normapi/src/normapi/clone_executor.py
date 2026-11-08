@@ -37,6 +37,8 @@ from concurrent.futures import ProcessPoolExecutor
 from importlib import resources
 from typing import TYPE_CHECKING, Any
 
+import psycopg
+import sqlalchemy as sa
 from normalizers.date import column_date_evidence
 from normalizers.language import column_language_evidence
 from normalizers.numeric import column_decimal_evidence
@@ -54,7 +56,7 @@ from normio.connectors.postgres_destination import build_postgres_dsn
 
 from normanalysis import disguised_missing
 from normapi import lineage, secrets
-from normapi.address_policy import resolve_and_check
+from normapi.address_policy import AddressPolicyError, resolve_and_check
 from normapi.adjudication import Adjudication, source_identity
 from normapi.scaffold_profile import SCAFFOLD_PROFILE
 from normcore import (
@@ -150,6 +152,21 @@ def build_destination_writer(conn: dict[str, Any]) -> PostgresDestination | Clic
         )
     msg = f"Unsupported engine: {conn['engine']!r}"
     raise ValueError(msg)
+
+
+# R23: a job's error is shown to anyone who reads the job. A database or
+# conversion error can quote the row it failed on, so only these keep their text.
+_ERRORS_WITHOUT_VALUES = (RuntimeError, OSError, AddressPolicyError, psycopg.OperationalError)
+
+
+def _job_error_text(exc: Exception) -> str:
+    cause = exc.orig if isinstance(exc, sa.exc.DBAPIError) else exc
+    if isinstance(cause, _ERRORS_WITHOUT_VALUES):
+        return str(cause)
+    return (
+        f"{type(cause).__name__}: message withheld because it can quote source values. "
+        "Read the source or destination database's own log for this job's time."
+    )
 
 
 # --- automatic field-type detection ---------------------------------------
@@ -2712,7 +2729,7 @@ def _run_phase2(
         persistence.save_clone_job(job_id, job)
     except Exception as exc:
         job["status"] = CloneJobStatus.FAILED.value
-        job["error"] = str(exc)
+        job["error"] = _job_error_text(exc)
         persistence.save_clone_job(job_id, job)
     finally:
         # Workers are real processes holding real memory — never leave

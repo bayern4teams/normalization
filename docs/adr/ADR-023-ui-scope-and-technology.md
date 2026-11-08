@@ -38,10 +38,13 @@ candidate readings (tested: `tests/unit/test_u1_review_route.py`).
 
 ## Limits
 
-- **R23 is met only for the review route.** These still carry raw values: the clone-job error
-  text (`clone_executor.py`, "e.g. ..."), `disguised_missing[].value` in the job and quality
-  responses (D4's confirm step needs the exact values), and `/preview`, `/field-test` and
-  `/runs/{id}/values`. Owner decision 2026-11-07: "3. a" (recorded as open, not built).
+- **R23, refined by D16.** Owner, 2026-11-07: "R. a": a raw value appears only in the direct
+  answer to the caller who sent it. So `/preview`, `/field-test` and `/suggest-profile` may echo
+  their own input, and "d16. c": `disguised_missing[].value` stays raw because D4's confirm step
+  needs the exact values. Job errors, `/runs/{id}/values` and the access log are masked. Stored
+  error text keeps its values (the metadata database holds them anyway) and is masked by the
+  route. Not masked and open: `/runs/{id}/collisions` and `/runs/{id}/handoff` (see the D16
+  report).
 - **New clone cannot pick tables.** Every table of the origin database is cloned, because the
   clone API has no table filter; the screen picks columns and their semantic types only. Owner
   decision 2026-11-07: "1. a" (recorded as a limit).

@@ -232,6 +232,19 @@ class LocalCallersOnly:
         await self.app(scope, receive, send)
 
 
+class _NoQueryInAccessLog(logging.Filter):
+    """R23: a query string can carry a raw value (/suggest-profile?sample_value=)."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if isinstance(record.args, tuple) and len(record.args) == 5:
+            client, method, path, version, status = record.args
+            record.args = (client, method, str(path).split("?", 1)[0], version, status)
+        return True
+
+
+_ACCESS_LOG_FILTER = _NoQueryInAccessLog()
+
+
 def create_app(
     *,
     dictionaries_dir: Path | None = None,
@@ -240,6 +253,7 @@ def create_app(
     pg_dsn: str | None = None,
     max_run_rows: int | None = None,
 ) -> FastAPI:
+    logging.getLogger("uvicorn.access").addFilter(_ACCESS_LOG_FILTER)
     app = FastAPI(
         title="Normalization Engine API",
         description="Source.txt §98 API surface.",
