@@ -18,6 +18,8 @@ describe the state before this fix. Merged to `main` on 2026-11-07 (`ccc2fdf`).
 **Round 3 (2026-11-07):** the items round 2 left open are added to Part 1 (D16-D24) or moved to
 Part 3 by the rule in §0; Part 2 adds the research for a self-adapting engine and for the app as
 services; Part 3 adds the round 3 target architecture (§3.8). Proposal only; no code changed.
+**Round 3, benchmark findings (2026-11-08):** D25-D32 added to Part 1 from the owner's benchmark
+run; the build prompts are in [`plans/round3/`](plans/round3/README.md). Proposal only.
 **Scope confirmed with project owner** (Q&A round, 2026-09-30)
 
 ---
@@ -86,6 +88,7 @@ it down.
 | Q28 | Scale and SLA (refines Q7, Q20) | 1 billion rows in total in one ClickHouse database ("K. clickhouse"), cloned and normalized in "less than 1 hour". "c4. a": keep the target, measure a 10M-row slice first, then set the realistic target from the numbers. |
 | Q29 | Tests | "c5. a": tests that need a database or libpostal run against the benchmark machine. |
 | Q30 | The app's own metadata Postgres | "d. a": on the laptop, in the app's compose stack. |
+| Q31 | ClickHouse versions | Database machine: 26.4.2.10, read by the owner on 2026-11-08 (`diffbot` container, `SELECT version()`; "q31. this is for a"). Benchmark machine: 26.8.2.7, the image tag and client version of `zoominfo-ch` and `bench-ch`, read the same day. The two differ, so a format seen on one is checked on the other. |
 
 ---
 
@@ -678,10 +681,13 @@ Round 2 is merged. These are the items it left open, from
 "Round 3 constraints" sorts them. Owner, 2026-11-07: "B. a", the split proposed that day.
 None is built.
 
-**Moved to Part 3** because each changes the architecture (§3.8): the API start-up memory
-(FINAL_REPORT §5.6), the Docker API that cannot reach the benchmark machine (§4.11), and
-`/docs` (§4.3). **Owner action, not code:** rotate `NORM_SECRET_KEY`. The old dev key is in
-`main` history, and gitleaks flags it (§4.5).
+**Moved to Part 3** because each changes the architecture (§3.8): the Docker API that cannot
+reach the benchmark machine (§4.11) and `/docs` (§4.3). The API start-up memory (§5.6) was moved
+there too, then moved back as D25 on 2026-11-08 (owner "p3. a"): its fix is a query change
+inside today's architecture, and it froze the owner's PC twice. **`NORM_SECRET_KEY`** (§4.5):
+checked 2026-11-08 by hash only. The key in this laptop's `.env` is not the leaked one, no saved
+connection here decrypts with the leaked key, and no file or container on the benchmark machine
+holds it. The finding stays in history; `.gitleaksignore` lists it with a C5 note (owner "k3. a").
 
 ### D16-D24 at a glance
 
@@ -712,6 +718,31 @@ None is built.
   ([`LESSONS.md`](LESSONS.md)). Replace it with `systemd-run --user --scope -p MemoryMax=…`.
 - Two test changes without the `TEST-CHANGE:` form (`57d8cbc`, `bb162ca`): record them in the
   plan §2.9 table.
+- 242 of the 258 saved connections on this laptop decrypt with neither the current key nor the
+  leaked one (checked 2026-11-08; all `localhost`, created 2026-10-29, 11-01 and 11-07). The
+  likely source is test and benchmark runs that generate a key per run; not checked. Deleting
+  them needs the owner's yes for that list.
+
+### D25-D32 — found by the benchmark run of 2026-11-08
+
+The owner's benchmark run on `main` at `ccc2fdf` (final key `synthetic_traps_v1`, results on the
+benchmark machine under `/home/benchmark/runs/normalization/`) reported nine findings; its own
+list is `/home/benchmark/playbook/normalization/APP_FINDINGS_2026-11.md`. Each cause was
+re-checked against the code on 2026-11-08 (rule I4); the research is in Part 2, "Benchmark
+findings". The run's quality numbers: precision 0.9986, recall 0.9971, 0 lost values, and a
+repeat run gave identical output (the run's report, not re-measured). Finding 9 (throughput
+under concurrency) goes to Part 3 §3.8.
+
+| # | Problem (checked 2026-11-08) | Fix (owner's answer) | Test first |
+|---|---|---|---|
+| **D25** 🔴 | **API start-up loads the whole review queue** (finding 1, FINAL_REPORT §5.6). `normapi/app.py::create_app` calls `adjudication.py::migrate_sources`, which reads `list_queue(limit=2**31)`. With 2.1M rows it grew to 6.7 GB and was OOM-killed twice. | FINAL_REPORT §5.6 option 1: a SQL pre-filter for the rows that need migrating, read with a server-side cursor. | Start-up with a large queue stays under a fixed memory cap; a test fails if a start-up path reads the whole queue. |
+| **D26** 🟠 | **A parenthesised ClickHouse sort key breaks the clone** (finding 2). `clickhouse.py::get_table_engine_info` splits `sorting_key` with `_SORTING_KEY_PART`: `(id)` gives the column `(id)`, `(a, b)` gives `(a` and `b)` (reproduced). That 26.8 reports `(id)` comes from the run's log; not checked here (local server 24.9). | Split `sorting_key` by its syntax: one outer pair of parentheses, top-level commas, backquotes and nested parentheses respected. A bare column is copied; an expression is copied verbatim only if its columns keep their source type; otherwise the job fails with a message that says why. Never a silent `tuple()`: for Replacing, Summing and Collapsing tables the sort key is the dedupe key. | `(id)`, `(a, b)`, `` (`x,y`, b) ``, `toDate(ts)`, `tuple()`: each parsed as ClickHouse means it. |
+| **D27** 🟠 | **Withdrawn codes with several successors are INVALID** (finding 3). `SU`, `CS`, `AN` → INVALID (reproduced). This breaks the AGENTS.md rule that `SU` "does not resolve to one of 15 successor states" only in the way it is reported. | "b3. a": AMBIGUOUS, with every successor as a reading, from CLDR `territory_aliases`. Never pick one. CLDR lists `CS` as only `RS`, `ME`, but ISO 3166-3 (pycountry `historic_countries`) has two `CS` entries: `CSHH` Czechoslovakia and `CSXX` Serbia and Montenegro. pycountry has no successor data (checked 2026-11-08), so no installed source names `CZ`, `SK` for `CSHH`. "b3b. a": `CS` is AMBIGUOUS with the readings `RS`, `ME` and the historic entity Czechoslovakia (`CSHH`), which a reviewer maps; no hand-made successor list. | `SU` → AMBIGUOUS with CLDR's 15 readings; `AN` → `CW`, `SX`, `BQ`; `CS` → AMBIGUOUS with `RS`, `ME`, `CSHH`; `DD` → `DE` as today. |
+| **D28** 🟡 | **English names not recognised, and two names resolved too eagerly** (finding 4). `The Netherlands`, `Cocos Islands`, `Palestinian Territory`, `Bonaire, Saint Eustatius and Saba` → INVALID; `Korea` → INVALID; `Congo` → `CG` (reproduced). | "b4. a": add CLDR's `alt="short"` names (`Cocos Islands`, `Palestine`), and strip a leading "The" only when the rest is an exact, unambiguous name. No GeoNames table. "b4b. a": `Congo` → AMBIGUOUS (`CG`, `CD`). "b4c. a": `Korea` → AMBIGUOUS (`KR`, `KP`). `Palestinian Territory` and `Bonaire, Saint Eustatius and Saba` stay unrecognised: no authoritative source but GeoNames lists them. | Each name above with its expected status; `Netherlands` → `NL` unchanged. |
+| **D29** 🟡 | **An INVALID currency leaves no error row** (finding 5). `XYZ` → INVALID with an empty error list (reproduced), so the clone writes no error row and the error report says nothing. | "b5. a": an error message with how to fix it, as `country.py::_unresolved` does. "b5b. a": `XTS` and `XXX` (ISO 4217's test and "no currency" codes) are INVALID with a message. | `XYZ`, `XTS`, `XXX` → INVALID with a message; a clone writes one error row each. |
+| **D30** 🟡 | **`$5` with no country is answered** (finding 6): amount `5`, currency empty, NORMALIZED (reproduced). `$` is used by many currencies (AUD, CAD, MXN, NZD, SGD, USD in seven locales checked; 27 in CLDR per the research, not re-counted). | "b6. a": AMBIGUOUS, the amount kept, the currencies that use `$` as readings, so it reaches the review queue. A bare `5` with no symbol stays NORMALIZED. ADR-011 is amended. | `$5` → AMBIGUOUS with readings; `$5` with country US → `5 USD`; `5` → NORMALIZED. |
+| **D31** 🟡 | **Autodetect leaves most typed columns untyped on small tables** (finding 7). The clone applies a type at confidence ≥ 0.9 (`clone_executor._AUTODETECT_MIN_CONFIDENCE`); LANGUAGE (0.85) and NUMERIC (0.6) have no sample validator (`type_detection._SAMPLE_VALIDATORS`), so they never reach it. One date column was typed DATETIME. | "b7. a": the source column's own type decides DATE versus DATETIME; a language-code validator, used only with a matching column name; the 0.9 line stays; NUMERIC and FREE_TEXT are never inferred from values alone (a wrong NUMERIC loses leading zeros). | A `date` source column → DATE; a `lang` column of valid tags → LANGUAGE; a column of `00123` values → not NUMERIC. |
+| **D32** 🟢 | **Passthrough and key columns keep their source type** (finding 8), while ADR-020 says "key columns included, stays TEXT/String" (`postgres_destination.py::PostgresDestination.create_table`). | "b8. a": the code is right; ADR-020's sentence is limited to configured columns. "b8b. a": a configured column that is also a primary or sort key keeps the source value exactly; its normalized value goes to a companion column, so two keys can never collide (`A@B.com` and `a@b.com`). That companion is new; today's companions are `<col>_currency` (MONEY), `<col>_code` (COUNTRY, LANGUAGE, PHONE), `<col>_region` (PHONE) and `<col>__from`/`<col>__to` (DATE, DATETIME), all in `clone_executor._destination_plan` (checked 2026-11-08). Owner, 2026-11-08, approving C1-C6 "a": the new one is `<col>_normalized`; every existing companion stays (C1-C4); ARCHITECTURE.md's data contract lists all of them, and ADR-020's "Key columns get no companions" is corrected to the code, which skips only the date bounds for key columns (C6). Research: Part 2, "Companion columns". | A key column `email` with `A@B.com` and `a@b.com`: both rows kept, key unchanged, companion holds `a@b.com`. |
 
 ---
 
@@ -1034,6 +1065,28 @@ the research file's "Feasibility" table). If free text, IDs or addresses make th
 the row count, no ClickHouse setting saves the hour. Measuring this ratio on real data is the
 first step of §3.8.
 
+### Benchmark findings (2026-11-08)
+
+For D25-D32 and §3.8's throughput item. Sources:
+[`_raw-country-currency-findings.md`](research/resources/_raw-country-currency-findings.md)
+(findings 3-6),
+[`_raw-clone-detect-throughput-findings.md`](research/resources/_raw-clone-detect-throughput-findings.md)
+(findings 2, 7, 8, 9) and
+[`_raw-companion-columns.md`](research/resources/_raw-companion-columns.md) (the owner's
+question of 2026-11-08: why companion columns at all).
+
+| Finding | What the sources say | Checked |
+|---|---|---|
+| Sort key (D26) | The docs call `sorting_key` "the sorting key expression"; the server writes it from the parsed key, so it is an expression, not a column list, and it does not show `DESC`. PostHog dropped a regex parse of it as fragile. | docs page; the version format change not found in any changelog |
+| Withdrawn codes (D27) | UTS #35 picks one of several replacements by the locale's likely language, else the first. A bare country cell has no language, so taking the first would turn `SU` into `RU`. | babel `territory_aliases` and pycountry, run 2026-11-08 |
+| Country names (D28) | All four benchmark names come from GeoNames `countryInfo.txt`. CLDR `en.xml` has `Cocos Islands` and `Palestine` as `alt="short"`, which babel does not expose. ISO writes a trailing "(the)", not a leading "The"; no standard strips it. | CLDR and GeoNames pages; app run 2026-11-08 |
+| Currency (D29) | Great Expectations and Soda report a value outside a code list as a failed row. | doc summaries |
+| `$5` (D30) | FHIR Money and price-parser allow an amount without a currency, so today's answer is defensible; but only AMBIGUOUS reaches the review queue (ADR-018). | doc summaries; babel symbols, run 2026-11-08 |
+| Autodetect (D31) | Sherlock, Sato, DoDuo and Pythagoras all find numeric columns hard. Frictionless infers from 100 rows with a 0.9 match share. Google DLP and Presidio show weak results to a person and do not apply them. | doc summaries |
+| Key types (D32) | ADR-017 and the `create_table` docstring justify native types by the same-engine scope. | repo read |
+| Companion columns (D32) | ISO 20022 and FHIR Money define an amount as value plus currency; the Postgres wiki ("Don't Do This") says `numeric` plus a currency column, not the `money` type; Kimball keeps both columns. Splink and Senzing take separate columns with standard codes. FHIR, EDTF and Wikidata keep a partial date as stated. ClickHouse ReplacingMergeTree merges rows whose sort key becomes equal. libphonenumber derives the region from E.164 alone (`+1 416…` → CA, checked), but SQL cannot. | doc summaries; libphonenumber run 2026-11-08 |
+| Throughput (§3.8) | anyio's 40-token thread limit is not reached at 16 users. One uvicorn process, no `--workers` (checked in `packages/normapi/Dockerfile`). No lock in the normalizers or dispatcher (checked). | repo read |
+
 ---
 
 # Part 3 — Architecture
@@ -1279,7 +1332,7 @@ Part 3 of rounds 1 and 2, checked against the code on 2026-11-07:
 - **Not built:** per-source `calibration_bins`, the agent decider, conformal sets wired into
   dispatch, a Marquez deployment. They stay as written in §3.3-§3.6.
 
-This section is the next architecture step. By the rule in §0 it starts only when D16-D24 are
+This section is the next architecture step. By the rule in §0 it starts only when D16-D32 are
 done. The research is in Part 2, "Round 3"; the owner's answers of 2026-11-07 are quoted by
 letter.
 
@@ -1346,8 +1399,9 @@ The constraints that must hold (all from the research file's "Design constraints
 - **Read-only source by grants.** SELECT on the source; DDL and INSERT only on the destination.
 - **Resume.** Resume per (table, key range), with source and destination counts compared by
   direct SQL (D1).
-- **Errors.** At 1B rows, one error row per bad cell can mean hundreds of millions of rows. See
-  the open questions.
+- **Errors.** Exact counts and samples, not a row per bad cell (answer 3 below).
+- **Country from another table.** ClickHouse joins in SQL from the app's rules (answer 2).
+- **Pieces.** Each key range is swapped in whole; partitions follow the source (answer 5).
 
 H-b needs the source and the destination on the same ClickHouse server (Q27). Any other pair
 keeps today's path, rows through the app, and the governor below applies to both.
@@ -1375,9 +1429,16 @@ keeps today's path, rows through the app, and the governor below applies to both
 - Queues between stages are bounded in bytes.
 - DuckDB and Polars get explicit memory, thread and spill limits.
 
-**The §5.6 start-up memory** (moved from Part 1): no code path may load an unbounded number of
-rows. `migrate_sources` gets FINAL_REPORT §5.6 option 1 (SQL pre-filter, server-side cursor),
-and a test fails if any start-up path reads the whole queue.
+**Unbounded reads.** No code path may load an unbounded number of rows. The start-up case is
+D25 in Part 1 (moved back on 2026-11-08).
+
+**Throughput under concurrency** (benchmark finding 9): `POST /preview` gave 340 requests/s at 1
+user and 74 at 16 users (p99 1.0 s). The API container runs one uvicorn process
+(`packages/normapi/Dockerfile`, no `--workers`), and `/preview` is a plain `def` route, so its
+work runs in one process's thread pool. That is a likely cause, not measured: the research
+says a drop of 4.6x is more than the GIL alone predicts. Owner, 2026-11-08, "b9. a": profile
+first with py-spy under 16 users, then decide the number of server processes, here in Part 3
+because it changes the container setup.
 
 ### The app as a service (owner "6. a", "P. b", "Q. a", "R. a", "S. a", "T. a", "U. a", "V. a")
 
@@ -1425,26 +1486,22 @@ a time, memory capped. The research file's "What to measure first" has the full 
 
 The realistic target for 1 billion rows is set from these numbers (Q28).
 
-### Open questions for the owner (not asked yet)
+### Owner answers for §3.8 (2026-11-07 and 2026-11-08)
 
-From the research file's last section. Each must be answered before the part it names is
-built:
+The nine questions from the research file's last section, asked with options and examples.
+The owner's words are quoted.
 
-1. **The distinct ratio on real data.** May one read-only `uniq((value, context))` query per
-   column run on the database machine?
-2. **Entity country across tables** (`_build_entity_country_map`). Options: compute it in
-   ClickHouse from a rule table the app writes; keep it in the app; or drop it on the H-b path.
-3. **Errors at 1B rows.** One error row per bad cell, or exact counts plus samples per (column,
-   status), with the review queue per distinct value?
-4. **ClickHouse users.** One user with grants, or a separate `readonly` user for the source? Is
-   there an admin who can create settings profiles and quotas?
-5. **Destination layout.** May the destination be partitioned, and by what, so that a range can
-   be swapped in atomically?
-6. **A static source.** Is the source frozen during a run, or written to meanwhile?
-7. **Workers on the database machine.** If the distinct count is large, is that allowed? Q26
-   says no today.
-8. **The ClickHouse version** on the database machine. Several defaults changed in 26.x.
-9. **A smaller context key.** May a type that never depends on the country drop it from its key?
+| # | Question | Answer |
+|---|---|---|
+| 1 | May the distinct ratio be read on real data? | "1. a": one read-only `uniq((value, context))` query per column on the database machine, under a settings-profile limit. |
+| 2 | Country from another table (`_build_entity_country_map`), when ClickHouse writes the destination | "q2. a": ClickHouse joins the tables in SQL, from rules the app writes out of its one rule definition (F5). |
+| 3 | Error records at 1B rows | "q3. a": exact counts per (column, status), up to 100 sample rows, and one review-queue entry per distinct bad value. No row per bad cell. |
+| 4 | ClickHouse users | "4. a. yes": one app user with grants (SELECT on the source, write on the destination only); an admin exists to create its settings profile. |
+| 5 | Destination partitions, for an all-or-nothing swap of each piece | "q5. c": copy the source's partitioning when it has one; add range partitions only when it has none. |
+| 6 | Does the source change during a run? | "6. a": it is frozen. The unmatched-key check stays as the guard. |
+| 7 | Workers on the database machine | "q7. c": decided after the 10M-row measurement, from its numbers. Until then Q26 holds. |
+| 8 | ClickHouse version | Q31 in §0. |
+| 9 | Drop the country from a type's key | "q9. a": only for a type whose code never reads the country; declared per type, and a test runs it with every country and checks the output is identical. |
 
 ### Decision register, round 3
 
@@ -1584,6 +1641,14 @@ Round 3 (2026-11-07), researched by subagents in that round:
 | [`_raw-in-database-apply.md`](research/resources/_raw-in-database-apply.md) | 25 | ClickHouse joins and dictionaries, `INSERT … SELECT` speed, cast gate, resume, the 1-hour feasibility |
 | **Round 3 total** | **106 entries** | |
 
+Benchmark findings (2026-11-08), researched by subagents in that round:
+
+| File | Unique URLs | Domain |
+|---|---|---|
+| [`_raw-country-currency-findings.md`](research/resources/_raw-country-currency-findings.md) | 24 | D27-D30: withdrawn codes, English country names, currency symbols, invalid codes |
+| [`_raw-clone-detect-throughput-findings.md`](research/resources/_raw-clone-detect-throughput-findings.md) | 30 | D26, D31, D32 and §3.8: ClickHouse sort keys, type detection, key column types, API throughput |
+| [`_raw-companion-columns.md`](research/resources/_raw-companion-columns.md) | 21 | D32: money, codes, phone region, partial dates and key columns with or without companion columns |
+
 ---
 
 # Recommended sequence
@@ -1633,7 +1698,8 @@ would optimize a system whose correctness is not yet measurable.
 
 ## Phase 6 — Round 3 (2026-11-07)
 
-15. **D16-D24** (Part 1, round 3), each in its own branch.
+15. **D16-D32** (Part 1, round 3), each in its own branch, from the prompts in
+    [`plans/round3/`](plans/round3/README.md). D25 first: it froze the owner's PC.
 16. **Measure** (§3.8 "First step") on the benchmark machine. It sets the realistic target for
     1 billion rows.
 17. **Part 3 §3.8**, only when Part 1 is empty (§0): the governor and the §5.6 fix, then the

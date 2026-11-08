@@ -37,6 +37,15 @@ of the improvement report. Entries marked "not checked" were not verified.
 | The app as services | [`_raw-service-api.md`](_raw-service-api.md) | 53 | How is every feature and setting reachable through an API, in containers? |
 | In-database apply | [`_raw-in-database-apply.md`](_raw-in-database-apply.md) | 25 | Can ClickHouse build the destination from a mapping, within an hour? |
 
+**Benchmark findings (2026-11-08): 3 files**, for D25-D32 of the improvement report (counted
+as unique URLs).
+
+| Track | File | URLs | Answers the question |
+|---|---|---|---|
+| Country and currency | [`_raw-country-currency-findings.md`](_raw-country-currency-findings.md) | 24 | How should withdrawn codes, name variants and bare currency symbols be read? |
+| Clone, detection, throughput | [`_raw-clone-detect-throughput-findings.md`](_raw-clone-detect-throughput-findings.md) | 30 | How to copy a ClickHouse sort key, detect column types, and serve under load? |
+| Companion columns | [`_raw-companion-columns.md`](_raw-companion-columns.md) | 21 | Why keep currency, code, region and date-bound columns beside a normalized value? |
+
 Domain concentration of the 1,130 URLs: github.com 265, pypi.org 73,
 arxiv.org 73, unicode.org 28, rfc-editor.org 20, iso.org 14, vldb.org 14,
 gleif.org 13.
