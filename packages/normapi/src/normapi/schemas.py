@@ -309,6 +309,8 @@ class CloneJobAmendRequest(BaseModel):
     so a job pointed somewhere else is cheap to create rather than amend.
     """
 
+    model_config = ConfigDict(extra="forbid")  # as on POST: a misspelt option is an error
+
     field_configs: dict[str, dict[str, FieldSemanticType | None]] | None = None
     country: str | None = None
     locale: str | None = None
