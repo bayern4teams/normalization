@@ -60,7 +60,7 @@ def _parse_network(entry: str) -> ipaddress.IPv4Network | ipaddress.IPv6Network:
     except ValueError as exc:
         raise ValueError(
             f"{_ENV_EXTRA} entry {entry!r} is not a network: {exc}. "
-            "Fix: use comma-separated CIDRs with no host bits set, for example 100.64.0.0/10."
+            "Fix: use comma-separated CIDRs with no host bits set."
         ) from exc
 
 
