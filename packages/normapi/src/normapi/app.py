@@ -8,8 +8,8 @@ read by normapi.dependencies at request time.
 from __future__ import annotations
 
 import logging
-import re
 import os
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING
 
