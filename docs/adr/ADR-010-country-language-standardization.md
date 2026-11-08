@@ -96,3 +96,15 @@ code back changed none. The decisions:
   `comparison`, not `display` (owner approval 2026-10-27, Q3 "a").
 - **Limit:** CLDR's territory-to-language data lists languages spoken, not a proof of what a cell
   means. It settles a collision only when exactly one reading is a language of the row's territory.
+
+## Amendment 2026-11-08 — COUNTRY: names (round 3, D28)
+
+Owner, 2026-11-08: "b4. a", "b4b. a", "b4c. a".
+
+- **A name ISO 3166 only gives with a qualifier is `AMBIGUOUS`.** It is what stands before the comma in
+  the names of several countries (`Congo`, `Korea`, `Virgin Islands`); the readings are those countries.
+  The rule reads pycountry's names, so no list is kept by hand.
+- **A leading "The" is stripped only when the rest is an exact, unambiguous name** longer than a code.
+  No standard defines this; it is the owner's rule. `The Congo` and `The US` stay unresolved.
+- **Open:** CLDR's `alt="short"` names (`Cocos Islands`, `Palestine`) are not added yet: Babel does not
+  expose them, and reading them needs CLDR's XML (owner decision pending).

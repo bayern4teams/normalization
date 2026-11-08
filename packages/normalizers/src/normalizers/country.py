@@ -34,7 +34,7 @@ from normcore.pii import character_class_mask, content_hash
 from normcore.rules import ComponentVersionInfo, ExplanationText, ValidationOutcome
 from normcore.trace import TraceStep
 
-from normalizers.country_codes import resolve_country_alpha2
+from normalizers.country_codes import resolve_country_alpha2, shared_name_readings
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -80,6 +80,15 @@ class CountryNormalizer:
         cleaned = value.strip()
         alpha2 = resolve_country_alpha2(cleaned)
         if alpha2 is None:
+            readings = shared_name_readings(cleaned)
+            if readings:
+                return _ambiguous(
+                    value,
+                    readings,
+                    f"this name fits several countries, not guessed: "
+                    f"choose one of {', '.join(readings)}",
+                    ctx,
+                )
             return _unresolved(value, ctx)
 
         country = pycountry.countries.get(alpha_2=alpha2)
@@ -154,6 +163,11 @@ class CountryNormalizer:
                 plain_language="Not a recognized country name or code.",
                 technical=f"errors={result.errors}",
             )
+        if result.normalization_status is NormalizationStatus.AMBIGUOUS:
+            return ExplanationText(
+                plain_language="Several countries fit this value; a reviewer must choose.",
+                technical=f"structured={result.structured}",
+            )
         return ExplanationText(
             plain_language=f"Resolved to {result.display} ({result.structured.get('alpha2')}).",
             technical=f"structured={result.structured}",
@@ -184,6 +198,20 @@ def _unresolved(value: str, ctx: NormalizationContext) -> NormalizedValue:
         env_id="",
         semantic_type=ctx.semantic_type,
         context_hash=ctx.context_hash,
+    )
+
+
+def _ambiguous(
+    value: str, readings: list[str], reason: str, ctx: NormalizationContext
+) -> NormalizedValue:
+    """No reading is chosen: the value is kept, the readings go to the review queue."""
+    return _unresolved(value, ctx).model_copy(
+        update={
+            "structured": {"candidates": readings},
+            "validation_status": "AMBIGUOUS",
+            "normalization_status": NormalizationStatus.AMBIGUOUS,
+            "errors": [reason],
+        }
     )
 
 

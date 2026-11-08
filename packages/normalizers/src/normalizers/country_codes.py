@@ -47,6 +47,8 @@ from normalizers import text_ops
 from normalizers._cldr_country_names import CLDR_COUNTRY_NAMES
 
 _ALPHA2_LEN = 2
+_ALPHA3_LEN = 3
+_ARTICLE = "the "
 
 _KNOWN_NON_ISO_ALIASES: dict[str, str] = {
     # Only names that neither pycountry nor CLDR resolves. Nine former
@@ -71,7 +73,6 @@ _KNOWN_NON_ISO_ALIASES: dict[str, str] = {
     "northern ireland": "GB",
     "macedonia": "MK",  # renamed North Macedonia in 2019
     "macedonia, the former yugoslav republic of": "MK",
-    "the bahamas": "BS",
     "bosnia and herzegowina": "BA",  # misspelling of Herzegovina, seen in real data
     # Deliberately absent: "Kosovo" (has no ISO 3166-1 code at all) and a
     # bare "Virgin Islands" (ambiguous — US is VI, British is VG).
@@ -86,6 +87,20 @@ _SINGLE_SUCCESSOR_ALIASES: dict[str, str] = {
     for code, successors in babel.core.get_global("territory_aliases").items()
     if len(successors) == 1 and len(successors[0]) == _ALPHA2_LEN
 }
+
+# A name ISO 3166 gives only with a qualifier after the comma ("Korea, Republic
+# of" and "Korea, Democratic People's Republic of"), so alone it names several.
+_NAME_HEADS: dict[str, set[str]] = {}
+for _country in pycountry.countries:
+    _NAME_HEADS.setdefault(_country.name.split(",")[0].casefold(), set()).add(_country.alpha_2)
+_SHARED_NAMES = {head: sorted(codes) for head, codes in _NAME_HEADS.items() if len(codes) > 1}
+
+
+def shared_name_readings(raw: str) -> list[str] | None:
+    """The countries a name shared by several of them could be, or None."""
+    return next(
+        (r for v in _spelling_variants(raw) if (r := _SHARED_NAMES.get(v.casefold()))), None
+    )
 
 
 def resolve_country_alpha2(raw: str) -> str | None:
@@ -103,7 +118,8 @@ def resolve_country_alpha2(raw: str) -> str | None:
 
     Sources, in order: the hand table, pycountry, CLDR names, then CLDR's
     deprecated-code aliases (tried last, and only on code-shaped input,
-    so a country NAME can never be read as a retired code).
+    so a country NAME can never be read as a retired code). A name several
+    countries share ("Congo", "Korea") resolves in none of them.
 
     The variants, and why each earns its place:
 
@@ -131,25 +147,27 @@ def resolve_country_alpha2(raw: str) -> str | None:
     was otherwise another level of nesting, and the three are tried by
     exactly the same rules.
     """
-    candidate = raw.strip()
-    if not candidate:
-        return None
-
-    deaccented, _ = text_ops.strip_diacritics(candidate)
-    unwrapped, _ = text_ops.strip_enclosing_separators(candidate)
-    seen: set[str] = set()
-    for variant in (candidate, candidate.replace(".", ""), deaccented, unwrapped):
-        if not variant or variant in seen:
-            continue
-        seen.add(variant)
+    for variant in _spelling_variants(raw):
         resolved = _resolve_variant(variant)
         if resolved is not None:
             return resolved
     return None
 
 
+def _spelling_variants(raw: str) -> list[str]:
+    candidate = raw.strip()
+    if not candidate:
+        return []
+    deaccented, _ = text_ops.strip_diacritics(candidate)
+    unwrapped, _ = text_ops.strip_enclosing_separators(candidate)
+    variants = (candidate, candidate.replace(".", ""), deaccented, unwrapped)
+    return list(dict.fromkeys(v for v in variants if v))
+
+
 def _resolve_variant(variant: str) -> str | None:
     folded = variant.casefold()
+    if folded in _SHARED_NAMES:  # pycountry would answer "Congo" with CG alone
+        return None
 
     alias = _KNOWN_NON_ISO_ALIASES.get(folded)
     if alias is not None:
@@ -169,4 +187,10 @@ def _resolve_variant(variant: str) -> str | None:
     # retired code would be rewritten to that code's successor.
     if len(variant) == _ALPHA2_LEN and variant.isalpha():
         return _SINGLE_SUCCESSOR_ALIASES.get(variant.upper())
-    return None
+
+    # No standard defines this; the rest must be an exact name, longer than
+    # any code, so "The US" and a misspelling stay unresolved.
+    rest = variant[len(_ARTICLE) :]
+    return (
+        _resolve_variant(rest) if folded.startswith(_ARTICLE) and len(rest) > _ALPHA3_LEN else None
+    )
