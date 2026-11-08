@@ -224,8 +224,7 @@ def build() -> dict[str, dict[str, str]]:
         "CLDR_SHARED_CURRENCY_SYMBOLS": {
             symbol: " ".join(sorted(real))
             for symbol, codes in sorted(symbol_codes.items())
-            if len(real := {c for c in codes if c in _ISO_4217 and c not in NON_CURRENCY_CODES})
-            > 1
+            if len(real := {c for c in codes if c in _ISO_4217 and c not in NON_CURRENCY_CODES}) > 1
             and not _is_invisible(symbol)
         },
         "CLDR_LANGUAGE_NAMES": {
