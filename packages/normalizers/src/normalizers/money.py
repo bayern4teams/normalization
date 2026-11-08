@@ -29,9 +29,11 @@ every value has that shape. Two rules now prevent it:
 - An alphabetic token that is neither a currency nor a known magnitude is
   AMBIGUOUS. Never dropped — an unexplained word in a money value means
   the value was not understood, and a wrong number is far worse than a
-  refused one. An ambiguous SYMBOL still behaves as before ("$1,234.56"
-  keeps its amount and reports no currency): a symbol we cannot pin to
-  one currency is a known unknown, an unrecognised word is not.
+  refused one.
+
+A symbol several currencies share ("$5" with no country) is AMBIGUOUS too,
+but the amount was read: it stays in `structured`, beside one reading per
+currency CLDR gives that symbol (ADR-011 amendment 2026-11-08).
 """
 
 from __future__ import annotations
@@ -183,6 +185,23 @@ class MoneyNormalizer:
             return _unresolved(value, NormalizationStatus.AMBIGUOUS, ctx)
 
         canonical = _scaled(str(amount.display), multiplier)
+        readings = None if currency_code else self._shared_symbol_codes(currency_text, ctx)
+        if readings:
+            return _unresolved(value, NormalizationStatus.AMBIGUOUS, ctx).model_copy(
+                update={
+                    "errors": [
+                        f"'{currency_text}' is used by several currencies, not guessed: "
+                        "set the column's country or choose a reading"
+                    ],
+                    "structured": {
+                        "canonical_amount": canonical,
+                        "currency": None,
+                        "currency_source": currency_text,
+                        # Whole values, because a verdict is re-normalized as MONEY.
+                        "candidates": [f"{canonical} {code}" for code in readings],
+                    },
+                }
+            )
         structured = {
             "canonical_amount": canonical,
             "currency": currency_code,
@@ -215,8 +234,7 @@ class MoneyNormalizer:
         an alphabetic token that is neither a currency nor a known
         magnitude means the value was not understood, and dropping it is
         what turned "$10.5 Million" into 10.5. A bare ambiguous SYMBOL is
-        understood — "$" is a known unknown and the amount beside it is
-        still good.
+        understood — the amount beside it is still good.
         """
         if not currency_text:
             return None, True
@@ -239,6 +257,12 @@ class MoneyNormalizer:
         if resolved.normalization_status is NormalizationStatus.NORMALIZED:
             return resolved.comparison
         return None
+
+    def _shared_symbol_codes(self, currency_text: str, ctx: NormalizationContext) -> list[str]:
+        if not currency_text:
+            return []
+        resolved = self._currency.normalize(currency_text, _as(ctx, FieldSemanticType.CURRENCY))
+        return list(resolved.structured.get("candidates", []))
 
     def normalize_batch(self, values: pa.Array, ctx: NormalizationContext) -> pa.StructArray:
         results = [self.normalize(v, ctx) for v in values.to_pylist()]
