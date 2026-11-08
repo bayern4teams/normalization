@@ -28,6 +28,15 @@ improvement-report items D13-D15 and U1.
 | Local network only | [`_raw-local-network-only.md`](_raw-local-network-only.md) | 56 | How does a local app refuse outside callers and outside database targets? |
 | UI and UX | [`_raw-ui-ux.md`](_raw-ui-ux.md) | 150 | Which UI technology and which review-screen design for one internal reviewer? |
 
+**Round 3 (2026-11-07): 106 entries in 3 files**, researched by subagents for the round 3 part
+of the improvement report. Entries marked "not checked" were not verified.
+
+| Track | File | Entries | Answers the question |
+|---|---|---|---|
+| Resource-adaptive processing | [`_raw-resource-adaptive-processing.md`](_raw-resource-adaptive-processing.md) | 28 | How does one machine process 1B rows without freezing, and do Spark or Kafka help? |
+| The app as services | [`_raw-service-api.md`](_raw-service-api.md) | 53 | How is every feature and setting reachable through an API, in containers? |
+| In-database apply | [`_raw-in-database-apply.md`](_raw-in-database-apply.md) | 25 | Can ClickHouse build the destination from a mapping, within an hour? |
+
 Domain concentration of the 1,130 URLs: github.com 265, pypi.org 73,
 arxiv.org 73, unicode.org 28, rfc-editor.org 20, iso.org 14, vldb.org 14,
 gleif.org 13.

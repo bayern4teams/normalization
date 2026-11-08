@@ -14,7 +14,10 @@ four new resource files (Appendix G). Proposal only; no code changed.
 **Round 2 status (2026-11-01):** D13, D14, D15 and U1 implemented and verified on branch
 `feat/round2-fixes`; measured results, the memory diagnosis and the open owner items are in
 [`plans/round2/FINAL_REPORT.md`](plans/round2/FINAL_REPORT.md). The D13 "Verified state" tables below
-describe the state before this fix.
+describe the state before this fix. Merged to `main` on 2026-11-07 (`ccc2fdf`).
+**Round 3 (2026-11-07):** the items round 2 left open are added to Part 1 (D16-D24) or moved to
+Part 3 by the rule in §0; Part 2 adds the research for a self-adapting engine and for the app as
+services; Part 3 adds the round 3 target architecture (§3.8). Proposal only; no code changed.
 **Scope confirmed with project owner** (Q&A round, 2026-09-30)
 
 ---
@@ -25,6 +28,7 @@ describe the state before this fix.
 - [0.1 Correction to the earlier audit](#01-correction-to-the-earlier-audit)
 - [Part 1 — Defects and fixes to apply now](#part-1--defects-and-fixes-to-apply-now)
   - [Part 1, round 2 (2026-10-25)](#part-1-round-2-2026-10-25--found-after-d1-d12-were-closed)
+  - [Part 1, round 3 (2026-11-07)](#part-1-round-3-2026-11-07--left-open-by-round-2)
 - [Part 2 — Research, cited](#part-2--research-cited)
 - [Part 3 — Architecture](#part-3--architecture)
 - [Part 4 — Appendices](#part-4--appendices)
@@ -64,6 +68,24 @@ recommendation depends on one, it is cited by question number.
 | Q23 | Priority order | **Correctness depth → Auditability/provenance → Automation → Throughput.** |
 | Q24 | Budget | **One person, ongoing.** |
 | Q25 | Deliverable | **ADRs first, then a sequenced roadmap.** |
+
+### Round 3 constraints (2026-11-07)
+
+**Where an item goes.** Owner, 2026-11-07: "part 1 is now fixing that could happen without
+changing architecture if somethin caused to change architecture goes to part 3 and when nothing
+remain on part 1 we go for part 3". So Part 1 holds fixes inside today's architecture; an item
+that needs an architecture change moves to Part 3; Part 3 starts only when Part 1 is empty.
+Rounds 1 and 2 already worked this way (the D1 scope line in
+[`DEFECTS_IMPLEMENTATION_PLAN.md`](archive/plans/DEFECTS_IMPLEMENTATION_PLAN.md)); round 3 writes
+it down.
+
+| # | Question | Answer (owner's words, 2026-11-07) |
+|---|----------|--------|
+| Q26 | Which machines? | "C1. a": three. The **laptop** (i5-13600K, 16 GB) runs only the app. The **database machine** (64 GB RAM, Core Ultra 9 285K, 2 TB) holds the real databases. The **benchmark machine** (remote) holds the test databases, libpostal and every other external service. |
+| Q27 | Where do libpostal and the destination live? | "c2. a": libpostal on the benchmark machine. "c3. in real run (a)": the destination is on the database machine, in the same ClickHouse as the source. |
+| Q28 | Scale and SLA (refines Q7, Q20) | 1 billion rows in total in one ClickHouse database ("K. clickhouse"), cloned and normalized in "less than 1 hour". "c4. a": keep the target, measure a 10M-row slice first, then set the realistic target from the numbers. |
+| Q29 | Tests | "c5. a": tests that need a database or libpostal run against the benchmark machine. |
+| Q30 | The app's own metadata Postgres | "d. a": on the laptop, in the app's compose stack. |
 
 ---
 
@@ -649,6 +671,50 @@ Rules for the build:
 
 ---
 
+## Part 1, round 3 (2026-11-07) — left open by round 2
+
+Round 2 is merged. These are the items it left open, from
+[`plans/round2/FINAL_REPORT.md`](plans/round2/FINAL_REPORT.md) §4, §6 and §7. The rule in §0
+"Round 3 constraints" sorts them. Owner, 2026-11-07: "B. a", the split proposed that day.
+None is built.
+
+**Moved to Part 3** because each changes the architecture (§3.8): the API start-up memory
+(FINAL_REPORT §5.6), the Docker API that cannot reach the benchmark machine (§4.11), and
+`/docs` (§4.3). **Owner action, not code:** rotate `NORM_SECRET_KEY`. The old dev key is in
+`main` history, and gitleaks flags it (§4.5).
+
+### D16-D24 at a glance
+
+| # | Problem (evidence) | Fix inside today's architecture | Test first (D3, L3) |
+|---|---|---|---|
+| **D16** 🟠 | **Raw values outside the review route** (R23). Job error text, `disguised_missing[].value`, `/preview`, `/field-test` and `/runs/{id}/values` carry raw values (FINAL_REPORT §4.2). | Owner, 2026-11-07, "R. a": a raw value appears only in the direct answer to the caller who sent it. So `/preview` and `/field-test` may echo their own input. Job errors, `/runs/{id}/values` and logs are masked. "d16. c": `disguised_missing[].value` stays raw, because D4 needs the placeholder itself. | One test per route and log path, asserting that a planted raw value never appears. |
+| **D17** 🟠 | **`Host: localhost:80@evil.com` is accepted.** Measured 2026-11-07 on the installed Starlette 1.6.0: 200. | Reject a `Host` with userinfo (`@`), and anything but a host and optional port, before `TrustedHostMiddleware`. | Regression test with that header: 400. |
+| **D18** 🟡 | **A bad `NORM_ALLOWED_NETWORKS` gives a 500 on every request** (§6). It fails closed, but the message comes too late and in the wrong place. | Parse at start-up; exit with a message naming the bad entry and the fix (J11). | Start-up test with a bad entry: exit and message. |
+| **D19** 🟡 | **`PATCH /clone-jobs/{id}/plan` drops unknown keys** silently; `POST` forbids them (§6). | The same `extra="forbid"` on PATCH: 422. | PATCH with an unknown key: 422. |
+| **D20** 🟡 | **LANGUAGE edge cases** (§6). Lower-case `mon`/`MON` read as the code `mn`, and `Kuku_Yalanji` with an underscore is INVALID (was `ukv`). The report never said which way either should go. | Owner, 2026-11-07: "d20a. a": lower-case `mon`/`MON` stays AMBIGUOUS like `Mon` (case does not reliably mean "code", Q16). "d20b. a": `_` is read as `-` only inside a valid locale tag (`en_US` → `en-US`, UTS #35); `Kuku_Yalanji` stays INVALID. | `mon` → AMBIGUOUS; `en_US` → `en-US`; `Kuku_Yalanji` → INVALID. |
+| **D21** 🟡 | **D13 row evidence is incomplete** (R12). Within a row, only a COUNTRY column gives LANGUAGE its country. PHONE and POSTCODE give one only across tables (`clone_executor.py`, `provides_country`). R12 named "country country code phone code". | A phone in international form names its country by its calling code (E.164 country code). Use that as row evidence. A postcode alone does not name a country, so it stays cross-table only. | `Mon` with `+95…` in the same row → `mnw`; with a national-format phone → AMBIGUOUS. |
+| **D22** 🟡 | **Two saved connections to one server** under different host names are not caught (HANDOFF D14 row). | At save and start, compare the checked addresses (D15 already resolves them), port and database of origin and destination. | Two names, one address: refused. |
+| **D23** 🟡 | **New clone cannot pick tables.** Every table is cloned (FINAL_REPORT §7 "Gaps", item 1). | A table list on clone-job create, checked against the origin, and the UI's table picker. | Create with 1 of 3 tables: only that table is cloned. |
+| **D24** 🟢 | **Tests and records.** See the list below. | — | — |
+
+**D24, item by item:**
+
+- `test_a_time_is_no_day_or_month` has failed since 2026-11-01, on `main` too, and looks
+  calendar-sensitive. Diagnose first. If the test and the spec disagree, stop and ask (L1).
+- `test_groups_cost_is_linear_in_pairs` fails under load (§4.6). Changing the test needs the
+  owner's yes (L1).
+- Live re-checks of every round 2 result marked "record": the benchmark machine is reachable
+  again (SSH answered on 2026-11-07). Also a host name with several addresses, live.
+- The ZoomInfo 100k count: 599,853 in FINAL_REPORT, 699,853 in HANDOFF. Re-measure.
+- `docs/PONYTAIL_DEBT.md` lists 36 markers; the code has 50. Rewriting the ledger needs a yes.
+- AGENTS.md §4: `$BENCH_DIR` points to a missing folder, and the memory example uses `ulimit -v`.
+  `ulimit -v` limits address space, not memory, and did not protect the laptop on 2026-11-07
+  ([`LESSONS.md`](LESSONS.md)). Replace it with `systemd-run --user --scope -p MemoryMax=…`.
+- Two test changes without the `TEST-CHANGE:` form (`57d8cbc`, `bb162ca`): record them in the
+  plan §2.9 table.
+
+---
+
 ## Verified as already sound — do not touch
 
 These were checked and found correct. They are listed so that later work
@@ -899,6 +965,75 @@ The tools that rewrite tables in place (gh-ost, pt-online-schema-change, pg_repa
 structure, not values, and still keep or offer to keep the old table. The data-cleaning tools
 (OpenRefine, Dataprep, dbt) never write back to the source.
 
+## Round 3 (2026-11-07)
+
+The research was done by subagents on 2026-11-07. Entries marked **not checked** in the raw files
+were not verified. The claims below that decide anything were re-checked directly on the laptop
+or on PyPI that day; the "Checked" column says how.
+
+### Using limited resources (Q20, Q28)
+
+Owner, 2026-11-07: "i want to write something that automatically adapt it self with resource
+limitation", and "should we use spark? kafka?". Sources:
+[`_raw-resource-adaptive-processing.md`](research/resources/_raw-resource-adaptive-processing.md).
+
+| Option | Finding | Verdict for this project | Checked |
+|---|---|---|---|
+| Spark (local mode) | Adds a JVM. Python UDFs still run per value, with Arrow only for the transfer (§1.1). | No. The cost is the Python normalizers and libpostal, not shuffle. ADR-016's rejection stands. | doc summary |
+| Kafka, Redpanda | An event log for continuous consumers. Nothing for a bounded, one-shot table read (§1.2). Redpanda is BSL. | No for batch. Only if incremental runs are built later (owner "n. a"). | doc summary |
+| Ray, Dask | A scheduler process each. Ray's memory monitor kills at 95 % by default (§1.3). Dask's worker ladder (spill 60/70 %, pause 80 %, kill 95 %) is a good model (§1.4). | No runtime. Copy Dask's ladder. | doc summary |
+| Polars 2.x, DuckDB 2.0 | Both spill to disk. Polars 2.0's default spill budget (64 GB) is larger than the laptop's free disk (§1.5, §1.6). | Set explicit memory, thread and spill limits. The repo pins Polars 1.43.2 and DuckDB 1.5.5; an upgrade is a separate decision. | PyPI: Polars 2.0.0 on 2026-10-06, DuckDB 2.0.0 on 2026-10-21 |
+| cgroup v2 `memory.high` / `memory.max`, PSI | `memory.high` throttles without killing; `memory.max` is the last defence; `/proc/pressure/memory` measures stall time (§2.1, §2.2). | The signals for the governor (§3.8). | Laptop: cgroup2fs, PSI readable, user units have the memory controller |
+| AIMD (Chiu and Jain, 1989) | Additive increase and multiplicative decrease converges to a fair, stable share (§2.5). No mature Python library exists; `adaptive-concurrency` 0.1.1 is alpha (§2.6). | A small loop of our own. | doc summary |
+| Distinct values on the source | ClickHouse `GROUP BY` with per-query limits (`max_memory_usage`, `max_execution_time`) sends only distinct values (§3.1). | Yes (owner "h. b"); see "In-database apply" below. | doc summary |
+| §5.6 start-up memory | A SQL pre-filter plus a server-side cursor is enough (§5.1, FINAL_REPORT §5.6 option 1). | Part of §3.8. | FINAL_REPORT measurement |
+
+The laptop had about 6 GB free while the research ran, not 16. So the budget must be read at
+run time, never set once.
+
+### The app as services (Q24, Q26)
+
+Owner, 2026-11-07: "make it as services and api and docker container. how we should use all
+functionality of app through api. all possible configurations". Sources:
+[`_raw-service-api.md`](research/resources/_raw-service-api.md), which also holds the full gap
+list between today's 48 routes and the UI.
+
+| Topic | Finding | Use here | Checked |
+|---|---|---|---|
+| Errors | RFC 9457 `application/problem+json` (entry 1). AMBIGUOUS and INVALID are results, not errors. | Every error in that form, with a `code` extension and the fix (J11). | spec |
+| Long jobs | Google AIP-151: `202`, an operation resource with `done`, `metadata.progress` and `error` (entry 2). | Clone jobs and batch jobs share one job resource. | spec |
+| Retries | IETF Idempotency-Key, draft 08, not an RFC (entry 3). | On job-starting POSTs; keys kept 24 h (owner "V. a"). | spec |
+| Batch precedent | The OpenRefine reconciliation API keys a batch by caller ids (entry 4). | `/v1/normalize` takes caller keys. | not checked (the spec page returned only its title) |
+| Job queue | procrastinate 3.10.0 (MIT): abort, retries (entry 17). Postgres `SKIP LOCKED` (entry 20). Temporal, Hatchet and DBOS add a server or a rewrite (entries 21, 22, 27). | Owner "o. a": our own job table, which already claims jobs and sends heartbeats. No library. | PyPI: procrastinate 3.10.0 on 2026-09-23 |
+| Client and CLI | openapi-python-client had a high advisory on 2026-08-30: a malicious schema generates code (entry 29). Typer (entry 32). Schemathesis contract tests (entry 33). | Generate only from our own schema, pinned. Each tool needs a yes (owner "V. a"). | advisory: GitHub metadata |
+| Host header | Newer Starlette rejects `@` in `Host` (entry 37). | D17. | not checked upstream; installed 1.6.0 accepts it (measured) |
+| Auth | The API can read and write databases with stored credentials (entry 42). | Owner "P. b": no auth, local network only (ADR-022). | — |
+| Streaming (see the next table for the batch path) | Debezium, Kafka, NATS (entries 47-51). Postgres logical decoding needs a replication slot on the source, which keeps WAL there (entry 47): a write-side effect on a source that must stay read-only. | Future only (owner "5. a"). | doc summary |
+
+### ClickHouse builds the destination itself (Q28)
+
+Owner, 2026-11-07, "h. b": the app normalizes only the distinct values, sends back a mapping,
+and ClickHouse writes the destination with `INSERT … SELECT`, so the rows never leave the
+database machine. Sources: [`_raw-in-database-apply.md`](research/resources/_raw-in-database-apply.md).
+
+| Topic | Finding | Use here | Checked |
+|---|---|---|---|
+| Applying the mapping | Hash join: about 96 B per row of the right table at 100M rows; `parallel_hash` about 2x faster at 2x the memory; `grace_hash` spills (entry 1). A hashed dictionary: about 134 B per key at 1M keys (§1). | Try a `COMPLEX_KEY_HASHED` dictionary first, then `parallel_hash`, with `grace_hash` as the fallback. The per-key figures come from narrow examples and must be measured at our value widths. | blog numbers, not re-measured |
+| Write speed | About 4M rows/s on one 59-core cloud node, `INSERT SELECT` from object storage, no join (entry 8). About 506k rows/s for 105 columns, from a 2017 talk (entry 9). | The 1-hour target (278k rows/s) is far below both, but neither figure includes a join, wide rows or this machine. | not measured here |
+| Cast gate (ADR-020) | ClickHouse truncates extra fraction digits silently: `12.34565` → `12.3456`, no error row (F-CH-TRUNC). | The typed value comes from `storage_types.coerce` in the app and travels in the mapping. SQL does only a lossless `accurateCastOrNull` and a per-range check that no OK value became NULL. | yes: `docs/benchmarks/REPORT.md`, D5 row |
+| Resume | A plain MergeTree deduplicates inserts only when `non_replicated_deduplication_window` is above 0 (§5). | Per-range staging, a count check, then an atomic partition swap. Do not rely on dedup tokens. | doc summary |
+| Read-only source | `readonly` is a per-user setting, not per database (entry 15). | Grants: SELECT on the source, write only on the destination; a test proves that an INSERT into the source fails. | not checked in the docs |
+| Lineage | No ClickHouse emitter for OpenLineage exists (entry 21). | The app emits the events, as today (`normapi/lineage.py`). | doc summary |
+| Executable UDFs, chDB (§8) | Python normalizers called by the database server itself. | Not chosen: libpostal and Python would run in the database machine's process tree, which Q26 does not allow. | search snippet only |
+
+**What decides the hour.** The write side looks feasible on published figures. The deciding
+unknown is the number of distinct (value, context) pairs that the laptop must normalize. At
+an example speed of 10,000 pairs per second (the distinct-only speed is not measured), 36M
+pairs take an hour and 3.6M take 6 minutes (arithmetic,
+the research file's "Feasibility" table). If free text, IDs or addresses make the pairs close to
+the row count, no ClickHouse setting saves the hour. Measuring this ratio on real data is the
+first step of §3.8.
+
 ---
 
 # Part 3 — Architecture
@@ -1123,12 +1258,204 @@ relitigated:
 - **Relational schema normalization** (Q1) — a separate future project.
 - **Throughput work** — Polars, PyO3, FSTs (Q23 ranks throughput last;
   revisit once the SLA in Q20 is measured and actually missed).
+  **Round 3:** Q28 now sets the SLA (1 billion rows in under 1 hour), so throughput is
+  in scope through §3.8. PyO3 and FSTs stay deferred until a measurement points to them.
 - **ER-engine-specific output columns** — blocked on Q11.
 - **Distributed execution** — ADR-016 chose single-node deliberately.
+  **Round 3:** still deferred; owner "m. a" (no Spark, Kafka or Ray, Part 2 "Round 3").
 - **A real task queue** replacing `threading.Thread` — marked in
-  `clone_executor.py:902`.
+  `clone_executor.py:902`. **Round 3:** planned as the existing job table, extended (owner
+  "o. a", §3.8).
 - **Pushdown filter on resume** — marked in `clone_executor.py:1885`;
-  currently resume skips rows client-side.
+  currently resume skips rows client-side. **Round 3:** the in-database apply resumes per
+  key range instead (§3.8).
+
+## 3.8 Round 3 target (2026-11-07) — services and a self-adapting engine
+
+Part 3 of rounds 1 and 2, checked against the code on 2026-11-07:
+
+- **Built:** the adjudication queue and verdicts, the resolve stage, `decided_by`, the
+  OpenLineage events (`normapi/lineage.py`) and the review UI (U1).
+- **Not built:** per-source `calibration_bins`, the agent decider, conformal sets wired into
+  dispatch, a Marquez deployment. They stay as written in §3.3-§3.6.
+
+This section is the next architecture step. By the rule in §0 it starts only when D16-D24 are
+done. The research is in Part 2, "Round 3"; the owner's answers of 2026-11-07 are quoted by
+letter.
+
+### Where each part runs (Q26, Q27, Q30)
+
+```mermaid
+flowchart LR
+    subgraph LAP["Laptop: the app only"]
+        API["🆕 api container<br/>normapi + UI + /docs"]
+        WRK["🆕 worker containers<br/>normalize distinct values"]
+        META[("metadata Postgres<br/>jobs, queue, verdicts")]
+    end
+    subgraph DB["Database machine: 64 GB"]
+        SRC[("ClickHouse source<br/>read-only, 1B rows")]
+        DST[("ClickHouse destination")]
+        MAP[("🆕 mapping tables")]
+    end
+    subgraph BENCH["Benchmark machine"]
+        LP["libpostal"]
+        TDB[("test databases")]
+    end
+    API --> META
+    WRK --> META
+    WRK -- "distinct values" --> SRC
+    WRK -- "mapping" --> MAP
+    MAP -- "INSERT … SELECT" --> DST
+    SRC -- "INSERT … SELECT" --> DST
+    WRK --> LP
+```
+
+Tests that need a database or libpostal use the benchmark machine (Q29). The laptop's compose
+file has no libpostal and no source database. That also removes the Docker network problem of
+FINAL_REPORT §4.11, provided the api and worker containers can reach both machines' LAN
+addresses (ADR-022's allowed set).
+
+### One clone, step by step (owner "h. b", "j. a", "n. a")
+
+```mermaid
+sequenceDiagram
+    participant W as Worker (laptop)
+    participant S as ClickHouse source
+    participant M as Mapping (database machine)
+    participant D as ClickHouse destination
+    W->>S: distinct (value, context) per column, with counts
+    W->>W: normalize each pair once (cache, verdicts, libpostal)
+    W->>M: mapping rows, then verify the count
+    loop each key range
+        W->>D: INSERT … SELECT source JOIN mapping into staging
+        W->>D: check: no unmatched key, no OK value cast to NULL, counts equal
+        W->>D: swap the range in
+    end
+    W->>W: queue entries from the mapping, error counts and samples, lineage
+```
+
+The constraints that must hold (all from the research file's "Design constraints"):
+
+- **Mapping key.** The key is (column, raw value, context key), where the context key is the same
+  input that `context_hash` uses today, the row's country included
+  (`clone_executor.py::_group_by_country`). There is one implementation of that rule (F5).
+- **No silent default.** An unmatched key fails the range, never falls back to a default value.
+  A source that changes during the run is caught this way.
+- **Cast gate (ADR-020).** The typed value comes from `storage_types.coerce` in the app, because
+  ClickHouse truncates silently (F-CH-TRUNC).
+- **Read-only source by grants.** SELECT on the source; DDL and INSERT only on the destination.
+- **Resume.** Resume per (table, key range), with source and destination counts compared by
+  direct SQL (D1).
+- **Errors.** At 1B rows, one error row per bad cell can mean hundreds of millions of rows. See
+  the open questions.
+
+H-b needs the source and the destination on the same ClickHouse server (Q27). Any other pair
+keeps today's path, rows through the app, and the governor below applies to both.
+
+### The resource governor (owner "F. a", "G. a", "I. a")
+
+**The outer limit, which the app cannot exceed even with a bug:**
+
+- compose memory limits per container;
+- a committed `systemd-run` unit for a run outside Docker;
+- a ClickHouse settings profile for the app's user on the database machine (`max_threads`,
+  `max_memory_usage`, spill thresholds).
+
+**The inner loop:**
+
+- It reads the container's `memory.current`, `memory.events` and PSI every few seconds.
+- Additive increase, multiplicative decrease, on the worker count and on the batch size in
+  bytes. One step up after a calm period; halve on pressure; pause new batches at 80 % of the
+  budget (the Dask ladder); never below one worker.
+- The budget is the smaller of 8 GB and 60 % of the memory free at that moment (owner "f2. a").
+- Disk (owner "l. a"): the laptop's spill and cache use at most 10 GB, and a run refuses to
+  start with less free; ClickHouse spill on the database machine is capped at 200 GB.
+- The same loop backs off when source queries or libpostal calls slow down, under a hard
+  maximum of parallel queries set by the owner.
+- Queues between stages are bounded in bytes.
+- DuckDB and Polars get explicit memory, thread and spill limits.
+
+**The §5.6 start-up memory** (moved from Part 1): no code path may load an unbounded number of
+rows. `migrate_sources` gets FINAL_REPORT §5.6 option 1 (SQL pre-filter, server-side cursor),
+and a test fails if any start-up path reads the whole queue.
+
+### The app as a service (owner "6. a", "P. b", "Q. a", "R. a", "S. a", "T. a", "U. a", "V. a")
+
+- **Every route under `/v1`.** The UI changes in the same step. Errors are RFC 9457 problem
+  details. No auth: local network only (ADR-022).
+- **`POST /v1/normalize`** for one value or a batch:
+  - It takes a semantic type, options, an optional `profile_id` and version, and caller keys.
+  - It returns the normalized value, `AMBIGUOUS` or `INVALID`, per key.
+  - It writes to the review queue only with `enqueue=true`.
+  - It may echo the raw value back to its own caller, and nowhere else.
+- **One job resource for clone and batch jobs.** A POST answers `202` with an operation that
+  has `done`, progress and `error`. Status is by polling, and job-starting POSTs take
+  idempotency keys for 24 hours. A batch job reads a source table and column, or inline JSON up
+  to a size limit. No file uploads.
+- **Workers claim jobs from the existing job table**, with heartbeats. Cancel and retry are
+  added there. No queue library (owner "o. a").
+- **Configuration through the API:**
+  - A read-only `GET /v1/config`, with no secrets, so a caller can see the active settings.
+  - Per-job overrides for worker and batch limits, within the governor's outer limit.
+  - The gap list in [`_raw-service-api.md`](research/resources/_raw-service-api.md) names
+    every UI action and setting that still has no route: cancel, connection update, plan
+    editing, paging and others.
+- **`/docs`** is served by the app itself from pinned Swagger UI files, with no CDN (moved from
+  Part 1). Owner, 2026-11-07, "s2. a": this "S. a" replaces the same day's earlier "2. a" (`/docs`
+  ruled out, FINAL_REPORT §7), and ADR-023 is amended when it is built.
+- **A generated Python client, a Typer CLI and Schemathesis contract tests.** Each needs the
+  owner's yes and a pinned version when it is built.
+
+### First step: measure (owner "c4. a")
+
+Before any build, on the benchmark machine with a 10M-row, about 20-column table, one change at
+a time, memory capped. The research file's "What to measure first" has the full plan:
+
+1. A plain `INSERT … SELECT` copy, which gives this machine's write ceiling.
+2. `uniq(value)` and `uniq((value, context))` per normalized column. This number decides
+   whether the hour is reachable.
+3. Distinct extraction by `GROUP BY` and its alternatives: time, memory, spill.
+4. Mapping apply for 1 column, then for N columns: rows/s and bytes per key at our widths.
+5. The cast gate in SQL against `coerce` on the same values.
+6. A kill in the middle of a range, then resume, with no duplicate rows.
+7. The normalizer speed on distinct values only, on the laptop, with libpostal on the
+   benchmark machine.
+8. The load on the source, seen as another user's query latency.
+9. Equivalence: the H-b output equals today's output, value by value.
+
+The realistic target for 1 billion rows is set from these numbers (Q28).
+
+### Open questions for the owner (not asked yet)
+
+From the research file's last section. Each must be answered before the part it names is
+built:
+
+1. **The distinct ratio on real data.** May one read-only `uniq((value, context))` query per
+   column run on the database machine?
+2. **Entity country across tables** (`_build_entity_country_map`). Options: compute it in
+   ClickHouse from a rule table the app writes; keep it in the app; or drop it on the H-b path.
+3. **Errors at 1B rows.** One error row per bad cell, or exact counts plus samples per (column,
+   status), with the review queue per distinct value?
+4. **ClickHouse users.** One user with grants, or a separate `readonly` user for the source? Is
+   there an admin who can create settings profiles and quotas?
+5. **Destination layout.** May the destination be partitioned, and by what, so that a range can
+   be swapped in atomically?
+6. **A static source.** Is the source frozen during a run, or written to meanwhile?
+7. **Workers on the database machine.** If the distinct count is large, is that allowed? Q26
+   says no today.
+8. **The ClickHouse version** on the database machine. Several defaults changed in 26.x.
+9. **A smaller context key.** May a type that never depends on the country drop it from its key?
+
+### Decision register, round 3
+
+| # | Decision | Reason | Alternative deferred, and why |
+|---|---|---|---|
+| **L** | One machine for the app, plus a governor | The cost is the Python normalizers; a cluster runtime adds memory and does not touch it | Spark, Ray, Kafka: no gain for a bounded batch (owner "m. a") |
+| **M** | ClickHouse writes the destination from a mapping (H-b) | The 1B rows never cross the network; the laptop handles only distinct pairs | Rows through the app: measured at 9-90k rows/s, which is 3-28 h for 1B rows |
+| **N** | The typed value travels in the mapping | ClickHouse truncates silently; the cast gate stays in one place | Casting in SQL: a second cast rule that disagrees with `coerce` |
+| **O** | Our own job table, not a queue library | It already claims jobs and has heartbeats; nothing new to run | procrastinate: a new dependency for what exists (owner "o. a") |
+| **P** | `/v1` with problem details and one job resource | One shape for every caller; the UI is the only caller today | Unversioned routes: every later change breaks callers |
+| **Q** | Measure before building | The hour depends on a ratio nobody has measured | Building H-b first: weeks of work that the ratio may not repay |
 
 ---
 
@@ -1248,6 +1575,15 @@ Round 2 (2026-10-25), fetched in that round:
 | [`_raw-ui-ux.md`](research/resources/_raw-ui-ux.md) | 150 | U1: UI technology families, review-queue tools, UX guidance, HITL studies |
 | **Round 2 total** | **274 entries** | |
 
+Round 3 (2026-11-07), researched by subagents in that round:
+
+| File | Entries | Domain |
+|---|---|---|
+| [`_raw-resource-adaptive-processing.md`](research/resources/_raw-resource-adaptive-processing.md) | 28 | Engines for 1B rows on one machine, cgroup and PSI signals, AIMD, source-side distinct values, bounded caches |
+| [`_raw-service-api.md`](research/resources/_raw-service-api.md) | 53 | API standards, Postgres job queues, generated clients, containers, LAN security, streaming; the API gap list |
+| [`_raw-in-database-apply.md`](research/resources/_raw-in-database-apply.md) | 25 | ClickHouse joins and dictionaries, `INSERT … SELECT` speed, cast gate, resume, the 1-hour feasibility |
+| **Round 3 total** | **106 entries** | |
+
 ---
 
 # Recommended sequence
@@ -1295,6 +1631,14 @@ would optimize a system whose correctness is not yet measurable.
     the hyphen fix, and the second-pass test for every code-based type.
 14. **U1** — the new UI, after D15 (it is served by the API) and D14.
 
+## Phase 6 — Round 3 (2026-11-07)
+
+15. **D16-D24** (Part 1, round 3), each in its own branch.
+16. **Measure** (§3.8 "First step") on the benchmark machine. It sets the realistic target for
+    1 billion rows.
+17. **Part 3 §3.8**, only when Part 1 is empty (§0): the governor and the §5.6 fix, then the
+    `/v1` API and the job table, then the in-database apply if the measurement supports it.
+
 ---
 
 ## Next deliverable
@@ -1311,3 +1655,7 @@ alternatives deferred — matching the format of ADR-001 through ADR-017.
 Round 2 (proposed, not written): an amendment to ADR-010 for D13; amendments to ADR-013 and
 ADR-017 for D14 (the origin is always read-only); a new ADR for D15 (network and database-
 address policy); a new ADR for U1 (UI scope and technology).
+
+Round 3 (proposed, not written): an amendment to ADR-016 for the governor and the in-database
+apply (decisions L, M, N); a new ADR for the three-machine deployment (Q26-Q30); a new ADR for
+the `/v1` service API and the job table (decisions O, P); an amendment to ADR-023 for `/docs`.
