@@ -248,31 +248,32 @@ def migrate_sources(persistence: PgPersistence) -> dict[str, int]:
     connection or job is gone cannot be re-keyed and is only counted. Verdict
     rows are copied, never changed: the history stays the audit trail."""
     report = {"migrated": 0, "unmigrated": 0}
-    _, rows = persistence.list_queue(semantic_type=None, decided=None, limit=2**31, offset=0)
-    for row in rows:
-        context = json.loads(row["context"])
-        source = context.get("source")
-        if not source or "://" in source:
-            continue
-        connection = persistence.get_connection(source)
-        job = persistence.get_clone_job(row["last_job_id"])
-        detail = json.loads(row["detail"])
-        original = row["original"]
-        if detail.get("original_encoding") == "json":
-            original = json.loads(original)
-        if connection is None or job is None or original != sanitize_surrogates(original):
-            report["unmigrated"] += 1
-            continue
-        context["source"] = source_identity(
-            connection, job["source_database"], job.get("source_schema")
-        )
-        new_context = NormalizationContext(**context)
-        semantic_type = FieldSemanticType(row["semantic_type"])
-        persistence.rekey_adjudication(
-            row["key"],
-            new_key=verdict_key(semantic_type, original, new_context, row["profile_version"]),
-            context=new_context.model_dump_json(),
-            context_hash=new_context.context_hash,
-        )
-        report["migrated"] += 1
+    # The writes share the reading transaction: a second connection could not
+    # commit on SQLite while the cursor is open.
+    with persistence.transaction() as conn:
+        for row in persistence.queue_rows_to_migrate(conn):
+            context = json.loads(row["context"])
+            source = context["source"]
+            connection = persistence.get_connection(source)
+            job = persistence.get_clone_job(row["last_job_id"])
+            detail = json.loads(row["detail"])
+            original = row["original"]
+            if detail.get("original_encoding") == "json":
+                original = json.loads(original)
+            if connection is None or job is None or original != sanitize_surrogates(original):
+                report["unmigrated"] += 1
+                continue
+            context["source"] = source_identity(
+                connection, job["source_database"], job.get("source_schema")
+            )
+            new_context = NormalizationContext(**context)
+            semantic_type = FieldSemanticType(row["semantic_type"])
+            persistence.rekey_adjudication(
+                conn,
+                row["key"],
+                new_key=verdict_key(semantic_type, original, new_context, row["profile_version"]),
+                context=new_context.model_dump_json(),
+                context_hash=new_context.context_hash,
+            )
+            report["migrated"] += 1
     return report

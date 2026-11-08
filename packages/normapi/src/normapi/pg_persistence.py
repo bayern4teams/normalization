@@ -49,6 +49,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
@@ -905,45 +906,63 @@ class PgPersistence:
                     [{"key": key} for key in keys],
                 )
 
+    def transaction(self) -> Any:
+        """One transaction, for work that spans several calls on `conn`."""
+        return self._engine.begin()
+
+    def queue_rows_to_migrate(self, conn: sa.Connection) -> Iterator[sa.RowMapping]:
+        """Stream the queue rows whose source is still a connection id. Start-up
+        runs this on every boot, so nothing here may grow with the queue: the
+        filter is in SQL, and stream_results reads through a server-side cursor."""
+        source = _CONTEXT_SOURCE[conn.dialect.name]
+        result = conn.execute(
+            sa.text(
+                "SELECT key, semantic_type, profile_version, context, original, detail, "
+                f"last_job_id FROM normalization_adjudication_queue WHERE {source} <> '' "
+                f"AND {source} NOT LIKE '%://%'"
+            ),
+            execution_options={"stream_results": True},
+        )
+        yield from result.mappings()
+
     def rekey_adjudication(
-        self, old_key: str, *, new_key: str, context: str, context_hash: str
+        self, conn: sa.Connection, old_key: str, *, new_key: str, context: str, context_hash: str
     ) -> None:
-        """Move one queue row to a new key and copy its verdicts there, in
-        one transaction. The old verdict rows stay (append-only history).
-        Two connection ids for one server (the re-added case itself) land on
-        the same new key: the row already there is kept, the other merged
-        into it (its verdicts copied, its row dropped)."""
+        """Move one queue row to a new key and copy its verdicts there, on
+        the caller's transaction. The old verdict rows stay (append-only
+        history). Two connection ids for one server (the re-added case
+        itself) land on the same new key: the row already there is kept, the
+        other merged into it (its verdicts copied, its row dropped)."""
         columns = _VERDICT_COLUMNS.split(", ")
-        with self._engine.begin() as conn:
-            taken = conn.execute(
-                sa.text("SELECT 1 FROM normalization_adjudication_queue WHERE key = :new"),
-                {"new": new_key},
-            ).first()
+        taken = conn.execute(
+            sa.text("SELECT 1 FROM normalization_adjudication_queue WHERE key = :new"),
+            {"new": new_key},
+        ).first()
+        conn.execute(
+            sa.text(
+                "DELETE FROM normalization_adjudication_queue WHERE key = :old"
+                if taken
+                else "UPDATE normalization_adjudication_queue "
+                "SET key = :new, context = :context, context_hash = :ch WHERE key = :old"
+            ),
+            {"new": new_key, "context": context, "ch": context_hash, "old": old_key},
+        )
+        verdicts = conn.execute(
+            sa.text(
+                f"SELECT {_VERDICT_COLUMNS} FROM normalization_adjudication_verdicts "
+                "WHERE key = :old"
+            ),
+            {"old": old_key},
+        ).mappings()
+        copies = [{**row, "key": new_key, "context_hash": context_hash} for row in verdicts]
+        if copies:
             conn.execute(
                 sa.text(
-                    "DELETE FROM normalization_adjudication_queue WHERE key = :old"
-                    if taken
-                    else "UPDATE normalization_adjudication_queue "
-                    "SET key = :new, context = :context, context_hash = :ch WHERE key = :old"
+                    f"INSERT INTO normalization_adjudication_verdicts ({_VERDICT_COLUMNS}) "
+                    f"VALUES ({', '.join(':' + c for c in columns)})"
                 ),
-                {"new": new_key, "context": context, "ch": context_hash, "old": old_key},
+                copies,
             )
-            verdicts = conn.execute(
-                sa.text(
-                    f"SELECT {_VERDICT_COLUMNS} FROM normalization_adjudication_verdicts "
-                    "WHERE key = :old"
-                ),
-                {"old": old_key},
-            ).mappings()
-            copies = [{**row, "key": new_key, "context_hash": context_hash} for row in verdicts]
-            if copies:
-                conn.execute(
-                    sa.text(
-                        f"INSERT INTO normalization_adjudication_verdicts ({_VERDICT_COLUMNS}) "
-                        f"VALUES ({', '.join(':' + c for c in columns)})"
-                    ),
-                    copies,
-                )
 
     def load_verdicts(
         self, *, semantic_type: str, context_hash: str, profile_version: str
@@ -1025,6 +1044,12 @@ _VERDICT_COLUMNS = (
     "key, semantic_type, context_hash, profile_version, decided_value, decided_display, "
     "decided_by, decided_at, rationale, confidence, env_id"
 )
+# context is TEXT holding JSON; the SQL for its "source" field differs per engine.
+_CONTEXT_SOURCE = {
+    "postgresql": "(context::json->>'source')",
+    "sqlite": "json_extract(context, '$.source')",
+}
+
 _QUEUE_SELECT = (
     "SELECT q.key, q.semantic_type, q.context_hash, q.profile_version, q.context, "
     "q.original, q.detail, q.first_job_id, q.last_job_id, q.occurrences, "
