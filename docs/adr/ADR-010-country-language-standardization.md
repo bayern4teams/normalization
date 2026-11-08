@@ -96,3 +96,10 @@ code back changed none. The decisions:
   `comparison`, not `display` (owner approval 2026-10-27, Q3 "a").
 - **Limit:** CLDR's territory-to-language data lists languages spoken, not a proof of what a cell
   means. It settles a collision only when exactly one reading is a language of the row's territory.
+
+## Amendment 2026-11-08 — LANGUAGE: a phone's calling code is row evidence (round 3, D21)
+
+- **A phone in international form names the row's country for LANGUAGE,** within the row, after the
+  row's own COUNTRY column. A national-format phone names nothing, and phones that disagree name nothing.
+- **A postcode stays cross-table only:** alone it does not name a country.
+- Only LANGUAGE takes this evidence, so no other column's context, `context_hash` or verdict key moves.
