@@ -51,8 +51,17 @@ def allowed_networks() -> tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, .
     extra = os.environ.get(_ENV_EXTRA, "").strip()
     if not extra:
         return _BUILTIN_NETWORKS
-    parsed = tuple(ipaddress.ip_network(item.strip(), strict=True) for item in extra.split(","))
-    return _BUILTIN_NETWORKS + parsed
+    return _BUILTIN_NETWORKS + tuple(_parse_network(item.strip()) for item in extra.split(","))
+
+
+def _parse_network(entry: str) -> ipaddress.IPv4Network | ipaddress.IPv6Network:
+    try:
+        return ipaddress.ip_network(entry, strict=True)
+    except ValueError as exc:
+        raise ValueError(
+            f"{_ENV_EXTRA} entry {entry!r} is not a network: {exc}. "
+            "Fix: use comma-separated CIDRs with no host bits set, for example 100.64.0.0/10."
+        ) from exc
 
 
 def _parse(addr: str) -> IPAddress | None:
