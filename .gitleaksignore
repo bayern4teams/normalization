@@ -3,3 +3,5 @@
 6ae91d595be2ce6a26d4170f917667159306edf5:compose.yaml:generic-api-key:61
 # C5: reason=false positive, an nginx proxy_pass URL (host:port), not a secret; the file is no longer in the tree; approved=user, 2026-10-24; review=2027-10-24
 0dd13b0fa1a9a6aa30bf1452e6c9825106878dc3:ui/nginx.conf:generic-api-key:12
+# C5: reason=the same dev-only Fernet key as above, kept in compose.yaml until it moved to .env; checked 2026-11-08 by hash: not the .env key, no saved connection or benchmark-machine file uses it; approved=user, 2026-11-08 ("k3. a"); review=2027-11-08
+4e3d337a620e190c1caff5368cc5dcda4781a9d8:compose.yaml:generic-api-key:61
