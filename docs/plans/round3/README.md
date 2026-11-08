@@ -8,8 +8,8 @@ prove them. Part 3 §3.8 is not built until every Part 1 item is done (report §
 | Prompt | Items | Waits for the owner |
 |---|---|---|
 | [`PROMPT_1_API.md`](PROMPT_1_API.md) | D25, D16, D17, D18, D19 | — |
-| [`PROMPT_2_NORMALIZERS.md`](PROMPT_2_NORMALIZERS.md) | D27, D28, D29, D30, D20, D21 | D27's `CS` (B3b) |
-| [`PROMPT_3_CLONE.md`](PROMPT_3_CLONE.md) | D26, D22, D23, D31, D32 | D32's key columns (B8b) |
+| [`PROMPT_2_NORMALIZERS.md`](PROMPT_2_NORMALIZERS.md) | D27, D28, D29, D30, D20, D21 | — |
+| [`PROMPT_3_CLONE.md`](PROMPT_3_CLONE.md) | D26, D22, D23, D31, D32 | D32's companion column name (B8c) |
 | [`PROMPT_4_RECORDS.md`](PROMPT_4_RECORDS.md) | D24 | — |
 | [`BENCHMARK_RUN.md`](BENCHMARK_RUN.md) | the owner's benchmark run, after each prompt | — |
 

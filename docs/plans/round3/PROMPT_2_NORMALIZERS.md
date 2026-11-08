@@ -20,8 +20,8 @@ Read first, in this order:
 Per item:
 
 - **D27.** Withdrawn codes with several successors become AMBIGUOUS with CLDR's successors as
-  readings; never pick one. **`CS` is not decided:** if the D27 row still says "waits for the
-  owner (B3b)", build everything except `CS`, leave `CS` as it is today, and tell the owner.
+  readings; never pick one. `CS` gets `RS`, `ME` and the historic entity `CSHH` (owner "b3b. a").
+  No hand-made successor list.
 - **D28.** CLDR `alt="short"` names; a leading "The" stripped only when the rest is an exact,
   unambiguous name; `Congo` and `Korea` AMBIGUOUS with both readings. No GeoNames table.
 - **D29.** `XYZ`, `XTS`, `XXX`: INVALID with an error message that says how to fix it; a clone

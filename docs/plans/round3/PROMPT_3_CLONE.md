@@ -20,18 +20,21 @@ Per item:
 
 - **D26.** Parse `system.tables.sorting_key` by its syntax in
   `normio/connectors/clickhouse.py::get_table_engine_info`, as the D26 row says. Prove it live
-  on the benchmark machine's ClickHouse: tables with `ORDER BY (id)`, `(a, b)`, an expression
-  key and `tuple()`, each cloned and its destination `ORDER BY` compared with the source's by
-  direct SQL. Record the ClickHouse version you tested on.
+  on the benchmark machine's ClickHouse (26.8.2.7, Q31): tables with `ORDER BY (id)`, `(a, b)`,
+  an expression key and `tuple()`, each cloned and its destination `ORDER BY` compared with the
+  source's by direct SQL. The owner's database machine runs 26.4.2.10; ask the owner before
+  reading anything there. The parser must accept both versions' formats.
 - **D22.** Refuse an origin and a destination that resolve to the same address, port and
   database, under any host names.
 - **D23.** A table list on clone-job create, checked against the origin, and the UI's table
   picker (Playwright test, API stubbed as the other specs do).
 - **D31.** The D31 row, exactly. Keep the 0.9 apply line. Never infer NUMERIC or FREE_TEXT from
   values alone.
-- **D32.** Amend ADR-020's sentence to cover configured columns only. **The key-column case is
-  not decided:** if the D32 row still says "waits for the owner (B8b)", amend only the
-  sentence, change no code, and tell the owner.
+- **D32.** Amend ADR-020's sentence to cover configured columns only. A configured column that
+  is also a primary or sort key keeps the source value; its normalized value goes to a new
+  companion column (owner "b8b. a"). If the D32 row still says its name "waits for the owner
+  (B8c)", build everything except that column and tell the owner. Update ARCHITECTURE.md's data
+  contract in the same commit.
 
 Stop and ask the owner when a sort key cannot be copied safely and the report does not say what
 the job should do, or when a fix changes what an existing clone writes.
