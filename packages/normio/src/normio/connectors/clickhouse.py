@@ -41,8 +41,6 @@ class SortKey(NamedTuple):
     sql: list[str]
     # Every column the key reads, in key order.
     columns: list[str]
-    # The columns read inside an expression, whose type must not change.
-    expression_columns: set[str]
 
 
 def _split_top_level(text: str) -> list[str]:
@@ -183,7 +181,6 @@ class ClickHouseConnector:
         engine, sorting_key = result.result_rows[0]
         sql: list[str] = []
         columns: list[str] = []
-        expression_columns: set[str] = set()
         table_columns: set[str] | None = None
         for part in split_sorting_key(sorting_key):
             name = _KEY_NAME.fullmatch(part)
@@ -195,10 +192,8 @@ class ClickHouseConnector:
             if table_columns is None:
                 table_columns = self._list_columns(table)
             found = [_key_name(m) for m in _KEY_NAME.finditer(_KEY_STRING_LITERAL.sub("", part))]
-            read = [c for c in found if c in table_columns]
-            columns += read
-            expression_columns |= set(read)
-        return SortKey(engine, sql, list(dict.fromkeys(columns)), expression_columns)
+            columns += [c for c in found if c in table_columns]
+        return SortKey(engine, sql, list(dict.fromkeys(columns)))
 
     def _list_columns(self, table: str) -> set[str]:
         result = self._client.query(

@@ -113,10 +113,12 @@ def _job(**field_configs: str) -> dict[str, Any]:
     return {"field_configs": {"t": field_configs}}
 
 
-def test_an_expression_key_on_a_retyped_column_fails_and_says_why() -> None:
+def test_an_expression_key_on_a_configured_column_keeps_its_type() -> None:
     source, _ = _source("toDate(ts), id", "ts", "id")
-    with pytest.raises(clone_executor.CloneJobStateError, match=r"toDate\(ts\).*'ts'|'ts'.*key"):
-        clone_executor.plan_one_table(source, "clickhouse", "t", _job(ts="DATETIME"))
+    plan = clone_executor.plan_one_table(source, "clickhouse", "t", _job(ts="DATETIME"))
+    assert plan["sort_key_sql"] == ["toDate(ts)", "`id`"]
+    assert plan["ddl_semantic_types"] == {}
+    assert plan["key_normalized_columns"] == {"ts": "ts_normalized"}
 
 
 def test_an_expression_key_on_untouched_columns_is_copied_verbatim() -> None:
