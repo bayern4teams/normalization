@@ -54,7 +54,7 @@ VALID: dict[F, tuple[list[str], dict[str, str]]] = {
     F.EMAIL: ([f"user{i}@example{i % 40}.org" for i in range(400)], {}),
     F.PHONE: (_phones(), {}),
     F.COUNTRY: ([c.alpha_2 for c in pycountry.countries], {}),
-    F.CURRENCY: ([c.alpha_3 for c in pycountry.currencies], {}),
+    F.CURRENCY: ([c.alpha_3 for c in pycountry.currencies if c.alpha_3 not in {"XXX", "XTS"}], {}),
     F.URL: ([f"https://www.site{i}.example.com/p/{i}" for i in range(400)], {}),
     F.DATE: (_dates(), {}),
     F.DATETIME: (_datetimes(), {}),

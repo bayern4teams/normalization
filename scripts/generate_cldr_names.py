@@ -45,6 +45,7 @@ from xml.etree import ElementTree
 import babel
 import pycountry
 from babel import localedata
+from normalizers.currency import NON_CURRENCY_CODES
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -67,14 +68,9 @@ _ISO_3166_1_ALPHA2 = {country.alpha_2 for country in pycountry.countries}
 
 _ISO_4217 = {currency.alpha_3 for currency in pycountry.currencies}
 
-# ISO 4217 reserves these two for "no currency" and "testing". They are
-# real code-list entries, so pycountry lists them, but every CLDR name
-# they carry is a variant of "Unknown Currency" or "Test Currency" —
-# resolving a value to one at confidence 1.0 would report a successful
-# normalization for exactly the input that has none. Dropping XXX also
-# drops "¤" (U+00A4 CURRENCY SIGN), which is CLDR's generic placeholder
-# and must never resolve to a specific currency.
-_NON_CURRENCY_CODES = frozenset({"XXX", "XTS"})
+# Every CLDR name of XXX and XTS is a variant of "Unknown Currency" or "Test
+# Currency", so they are dropped. Dropping XXX also drops "¤" (U+00A4 CURRENCY
+# SIGN), which is CLDR's generic placeholder and must never resolve.
 
 
 def _pycountry_keys(database: Iterable[pycountry.db.Data]) -> frozenset[str]:
@@ -213,13 +209,13 @@ def build() -> dict[str, dict[str, str]]:
             name: code
             for name, code in _resolved(currency_names)
             if code in _ISO_4217
-            and code not in _NON_CURRENCY_CODES
+            and code not in NON_CURRENCY_CODES
             and not _is_too_short_to_be_a_name(name)
         },
         "CLDR_CURRENCY_SYMBOLS": {
             symbol: code
             for symbol, code in _resolved(currency_symbols)
-            if code in _ISO_4217 and code not in _NON_CURRENCY_CODES and not _is_invisible(symbol)
+            if code in _ISO_4217 and code not in NON_CURRENCY_CODES and not _is_invisible(symbol)
         },
         # The symbols `_record` dropped for naming several currencies ("$":
         # USD in en_US, CAD in en_CA): a value that is one of them is a
@@ -227,8 +223,7 @@ def build() -> dict[str, dict[str, str]]:
         "CLDR_SHARED_CURRENCY_SYMBOLS": {
             symbol: " ".join(sorted(real))
             for symbol, codes in sorted(symbol_codes.items())
-            if len(real := {c for c in codes if c in _ISO_4217 and c not in _NON_CURRENCY_CODES})
-            > 1
+            if len(real := {c for c in codes if c in _ISO_4217 and c not in NON_CURRENCY_CODES}) > 1
             and not _is_invisible(symbol)
         },
         "CLDR_LANGUAGE_NAMES": {
