@@ -773,8 +773,21 @@ def plan_one_table(
         if semantic_type
     }
     table_engine: str | None = None
+    sort_key_sql: list[str] | None = None
     if isinstance(source, ClickHouseConnector):
-        table_engine = source.get_table_engine_info(table)[0]
+        sort_key = source.get_sort_key(table)
+        table_engine, sort_key_sql = sort_key.engine, sort_key.sql
+        retyped = sort_key.expression_columns & set(semantic_types)
+        if retyped:
+            # Never a silent tuple(): on Replacing, Summing and Collapsing
+            # tables the sort key is the dedupe key.
+            msg = (
+                f"Table {table!r}: the sort key ({', '.join(sort_key.sql)}) is an expression "
+                f"over {sorted(retyped)}, and a semantic type changes that column's "
+                "destination type, so the key cannot be copied. Remove the semantic type "
+                "from that column and start the job again."
+            )
+            raise CloneJobStateError(msg)
     key_columns = _key_columns(source, table)
     overrides, extras, typed_columns = _destination_plan(
         semantic_types,
@@ -787,6 +800,7 @@ def plan_one_table(
         "semantic_types": semantic_types,
         "key_columns": key_columns,
         "table_engine": table_engine,
+        "sort_key_sql": sort_key_sql,
         "column_overrides": overrides,
         "extra_columns": extras,
         "typed_columns": typed_columns,
@@ -1030,6 +1044,7 @@ def verify_and_create_schema(persistence: PgPersistence, job_id: str) -> dict[st
                         table,
                         plan["columns"],
                         order_by=plan["key_columns"],
+                        sort_key_sql=plan["sort_key_sql"],
                         engine=plan["table_engine"],
                         **shared,
                     )

@@ -111,6 +111,7 @@ class ClickHouseDestination:
         columns: Sequence[ColumnInfo],
         *,
         order_by: Sequence[str] = (),
+        sort_key_sql: Sequence[str] | None = None,
         engine: str = "MergeTree",
         semantic_types: Mapping[str, str] | None = None,
         column_overrides: Mapping[str, str] | None = None,
@@ -127,7 +128,9 @@ class ClickHouseDestination:
         are NEVER wrapped in Nullable regardless — ClickHouse hard-rejects
         a nullable sorting key unless `allow_nullable_key` is set (found
         by actually running this DDL against real ClickHouse, not by
-        reasoning about the type system)."""
+        reasoning about the type system). `sort_key_sql`, the origin's own
+        key elements, replaces the clause built from `order_by` when the key
+        has expressions; `order_by` still names the columns it reads."""
         semantic_types = semantic_types or {}
         column_overrides = column_overrides or {}
         order_by_set = set(order_by)
@@ -148,7 +151,8 @@ class ClickHouseDestination:
             f"{quote_identifier(name)} Nullable({t})" for name, t in (extra_columns or {}).items()
         ]
         column_defs = ", ".join(defs)
-        order_clause = ", ".join(map(quote_identifier, order_by)) if order_by else "tuple()"
+        key_sql = sort_key_sql if sort_key_sql is not None else map(quote_identifier, order_by)
+        order_clause = ", ".join(key_sql) or "tuple()"
         ddl = (
             f"CREATE TABLE {quote_identifier(database)}.{quote_identifier(table)} ({column_defs}) "
             f"ENGINE = {engine} ORDER BY ({order_clause})"

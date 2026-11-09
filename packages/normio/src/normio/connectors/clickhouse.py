@@ -8,6 +8,7 @@ non-Arrow-native drivers.
 
 from __future__ import annotations
 
+import contextlib
 import errno
 import os
 import queue
@@ -15,7 +16,7 @@ import re
 import shutil
 import tempfile
 import threading
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 import clickhouse_connect
 import pyarrow as pa
@@ -23,12 +24,75 @@ import pyarrow as pa
 from normio.connector import ColumnInfo
 from normio.connectors.clickhouse_destination import quote_identifier
 
-# One element of `system.tables.sorting_key`, which ClickHouse formats with
-# a name backquoted (and escaped) only when it needs it: `a.b`, `b\`t`, id.
-_SORTING_KEY_PART = re.compile(r"`((?:[^`\\]|\\.)*)`|([^,\s][^,]*)")
+# A name in `system.tables.sorting_key`, which ClickHouse formats with a
+# name backquoted (and escaped) only when it needs it: `a.b`, `b\`t`, id.
+_KEY_NAME = re.compile(r"`((?:[^`\\]|\\.)*)`|([A-Za-z_][A-Za-z0-9_]*)")
+_KEY_STRING_LITERAL = re.compile(r"'(?:[^'\\]|\\.)*'")
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator, Sequence
+
+
+class SortKey(NamedTuple):
+    """A table's sort key as `system.tables` reports it."""
+
+    engine: str
+    # Each top-level element as SQL: a name quoted, an expression verbatim.
+    sql: list[str]
+    # Every column the key reads, in key order.
+    columns: list[str]
+    # The columns read inside an expression, whose type must not change.
+    expression_columns: set[str]
+
+
+def _split_top_level(text: str) -> list[str]:
+    """`text` cut at commas outside quotes and brackets; ValueError if unbalanced."""
+    parts, start, depth, quote, i = [], 0, 0, "", 0
+    while i < len(text):
+        char = text[i]
+        if quote:
+            if char == "\\":
+                i += 1
+            elif char == quote:
+                quote = ""
+        elif char in "`'\"":
+            quote = char
+        elif char in "([":
+            depth += 1
+        elif char in ")]":
+            depth -= 1
+        elif char == "," and depth == 0:
+            parts.append(text[start:i].strip())
+            start = i + 1
+        if depth < 0:
+            break
+        i += 1
+    if depth or quote:
+        msg = f"Cannot parse sorting_key {text!r}: unbalanced quotes or brackets"
+        raise ValueError(msg)
+    parts.append(text[start:].strip())
+    return parts
+
+
+def split_sorting_key(text: str) -> list[str]:
+    """The elements of `system.tables.sorting_key`, parsed by its syntax.
+
+    26.8.2.7 reports `ORDER BY (id)` as `(id)` and `ORDER BY (a, b)` as
+    `a, b`, so one outer pair of brackets is optional. `tuple()` means no key.
+    """
+    text = text.strip()
+    if text in ("", "tuple()"):
+        return []
+    parts = _split_top_level(text)
+    if len(parts) == 1 and text[0] == "(" and text[-1] == ")":
+        with contextlib.suppress(ValueError):  # `(a) + (b)` is not one outer pair
+            return _split_top_level(text[1:-1])
+    return parts
+
+
+def _key_name(match: re.Match[str]) -> str:
+    quoted, bare = match.groups()
+    return re.sub(r"\\(.)", r"\1", quoted) if quoted is not None else bare
 
 
 class ClickHouseConnector:
@@ -98,22 +162,41 @@ class ClickHouseConnector:
         return [ColumnInfo(name=row[0], native_type=row[1]) for row in result.result_rows]
 
     def get_table_engine_info(self, table: str) -> tuple[str, Sequence[str]]:
-        """(engine, order_by_columns) for clone-job DDL replication
-        (decision #11) — `system.tables.sorting_key` is the ORDER BY
-        expression ClickHouse itself reports back as a comma-separated
-        column list for the common case (plain column names, no
-        expressions)."""
+        """(engine, key_columns) for clone-job DDL replication (decision #11)."""
+        key = self.get_sort_key(table)
+        return key.engine, key.columns
+
+    def get_sort_key(self, table: str) -> SortKey:
+        """The sort key from `system.tables.sorting_key`. An expression's
+        columns come from scanning its text against the table's columns, so
+        a function name is not mistaken for one.
+
+        ponytail: `sorting_key` hides DESC, so a descending key is copied
+        ascending. Read `create_table_query` if the owner wants it kept."""
         result = self._client.query(
             "SELECT engine, sorting_key FROM system.tables "
             "WHERE database = {db:String} AND name = {t:String}",
             parameters={"db": self._database, "t": table},
         )
         engine, sorting_key = result.result_rows[0]
-        order_by = [
-            re.sub(r"\\(.)", r"\1", quoted) if quoted else bare.strip()
-            for quoted, bare in _SORTING_KEY_PART.findall(sorting_key)
-        ]
-        return engine, order_by
+        sql: list[str] = []
+        columns: list[str] = []
+        expression_columns: set[str] = set()
+        table_columns: set[str] | None = None
+        for part in split_sorting_key(sorting_key):
+            name = _KEY_NAME.fullmatch(part)
+            if name:
+                columns.append(_key_name(name))
+                sql.append(quote_identifier(columns[-1]))
+                continue
+            sql.append(part)
+            if table_columns is None:
+                table_columns = self._list_columns(table)
+            found = [_key_name(m) for m in _KEY_NAME.finditer(_KEY_STRING_LITERAL.sub("", part))]
+            read = [c for c in found if c in table_columns]
+            columns += read
+            expression_columns |= set(read)
+        return SortKey(engine, sql, list(dict.fromkeys(columns)), expression_columns)
 
     def _list_columns(self, table: str) -> set[str]:
         result = self._client.query(
@@ -173,8 +256,8 @@ class ClickHouseConnector:
         # The key comes from `get_table_engine_info`, the same source and
         # the same sorting-key parse that Phase 1 already uses to CREATE the
         # destination table's ORDER BY — if that DDL was valid, this is.
-        _, order_by = self.get_table_engine_info(table)
-        order_clause = " ORDER BY " + ", ".join(map(quote_identifier, order_by)) if order_by else ""
+        order_by = self.get_sort_key(table).sql
+        order_clause = " ORDER BY " + ", ".join(order_by) if order_by else ""
         query = f"SELECT {column_list} FROM {quote_identifier(table)}{order_clause}"
 
         # query_arrow() (what this used to call) materializes the ENTIRE
