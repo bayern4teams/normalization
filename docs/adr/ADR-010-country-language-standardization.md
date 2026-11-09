@@ -108,3 +108,16 @@ Owner, 2026-11-08: "b3. a", "b3b. a".
   No installed source names Czechoslovakia's successors, so a reviewer maps `CSHH` by typing the
   code; choosing `CSHH` itself is refused (HTTP 422), because it is not a current country code.
 - **Limit:** alpha-2 codes only. A withdrawn alpha-3 code (`SUN`, `DDR`) stays unresolved, as before.
+
+## Amendment 2026-11-08 — COUNTRY: names (round 3, D28)
+
+Owner, 2026-11-08: "b4. a", "b4b. a", "b4c. a".
+
+- **A name ISO 3166 only gives with a qualifier is `AMBIGUOUS`.** It is what stands before the comma in
+  the names of several countries (`Congo`, `Korea`, `Virgin Islands`); the readings are those countries.
+  The rule reads pycountry's names, so no list is kept by hand.
+- **A leading "The" is stripped only when the rest is an exact, unambiguous name** longer than a code.
+  No standard defines this; it is the owner's rule. `The Congo` and `The US` stay unresolved.
+- **CLDR's `alt="short"` names** (`Cocos Islands`, `Palestine`) are generated from CLDR's own XML, because
+  Babel does not expose them; the clash rule of the other generated names applies. Owner, 2026-11-09:
+  "take your all recommendations."

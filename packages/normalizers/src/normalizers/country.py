@@ -34,7 +34,11 @@ from normcore.pii import character_class_mask, content_hash
 from normcore.rules import ComponentVersionInfo, ExplanationText, ValidationOutcome
 from normcore.trace import TraceStep
 
-from normalizers.country_codes import resolve_country_alpha2, withdrawn_country_readings
+from normalizers.country_codes import (
+    resolve_country_alpha2,
+    shared_name_readings,
+    withdrawn_country_readings,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -80,15 +84,9 @@ class CountryNormalizer:
         cleaned = value.strip()
         alpha2 = resolve_country_alpha2(cleaned)
         if alpha2 is None:
-            readings = withdrawn_country_readings(cleaned)
-            if readings:
-                return _ambiguous(
-                    value,
-                    readings,
-                    f"withdrawn ISO 3166 code with several successors, not guessed: "
-                    f"choose one of {', '.join(readings)}",
-                    ctx,
-                )
+            several = _several_readings(cleaned)
+            if several:
+                return _ambiguous(value, *several, ctx)
             return _unresolved(value, ctx)
 
         country = pycountry.countries.get(alpha_2=alpha2)
@@ -198,6 +196,18 @@ def _unresolved(value: str, ctx: NormalizationContext) -> NormalizedValue:
         env_id="",
         semantic_type=ctx.semantic_type,
         context_hash=ctx.context_hash,
+    )
+
+
+def _several_readings(cleaned: str) -> tuple[list[str], str] | None:
+    """The readings of a value that names several countries, and why."""
+    readings = withdrawn_country_readings(cleaned)
+    why = "withdrawn ISO 3166 code with several successors"
+    if not readings:
+        readings = shared_name_readings(cleaned)
+        why = "this name fits several countries"
+    return (
+        (readings, f"{why}, not guessed: choose one of {', '.join(readings)}") if readings else None
     )
 
 
