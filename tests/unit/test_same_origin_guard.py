@@ -151,4 +151,4 @@ def test_create_refuses_two_names_for_one_address(monkeypatch: pytest.MonkeyPatc
         "field_configs": {},
     }
     with pytest.raises(CloneJobStateError, match="origin"):
-        clone_executor.create_clone_job(_Connections(), request=request)  # type: ignore[arg-type]
+        clone_executor.create_clone_job(_Connections(), request=request)
