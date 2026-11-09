@@ -131,3 +131,10 @@ Owner, 2026-11-07: "d20a. a", "d20b. a".
   feeding `comparison` back changes nothing. By this rule the 13 three-letter codes of languages with
   a two-letter code that are also another language's name (`mon`, `ron`, `tha`, ...) are `AMBIGUOUS`.
 - **`_` reads as `-` only inside a valid locale tag:** `en_US` equals `en-US`; `Kuku_Yalanji` stays `INVALID`.
+
+## Amendment 2026-11-08 — LANGUAGE: a phone's calling code is row evidence (round 3, D21)
+
+- **A phone in international form names the row's country for LANGUAGE,** within the row, after the
+  row's own COUNTRY column. A national-format phone names nothing, and phones that disagree name nothing.
+- **A postcode stays cross-table only:** alone it does not name a country.
+- Only LANGUAGE takes this evidence, so no other column's context, `context_hash` or verdict key moves.

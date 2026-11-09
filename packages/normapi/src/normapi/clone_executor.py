@@ -42,6 +42,7 @@ import sqlalchemy as sa
 from normalizers.date import column_date_evidence
 from normalizers.language import column_language_evidence
 from normalizers.numeric import column_decimal_evidence
+from normalizers.phone import PhoneNormalizer
 from normalizers.postcode_validation import country_from_postcode_format
 from normanalysis.type_detection import suggest_semantic_type
 from normexec.planner import DistinctValuePlanner
@@ -1656,6 +1657,29 @@ def _record_country_signal(
         signals[offset] = (column, "")
 
 
+def _phone_row_countries(
+    pending: list[tuple[int, dict[str, Any]]], columns: list[str]
+) -> dict[int, tuple[str, str]]:
+    """The country each row's own phones state (D21), same shape as `signals`.
+    Read with no country in context, so only a number carrying its +CC counts;
+    this runs before the PHONE columns rewrite the row. Phones that disagree
+    leave the sticky empty answer, as two COUNTRY columns do."""
+    ctx = NormalizationContext(field_name="__row_phone__", semantic_type=FieldSemanticType.PHONE)
+    normalizer = PhoneNormalizer()
+    found: dict[int, tuple[str, str]] = {}
+    for offset, row in pending:
+        for column in columns:
+            value = row.get(column)
+            alpha2 = (
+                _country_from_phone(normalizer.normalize(value, ctx))
+                if isinstance(value, str)
+                else None
+            )
+            if alpha2 and found.setdefault(offset, (column, alpha2))[1] != alpha2:
+                found[offset] = (column, "")
+    return found
+
+
 _SAMPLE_VALUES_PER_COLUMN = 3
 _FAILING_VALUES_KEPT = 10_000
 # What counts as a conforming cell for D4's minority rule.
@@ -2115,6 +2139,12 @@ def _normalize_chunk(
 
     job_country = job.get("country")
     signals: dict[int, tuple[str, str]] = {}
+    phone_columns = [c for c, t in configured_columns.items() if t is FieldSemanticType.PHONE]
+    phone_signals = (
+        _phone_row_countries(pending, phone_columns)
+        if FieldSemanticType.LANGUAGE in configured_columns.values()
+        else {}
+    )
     country_first = sorted(
         configured_columns.items(),
         key=lambda item: item[1] is not FieldSemanticType.COUNTRY,
@@ -2127,14 +2157,19 @@ def _normalize_chunk(
         # currently get from it, which is worth 73.8 points of E.164
         # coverage on a real source. They feed the cross-table entity map
         # instead, which is built in its own pass and has no such ordering.
+        # LANGUAGE alone also takes a phone's +CC (D21), which needs no country
+        # read first; the row's COUNTRY column still wins.
         provides_country = semantic_type is FieldSemanticType.COUNTRY
+        row_signals = (
+            {**phone_signals, **signals} if semantic_type is FieldSemanticType.LANGUAGE else signals
+        )
         # No country column resolved anything (or there is none), so this
         # is one group with the job-level country — identical to the
         # behaviour before signals existed, and identical in cost.
         groups = (
             {(job_country, False): pending}
-            if provides_country or not (signals or seeded)
-            else _group_by_country(pending, signals, seeded, job_country)
+            if provides_country or not (row_signals or seeded)
+            else _group_by_country(pending, row_signals, seeded, job_country)
         )
         for (country, derived), group in groups.items():
             _apply_column(
