@@ -188,7 +188,7 @@ class ColumnInfoResponse(BaseModel):
 
 class CloneJobCreateRequest(BaseModel):
     """Body for `POST /clone-jobs`. Every table in `source_database` is
-    cloned automatically (decision #3) — `field_configs` only decides,
+    cloned (decision #3) unless `tables` names some — `field_configs` only decides,
     per already-included table/column, a semantic type or passthrough
     (a column absent from its table's map, or mapped to null, is
     passthrough)."""
@@ -205,6 +205,9 @@ class CloneJobCreateRequest(BaseModel):
     source_schema: str | None = None
     destination_connection_id: str = Field(min_length=1)
     destination_database: str = Field(min_length=1)
+    # Unset clones every table. Each name is checked against the origin; an
+    # empty list is refused, never read as "all".
+    tables: list[str] | None = Field(default=None, min_length=1)
     # Off by default: a column absent from `field_configs` is cloned
     # verbatim. Detection still runs and the plan (`GET .../plan`) shows its
     # suggestion per column with the share of sampled values that validate;
