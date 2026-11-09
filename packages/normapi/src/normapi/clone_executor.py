@@ -451,11 +451,10 @@ def create_clone_job(
     request: dict[str, Any],
     registry: NormalizerRegistry | None = None,
 ) -> dict[str, Any]:
-    """Creates the job PENDING_DB_CREATE (decision #6). `request.tables`
-    is captured NOW, at creation — every table in the chosen origin
-    database is cloned automatically (decision #3), so the job's table
-    list is a snapshot of `list_tables()`, not re-derived at Phase 1/2
-    time."""
+    """Creates the job PENDING_DB_CREATE (decision #6). The table list is
+    captured NOW, at creation — every table in the chosen origin database
+    (decision #3), or the ones `request["tables"]` names — so it is a
+    snapshot of `list_tables()`, not re-derived at Phase 1/2 time."""
     source_conn = persistence.get_connection(request["source_connection_id"])
     if source_conn is None:
         msg = f"No such connection: {request['source_connection_id']}"
@@ -470,6 +469,16 @@ def create_clone_job(
     try:
         tables = list(source.list_tables())
         _require_tables(source, tables, request)
+        chosen = request.get("tables")
+        if chosen is not None:
+            unknown = sorted(set(chosen) - set(tables))
+            if unknown:
+                msg = (
+                    f"The origin has no table {unknown} in database "
+                    f"{request['source_database']!r}. Choose from its table list."
+                )
+                raise CloneJobStateError(msg)
+            tables = [table for table in tables if table in chosen]
         if registry is not None:
             suggested = _suggest_field_types(
                 source,

@@ -1,11 +1,12 @@
 // New clone screen, three steps: (1) origin and destination, (2) the columns to normalize and
 // their semantic types, (3) "Check your answers". The Start button exists only in step 3.
-// Every table of the origin database is cloned (the API has no table filter); step 2 only
-// decides, per column, a semantic type or "copy unchanged".
+// Step 2 chooses the tables (all of them by default) and, per column of a chosen table, a
+// semantic type or "copy unchanged".
 import {
   Accordion,
   Alert,
   Button,
+  Checkbox,
   Group,
   NativeSelect,
   Stack,
@@ -104,6 +105,7 @@ export function NewClonePage() {
   const [destDatabase, setDestDatabase] = useState("");
   const [fieldConfigs, setFieldConfigs] = useState<FieldConfigs>({});
   const [openTables, setOpenTables] = useState<string[]>([]);
+  const [skippedTables, setSkippedTables] = useState<string[]>([]);
 
   const databasesQuery = useQuery({
     queryKey: ["clone-databases", sourceConnectionId],
@@ -123,7 +125,8 @@ export function NewClonePage() {
         source_database: sourceDatabase,
         destination_connection_id: destConnectionId,
         destination_database: destDatabase,
-        field_configs: fieldConfigs,
+        ...(skippedTables.length > 0 && { tables: chosenTables }),
+        field_configs: chosenConfigs,
       }),
     onSuccess: (job) => navigate(`/jobs/${job.job_id}`),
   });
@@ -131,6 +134,7 @@ export function NewClonePage() {
   function resetColumns() {
     setFieldConfigs({});
     setOpenTables([]);
+    setSkippedTables([]);
   }
 
   function setColumnType(table: string, column: string, value: FieldSemanticType | null) {
@@ -141,6 +145,10 @@ export function NewClonePage() {
   const label = (id: string) => connectionOptions(connections).find((o) => o.value === id)?.label ?? id;
   const step1Done = Boolean(sourceConnectionId && sourceDatabase && destConnectionId && destDatabase.trim());
   const tables = tablesQuery.data ?? [];
+  const chosenTables = tables.filter((table) => !skippedTables.includes(table));
+  const chosenConfigs = Object.fromEntries(
+    Object.entries(fieldConfigs).filter(([table]) => chosenTables.includes(table)),
+  );
 
   return (
     <Stack>
@@ -200,12 +208,27 @@ export function NewClonePage() {
       {step === 1 && (
         <Stack>
           <Text maw="70ch">
-            All {tables.length} table(s) of <b>{sourceDatabase}</b> are cloned. For each column you
-            want normalized, choose its semantic type. Every other column is copied unchanged.
+            {skippedTables.length === 0 ? "All" : `${chosenTables.length} of`} {tables.length} table(s) of{" "}
+            <b>{sourceDatabase}</b> are cloned. For each column you want normalized, choose its
+            semantic type. Every other column is copied unchanged.
           </Text>
           <QueryState isLoading={tablesQuery.isPending} isError={tablesQuery.isError} error={tablesQuery.error}>
-            <Accordion multiple value={openTables} onChange={setOpenTables}>
+            <Group>
               {tables.map((table) => (
+                <Checkbox
+                  key={table}
+                  label={table}
+                  aria-label={`Clone table ${table}`}
+                  checked={!skippedTables.includes(table)}
+                  onChange={(e) => {
+                    const { checked } = e.currentTarget;
+                    setSkippedTables((prev) => (checked ? prev.filter((t) => t !== table) : [...prev, table]));
+                  }}
+                />
+              ))}
+            </Group>
+            <Accordion multiple value={openTables} onChange={setOpenTables}>
+              {chosenTables.map((table) => (
                 <Accordion.Item key={table} value={table}>
                   <Accordion.Control>
                     {table}
@@ -231,7 +254,9 @@ export function NewClonePage() {
             <Button variant="default" onClick={() => setStep(0)}>
               Back
             </Button>
-            <Button onClick={() => setStep(2)}>Next</Button>
+            <Button disabled={chosenTables.length === 0} onClick={() => setStep(2)}>
+              Next
+            </Button>
           </Group>
         </Stack>
       )}
@@ -265,18 +290,18 @@ export function NewClonePage() {
               </Table.Tr>
               <Table.Tr>
                 <Table.Th scope="row">Tables cloned</Table.Th>
-                <Table.Td>{tables.length} (all)</Table.Td>
+                <Table.Td>{skippedTables.length === 0 ? `${tables.length} (all)` : chosenTables.join(", ")}</Table.Td>
                 <Table.Td />
               </Table.Tr>
               <Table.Tr>
                 <Table.Th scope="row">Columns to normalize</Table.Th>
                 <Table.Td>
-                  {Object.keys(fieldConfigs).every((t) => configured(fieldConfigs[t]).length === 0) ? (
+                  {Object.keys(chosenConfigs).every((t) => configured(chosenConfigs[t]).length === 0) ? (
                     <Text>None. Every column is copied unchanged.</Text>
                   ) : (
                     <Stack gap={2}>
-                      {Object.keys(fieldConfigs).flatMap((t) =>
-                        configured(fieldConfigs[t]).map(([column, type]) => (
+                      {Object.keys(chosenConfigs).flatMap((t) =>
+                        configured(chosenConfigs[t]).map(([column, type]) => (
                           <Text key={`${t}.${column}`}>
                             {t}.{column}: {type}
                           </Text>

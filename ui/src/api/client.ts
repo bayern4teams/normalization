@@ -114,6 +114,7 @@ export function createCloneJob(body: {
   source_database: string;
   destination_connection_id: string;
   destination_database: string;
+  tables?: string[];
   field_configs: Record<string, Record<string, FieldSemanticType | null>>;
 }): Promise<CloneJobCreateResponse> {
   return request("/clone-jobs", { method: "POST", body: JSON.stringify(body) });

@@ -298,6 +298,7 @@ def test_every_request_field_reaches_the_stored_job(
         "source_schema": "diffbot",
         "destination_connection_id": connection_id,
         "destination_database": "dst",
+        "tables": ["Company"],
         "country": "GB",
         "locale": "en-GB",
         "typed_destination_columns": False,
