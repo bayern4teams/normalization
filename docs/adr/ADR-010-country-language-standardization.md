@@ -121,3 +121,13 @@ Owner, 2026-11-08: "b4. a", "b4b. a", "b4c. a".
 - **CLDR's `alt="short"` names** (`Cocos Islands`, `Palestine`) are generated from CLDR's own XML, because
   Babel does not expose them; the clash rule of the other generated names applies. Owner, 2026-11-09:
   "take your all recommendations."
+
+## Amendment 2026-11-08 — LANGUAGE: case does not mean "code" (round 3, D20)
+
+Owner, 2026-11-07: "d20a. a", "d20b. a".
+
+- **A code in a form the engine does not store meets language names in any case.** `mon`, `MON` and
+  `Mon` are all `AMBIGUOUS` (Mongolian or Mon). The stored code (`en`, `ga`, `gaa`) stays a code, so
+  feeding `comparison` back changes nothing. By this rule the 13 three-letter codes of languages with
+  a two-letter code that are also another language's name (`mon`, `ron`, `tha`, ...) are `AMBIGUOUS`.
+- **`_` reads as `-` only inside a valid locale tag:** `en_US` equals `en-US`; `Kuku_Yalanji` stays `INVALID`.
