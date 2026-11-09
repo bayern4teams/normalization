@@ -97,6 +97,18 @@ code back changed none. The decisions:
 - **Limit:** CLDR's territory-to-language data lists languages spoken, not a proof of what a cell
   means. It settles a collision only when exactly one reading is a language of the row's territory.
 
+## Amendment 2026-11-08 — COUNTRY: a withdrawn code with several successors is a question (round 3, D27)
+
+Owner, 2026-11-08: "b3. a", "b3b. a".
+
+- **A withdrawn alpha-2 code with several successors is `AMBIGUOUS`,** not `INVALID`, so it reaches the
+  review queue (ADR-018). Readings are CLDR's `territory_aliases` list; none is ever chosen.
+- **Earlier holders of the code are readings too.** ISO 3166-3 (pycountry `historic_countries`) has two
+  `CS` entries; CLDR's successors (`RS`, `ME`) describe the later one, so `CS` also reads `CSHH`.
+  No installed source names Czechoslovakia's successors, so a reviewer maps `CSHH` by typing the
+  code; choosing `CSHH` itself is refused (HTTP 422), because it is not a current country code.
+- **Limit:** alpha-2 codes only. A withdrawn alpha-3 code (`SUN`, `DDR`) stays unresolved, as before.
+
 ## Amendment 2026-11-08 — COUNTRY: names (round 3, D28)
 
 Owner, 2026-11-08: "b4. a", "b4b. a", "b4c. a".
@@ -106,5 +118,6 @@ Owner, 2026-11-08: "b4. a", "b4b. a", "b4c. a".
   The rule reads pycountry's names, so no list is kept by hand.
 - **A leading "The" is stripped only when the rest is an exact, unambiguous name** longer than a code.
   No standard defines this; it is the owner's rule. `The Congo` and `The US` stay unresolved.
-- **Open:** CLDR's `alt="short"` names (`Cocos Islands`, `Palestine`) are not added yet: Babel does not
-  expose them, and reading them needs CLDR's XML (owner decision pending).
+- **CLDR's `alt="short"` names** (`Cocos Islands`, `Palestine`) are generated from CLDR's own XML, because
+  Babel does not expose them; the clash rule of the other generated names applies. Owner, 2026-11-09:
+  "take your all recommendations."
