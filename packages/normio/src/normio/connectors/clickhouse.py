@@ -171,8 +171,10 @@ class ClickHouseConnector:
         columns come from scanning its text against the table's columns, so
         a function name is not mistaken for one.
 
-        ponytail: `sorting_key` hides DESC, so a descending key is copied
-        ascending. Read `create_table_query` if the owner wants it kept."""
+        ponytail: `sorting_key` drops DESC (experimental reverse keys), so a
+        descending key is copied ascending; only the physical order differs,
+        the key columns and dedupe do not (owner, 2026-11-09: "Keep ascending").
+        To keep DESC, read `create_table_query`."""
         result = self._client.query(
             "SELECT engine, sorting_key FROM system.tables "
             "WHERE database = {db:String} AND name = {t:String}",
