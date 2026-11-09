@@ -22,7 +22,9 @@ from the RFCs, guards the set.
 
 **Callers.** An ASGI middleware refuses a peer outside the allowed set. `X-Forwarded-For` is
 ignored: there is no proxy (R17). `TrustedHostMiddleware` checks the `Host` header against an
-allowlist of host names, which is the DNS-rebinding defence.
+allowlist of host names, which is the DNS-rebinding defence. A `Host` that is anything but a
+host and an optional port is refused before that check (D17): the installed Starlette reads
+`localhost:80@evil.com` as `localhost`.
 
 **Database targets.** Literal addresses are parsed strictly (decimal, octal and hex IPv4 forms
 refused, `::ffff:` unwrapped). A host name resolves, and every address must be allowed (R15). The

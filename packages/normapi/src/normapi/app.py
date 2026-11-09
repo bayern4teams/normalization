@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -211,6 +212,30 @@ def _allowed_hosts() -> list[str]:
     return ["localhost", "127.0.0.1", *(h.strip() for h in extra if h.strip())]
 
 
+_HOST_HEADER = re.compile(rb"([A-Za-z0-9_.-]+|\[[0-9A-Fa-f:.]+\])(:[0-9]{1,5})?")
+
+
+class HostHeaderForm:
+    """Refuses a `Host` that is anything but a host and an optional port (D17):
+    the allowlist check after this one reads `localhost:80@evil.com` as `localhost`."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] in ("http", "websocket") and not all(
+            _HOST_HEADER.fullmatch(value) for name, value in scope["headers"] if name == b"host"
+        ):
+            if scope["type"] == "http":
+                await PlainTextResponse(
+                    "Invalid Host header: send only a host name and an optional port", 400
+                )(scope, receive, send)
+            else:
+                await send({"type": "websocket.close", "code": 1008})
+            return
+        await self.app(scope, receive, send)
+
+
 class LocalCallersOnly:
     """Refuses a peer outside the allowed set (ADR-022). `X-Forwarded-For` is
     never read: there is no proxy in front of this app."""
@@ -265,12 +290,13 @@ def create_app(
     )
 
     # ADR-022. add_middleware puts the last one added outermost, so the caller
-    # check runs first, then the Host check.
+    # check runs first, then the Host form, then the allowlist.
     @app.exception_handler(AddressPolicyError)
     async def _address_refused(_request: Request, exc: AddressPolicyError) -> JSONResponse:
         return JSONResponse(status_code=422, content={"detail": str(exc)})
 
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=_allowed_hosts())
+    app.add_middleware(HostHeaderForm)
     app.add_middleware(LocalCallersOnly)
 
     loader = DictionaryLoader(dictionaries_dir or _DEFAULT_DICTIONARIES_DIR)
