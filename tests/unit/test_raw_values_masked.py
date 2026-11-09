@@ -167,3 +167,40 @@ def test_preview_may_echo_its_own_input(client: TestClient) -> None:
     )
     assert response.status_code == 200
     assert _PLANTED in response.text
+
+
+def _colliding_run(client: TestClient) -> str:
+    profile = client.post(
+        "/normalization/profiles", json={"name": "p", "field_configs": [], "created_by": "u"}
+    ).json()
+    run = client.post(
+        f"/normalization/runs?profile_id={profile['id']}&source_snapshot=s",
+        json={
+            "field_name": "name",
+            "semantic_type": "PERSON_NAME",
+            "values": [_PLANTED, _PLANTED.upper()],
+        },
+    ).json()
+    return str(run["id"])
+
+
+def test_collisions_are_masked(client: TestClient) -> None:
+    response = client.get(f"/normalization/runs/{_colliding_run(client)}/collisions")
+    assert response.status_code == 200
+    assert len(response.json()) == 1
+    assert response.json()[0]["total_occurrences"] == 2
+    _assert_masked(response.text)
+    assert _PLANTED.upper() not in response.text
+    assert _PLANTED.lower() not in response.text
+
+
+def test_handoff_is_masked(client: TestClient) -> None:
+    response = client.get(f"/normalization/runs/{_colliding_run(client)}/handoff")
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body["records"]) == 2
+    assert len(body["collisions"]) == 1
+    assert body["collisions"][0]["total_occurrences"] == 2
+    _assert_masked(response.text)
+    assert _PLANTED.upper() not in response.text
+    assert _PLANTED.lower() not in response.text

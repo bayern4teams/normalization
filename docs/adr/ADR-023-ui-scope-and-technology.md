@@ -43,8 +43,10 @@ candidate readings (tested: `tests/unit/test_u1_review_route.py`).
   their own input, and "d16. c": `disguised_missing[].value` stays raw because D4's confirm step
   needs the exact values. Job errors, `/runs/{id}/values` and the access log are masked. Stored
   error text keeps its values (the metadata database holds them anyway) and is masked by the
-  route. Not masked and open: `/runs/{id}/collisions` and `/runs/{id}/handoff` (see the D16
-  report).
+  route. `/runs/{id}/handoff` and `/runs/{id}/collisions` are masked too (owner,
+  2026-11-09: "take your all recommendations."; "Mask + TEST-CHANGE (Recommended)"). The handoff's
+  comparison, display and parsed values are masks now, so a consumer cannot compare on them
+  (owner, 2026-11-09: "Accept (Recommended)").
 - **New clone cannot pick tables.** Every table of the origin database is cloned, because the
   clone API has no table filter; the screen picks columns and their semantic types only. Owner
   decision 2026-11-07: "1. a" (recorded as a limit).
