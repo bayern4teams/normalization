@@ -166,6 +166,15 @@ _SAMPLE_VALIDATORS: dict[FieldSemanticType, FieldSemanticType] = {
 }
 
 
+# Confirmed by the sample only after an exact column-name match: `no`, `it`
+# and `de` are also words and country codes, so values alone prove nothing
+# (D31, owner "b7. a"). Not in `_SAMPLE_VALIDATORS`, which also feeds the
+# relaxed-name and value-only paths.
+_NAME_REQUIRED_VALIDATORS: dict[FieldSemanticType, FieldSemanticType] = {
+    FieldSemanticType.LANGUAGE: FieldSemanticType.LANGUAGE,
+}
+
+
 # Flat, separator-free column names (`firsthiredate`, `postalcode`) carry no
 # word boundary for `\b` to find, so the curated patterns above miss them
 # entirely. A second pass drops the boundaries and matches as a substring —
@@ -380,7 +389,9 @@ def _refine_with_sample_values(
         return
 
     for semantic_type in list(candidates):
-        validator_type = _SAMPLE_VALIDATORS.get(semantic_type)
+        validator_type = _SAMPLE_VALIDATORS.get(semantic_type) or _NAME_REQUIRED_VALIDATORS.get(
+            semantic_type
+        )
         if validator_type is None:
             continue
         normalizer = registry.get(validator_type)
