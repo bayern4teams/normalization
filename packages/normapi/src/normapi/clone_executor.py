@@ -57,7 +57,7 @@ from normio.connectors.postgres_destination import build_postgres_dsn
 
 from normanalysis import disguised_missing
 from normapi import lineage, secrets
-from normapi.address_policy import AddressPolicyError, resolve_and_check
+from normapi.address_policy import AddressPolicyError, checked_addresses, resolve_and_check
 from normapi.adjudication import Adjudication, source_identity
 from normapi.scaffold_profile import SCAFFOLD_PROFILE
 from normcore import (
@@ -461,6 +461,9 @@ def create_clone_job(
     if source_conn is None:
         msg = f"No such connection: {request['source_connection_id']}"
         raise CloneJobNotFoundError(msg)
+    dest_conn = persistence.get_connection(request["destination_connection_id"])
+    if dest_conn is not None:
+        _require_separate_copy(request, source_conn, dest_conn)
     source = build_source_connector(
         source_conn, request["source_database"], request.get("source_schema")
     )
@@ -969,17 +972,24 @@ def _require_separate_copy(
     job: dict[str, Any], source_conn: dict[str, Any], dest_conn: dict[str, Any]
 ) -> None:
     """ADR-013: the origin is never written. Refuses a job whose destination is the origin: the
-    same saved connection, or two saved connections to the same engine, host and port, with the
-    same database name. Checked on every phase, so a job stored before the request check existed
-    cannot write to its origin. Two host names for one server are not guessed to be equal."""
+    same saved connection, or two saved connections to one engine, port and checked address, with
+    the same database name, under any host names. Checked at create and on every phase, so a job
+    stored before the check existed cannot write to its origin."""
+    if job["source_database"] != job["destination_database"]:
+        return
     same_server = source_conn["connection_id"] == dest_conn["connection_id"] or (
-        (source_conn["engine"], source_conn["host"].lower(), source_conn["port"])
-        == (dest_conn["engine"], dest_conn["host"].lower(), dest_conn["port"])
+        (source_conn["engine"], source_conn["port"]) == (dest_conn["engine"], dest_conn["port"])
+        and (
+            source_conn["host"].lower() == dest_conn["host"].lower()
+            or not set(checked_addresses(source_conn["host"])).isdisjoint(
+                checked_addresses(dest_conn["host"])
+            )
+        )
     )
-    if same_server and job["source_database"] == job["destination_database"]:
+    if same_server:
         msg = (
-            f"Clone job {job['job_id']} would write into its origin "
-            f"({job['source_database']!r}). Create a new job with another destination database."
+            f"This clone job would write into its origin ({job['source_database']!r}). "
+            "Create a new job with another destination database."
         )
         raise CloneJobStateError(msg)
 

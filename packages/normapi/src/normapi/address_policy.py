@@ -92,8 +92,8 @@ def check_caller(peer: str | None) -> bool:
     return peer is not None and classify(peer)
 
 
-def resolve_and_check(host: str) -> str:
-    """Return the checked IP literal to connect to (libpq ``hostaddr``), or raise.
+def checked_addresses(host: str) -> list[str]:
+    """Return every checked IP literal ``host`` stands for, the one to connect to first, or raise.
 
     Literals are not resolved. A host name is resolved on every call (no cache, so a DNS rebind
     between two uses is caught) and EVERY address it returns must be allowed (R15).
@@ -102,7 +102,7 @@ def resolve_and_check(host: str) -> str:
     if ip is not None:
         if not _allowed(ip):
             raise AddressPolicyError(f"address {host!r} is outside the allowed local network")
-        return str(ip)
+        return [str(ip)]
     name = host.removesuffix(".")
     if (
         not _HOSTNAME.fullmatch(name)
@@ -123,4 +123,9 @@ def resolve_and_check(host: str) -> str:
     for found in answers:
         if found is None or not _allowed(found):
             raise AddressPolicyError(f"host {host!r} resolves outside the allowed local network")
-    return str(answers[0])
+    return [str(found) for found in answers]
+
+
+def resolve_and_check(host: str) -> str:
+    """Return the checked IP literal to connect to (libpq ``hostaddr``), or raise."""
+    return checked_addresses(host)[0]
