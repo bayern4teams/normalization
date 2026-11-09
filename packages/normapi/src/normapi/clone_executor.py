@@ -704,6 +704,13 @@ _SIGNAL_TYPE_VALUES = frozenset(t.value for t in _COUNTRY_FROM)
 _TEXT_TYPE = {"postgres": "TEXT", "clickhouse": "String"}
 
 
+def _key_normalized_columns(
+    semantic_types: Mapping[str, str], key_columns: Collection[str]
+) -> dict[str, str]:
+    """Each configured key column -> the companion for its normalized value."""
+    return {c: f"{c}{_NORMALIZED_SUFFIX}" for c in semantic_types if c in key_columns}
+
+
 def _destination_plan(
     semantic_types: Mapping[str, str],
     engine: str,
@@ -729,8 +736,6 @@ def _destination_plan(
             extras[f"{column}{_CODE_SUFFIX}"] = text_type
         if semantic_type == FieldSemanticType.PHONE.value:
             extras[f"{column}{_REGION_SUFFIX}"] = text_type
-        if column in key_columns:
-            extras[f"{column}{_NORMALIZED_SUFFIX}"] = text_type
         if not typed or column in key_columns:
             continue
         bound_type = storage_types.bound_type(engine)
@@ -787,6 +792,8 @@ def plan_one_table(
         key_columns,
         typed=job.get("typed_destination_columns", True),
     )
+    key_normalized = _key_normalized_columns(semantic_types, key_columns)
+    extras.update(dict.fromkeys(key_normalized.values(), _TEXT_TYPE.get(dest_engine, "TEXT")))
     columns = source.get_columns(table)
     clashes = sorted(set(extras) & {c.name for c in columns})
     if clashes:
@@ -801,11 +808,7 @@ def plan_one_table(
         "semantic_types": semantic_types,
         # A key column keeps its source type, whatever normalizes it.
         "ddl_semantic_types": {c: t for c, t in semantic_types.items() if c not in key_columns},
-        "key_normalized_columns": {
-            column: f"{column}{_NORMALIZED_SUFFIX}"
-            for column in semantic_types
-            if column in key_columns
-        },
+        "key_normalized_columns": key_normalized,
         "key_columns": key_columns,
         "table_engine": table_engine,
         "column_overrides": overrides,
@@ -2628,13 +2631,19 @@ def _destination_types(
     source: Any, table: str, job: Mapping[str, Any], engine: str, source_types: dict[str, str]
 ) -> dict[str, str]:
     """The destination's column types exactly as Phase 1 wrote them."""
+    semantic_types = {c: t for c, t in job["field_configs"].get(table, {}).items() if t}
+    key_columns = _key_columns(source, table)
     overrides, extras, _ = _destination_plan(
-        {c: t for c, t in job["field_configs"].get(table, {}).items() if t},
+        semantic_types,
         engine,
-        _key_columns(source, table),
+        key_columns,
         typed=job.get("typed_destination_columns", True),
     )
-    return {**source_types, **overrides, **extras}
+    text_type = _TEXT_TYPE.get(engine, "TEXT")
+    key_companions = dict.fromkeys(
+        _key_normalized_columns(semantic_types, key_columns).values(), text_type
+    )
+    return {**source_types, **overrides, **extras, **key_companions}
 
 
 def _entity_country_context(
