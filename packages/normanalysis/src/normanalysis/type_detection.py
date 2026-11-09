@@ -166,6 +166,15 @@ _SAMPLE_VALIDATORS: dict[FieldSemanticType, FieldSemanticType] = {
 }
 
 
+# Confirmed by the sample only after an exact column-name match: `no`, `it`
+# and `de` are also words and country codes, so values alone prove nothing
+# (D31, owner "b7. a"). Not in `_SAMPLE_VALIDATORS`, which also feeds the
+# relaxed-name and value-only paths.
+_NAME_REQUIRED_VALIDATORS: dict[FieldSemanticType, FieldSemanticType] = {
+    FieldSemanticType.LANGUAGE: FieldSemanticType.LANGUAGE,
+}
+
+
 # Flat, separator-free column names (`firsthiredate`, `postalcode`) carry no
 # word boundary for `\b` to find, so the curated patterns above miss them
 # entirely. A second pass drops the boundaries and matches as a substring —
@@ -264,6 +273,7 @@ def suggest_semantic_type(
 
     if sample_values is not None and registry is not None:
         _refine_with_sample_values(candidates, sample_values, registry, country, locale)
+        _date_only_is_date(candidates, sample_values, registry, country, locale)
         if not any(c.confidence >= _VALUE_ONLY_CONFIDENCE for c in candidates.values()):
             _suggest_from_values_alone(candidates, sample_values, registry, country, locale)
 
@@ -368,6 +378,31 @@ def _suggest_from_values_alone(
     )
 
 
+def _date_only_is_date(
+    candidates: dict[FieldSemanticType, TypeSuggestion],
+    sample_values: Sequence[str | None],
+    registry: NormalizerRegistry,
+    country: str | None = None,
+    locale: str | None = None,
+) -> None:
+    """A name-matched DATETIME whose whole sample states only days is a DATE.
+    A stated `00:00:00` is a time, so it stays DATETIME (precision is kept)."""
+    datetime_guess = candidates.get(FieldSemanticType.DATETIME)
+    normalizer = registry.get(FieldSemanticType.DATETIME)
+    sample = _flatten_sample(sample_values)
+    if datetime_guess is None or normalizer is None or not sample:
+        return
+    ctx = _sample_context(FieldSemanticType.DATETIME, country, locale)
+    results = [normalizer.normalize(v, ctx) for v in sample]
+    if all((r.structured or {}).get("precision") == "day" for r in results):
+        del candidates[FieldSemanticType.DATETIME]
+        candidates[FieldSemanticType.DATE] = TypeSuggestion(
+            semantic_type=FieldSemanticType.DATE,
+            confidence=datetime_guess.confidence,
+            reason=f"{datetime_guess.reason}; every sampled value states a day, none a time",
+        )
+
+
 def _refine_with_sample_values(
     candidates: dict[FieldSemanticType, TypeSuggestion],
     sample_values: Sequence[str | None],
@@ -380,7 +415,9 @@ def _refine_with_sample_values(
         return
 
     for semantic_type in list(candidates):
-        validator_type = _SAMPLE_VALIDATORS.get(semantic_type)
+        validator_type = _SAMPLE_VALIDATORS.get(semantic_type) or _NAME_REQUIRED_VALIDATORS.get(
+            semantic_type
+        )
         if validator_type is None:
             continue
         normalizer = registry.get(validator_type)

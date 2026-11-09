@@ -30,6 +30,7 @@ import functools
 import json
 import multiprocessing
 import os
+import re
 import threading
 import uuid
 from collections import Counter
@@ -44,7 +45,7 @@ from normalizers.language import column_language_evidence
 from normalizers.numeric import column_decimal_evidence
 from normalizers.phone import PhoneNormalizer
 from normalizers.postcode_validation import country_from_postcode_format
-from normanalysis.type_detection import suggest_semantic_type
+from normanalysis.type_detection import TypeSuggestion, suggest_semantic_type
 from normexec.planner import DistinctValuePlanner
 from normio.connectors import (
     ClickHouseConnector,
@@ -248,6 +249,11 @@ def _is_textual(native_type: str) -> bool:
     return any(marker in lowered for marker in _TEXTUAL_NATIVE_TYPE_MARKERS)
 
 
+def _is_native_date(native_type: str) -> bool:
+    """The source's own day-precision type (D31): `date`, `Date32`, `Nullable(Date)`."""
+    return re.fullmatch(r"(nullable\()?date(32)?\)?", native_type.lower()) is not None
+
+
 def _key_columns(source: Any, table: str) -> list[str]:
     """The table's own key, read from the source's structure.
 
@@ -322,19 +328,31 @@ def _suggest_field_types(
     for table in tables:
         configured = explicit.get(table, {})
         keys = set(_key_columns(source, table))
+        columns = source.get_columns(table)
+        native_dates = {c.name for c in columns if _is_native_date(c.native_type)}
         unconfigured = [
             c.name
-            for c in source.get_columns(table)
-            if not configured.get(c.name) and _is_textual(c.native_type) and c.name not in keys
+            for c in columns
+            if not configured.get(c.name)
+            and (_is_textual(c.native_type) or c.name in native_dates)
+            and c.name not in keys
         ]
         if not unconfigured:
             continue
         samples = _sample_column_values(source, table, unconfigured)
         for column in unconfigured:
             sample = samples.get(column)
-            best = suggest_semantic_type(
-                column, sample_values=sample, registry=registry, country=country, locale=locale
-            )[0]
+            best = (
+                TypeSuggestion(
+                    semantic_type=FieldSemanticType.DATE,
+                    confidence=1.0,
+                    reason="the source column's own type is a date",
+                )
+                if column in native_dates
+                else suggest_semantic_type(
+                    column, sample_values=sample, registry=registry, country=country, locale=locale
+                )[0]
+            )
             suggested.setdefault(table, {})[column] = {
                 "semantic_type": best.semantic_type.value,
                 "confidence": best.confidence,
