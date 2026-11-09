@@ -599,6 +599,9 @@ _CURRENCY_SUFFIX = "_currency"
 _CODE_SUFFIX = "_code"
 # ADR-020: typed first/last day of a DATE or DATETIME value's stated period.
 _BOUND_SUFFIXES = ("__from", "__to")
+# A configured key column keeps the source value, so two keys can never
+# collide (`A@B.com`, `a@b.com`); its normalized value goes here (D32).
+_NORMALIZED_SUFFIX = "_normalized"
 # What a companion column may describe: an answer, including an applied
 # verdict a person must confirm (NEEDS_REVIEW, ADR-018). AMBIGUOUS or INVALID
 # text states no period, no currency, no region.
@@ -732,6 +735,13 @@ _SIGNAL_TYPE_VALUES = frozenset(t.value for t in _COUNTRY_FROM)
 _TEXT_TYPE = {"postgres": "TEXT", "clickhouse": "String"}
 
 
+def _key_normalized_columns(
+    semantic_types: Mapping[str, str], key_columns: Collection[str]
+) -> dict[str, str]:
+    """Each configured key column -> the companion for its normalized value."""
+    return {c: f"{c}{_NORMALIZED_SUFFIX}" for c in semantic_types if c in key_columns}
+
+
 def _destination_plan(
     semantic_types: Mapping[str, str],
     engine: str,
@@ -826,9 +836,23 @@ def plan_one_table(
         key_columns,
         typed=job.get("typed_destination_columns", True),
     )
+    key_normalized = _key_normalized_columns(semantic_types, key_columns)
+    extras.update(dict.fromkeys(key_normalized.values(), _TEXT_TYPE.get(dest_engine, "TEXT")))
+    columns = source.get_columns(table)
+    clashes = sorted(set(extras) & {c.name for c in columns})
+    if clashes:
+        msg = (
+            f"Table {table!r}: the source already has a column named {clashes}, which this "
+            "clone needs for a companion column. Rename that column in the origin, or remove "
+            "the semantic type that adds the companion."
+        )
+        raise CloneJobStateError(msg)
     return {
-        "columns": source.get_columns(table),
+        "columns": columns,
         "semantic_types": semantic_types,
+        # A key column keeps its source type, whatever normalizes it.
+        "ddl_semantic_types": {c: t for c, t in semantic_types.items() if c not in key_columns},
+        "key_normalized_columns": key_normalized,
         "key_columns": key_columns,
         "table_engine": table_engine,
         "sort_key_sql": sort_key_sql,
@@ -1058,7 +1082,7 @@ def verify_and_create_schema(persistence: PgPersistence, job_id: str) -> dict[st
             for table in job["tables"]:
                 plan = plan_one_table(source, dest_conn["engine"], table, job)
                 shared = {
-                    "semantic_types": plan["semantic_types"],
+                    "semantic_types": plan["ddl_semantic_types"],
                     "column_overrides": plan["column_overrides"],
                     "extra_columns": plan["extra_columns"],
                 }
@@ -1102,6 +1126,7 @@ def verify_and_create_schema(persistence: PgPersistence, job_id: str) -> dict[st
                     "code_columns": plan["code_columns"],
                     "bounds_columns": plan["bounds_columns"],
                     "region_columns": plan["region_columns"],
+                    "key_normalized_columns": plan["key_normalized_columns"],
                 }
         finally:
             source.close()
@@ -2152,6 +2177,7 @@ def _normalize_chunk(
     code_columns: dict[str, str],
     bounds_columns: dict[str, list[str]],
     region_columns: dict[str, str],
+    key_normalized_columns: dict[str, str],
     pool: Any,
     planner: DistinctValuePlanner,
     seeded: Mapping[int, str],
@@ -2186,6 +2212,7 @@ def _normalize_chunk(
             *code_columns.values(),
             *(bound for pair in bounds_columns.values() for bound in pair),
             *region_columns.values(),
+            *key_normalized_columns.values(),
         ):
             row[extra] = None
 
@@ -2214,6 +2241,9 @@ def _normalize_chunk(
         provides_country = semantic_type is FieldSemanticType.COUNTRY
         row_signals = (
             {**phone_signals, **signals} if semantic_type is FieldSemanticType.LANGUAGE else signals
+        )
+        source_keys = (
+            [row[column] for _, row in pending] if column in key_normalized_columns else []
         )
         # No country column resolved anything (or there is none), so this
         # is one group with the job-level country — identical to the
@@ -2249,6 +2279,13 @@ def _normalize_chunk(
                 adjudication=adjudication,
                 engine=engine,
             )
+        if source_keys:
+            for (_, row), source_key in zip(pending, source_keys, strict=True):
+                normalized = row[column]
+                row[key_normalized_columns[column]] = (
+                    None if normalized is None else str(normalized)
+                )
+                row[column] = source_key
 
 
 def _proven(job: Mapping[str, Any], table: str, column: str) -> dict[str, tuple[str, int]]:
@@ -2542,6 +2579,7 @@ def _normalize_table(
     code_columns: dict[str, str] = table_plan.get("code_columns", {})
     bounds_columns: dict[str, list[str]] = table_plan.get("bounds_columns", {})
     region_columns: dict[str, str] = table_plan.get("region_columns", {})
+    key_normalized_columns: dict[str, str] = table_plan.get("key_normalized_columns", {})
     stats = {column: _ColumnStats() for column in configured_columns}
     _column_evidence(job, source, table, configured_columns)
     # Only this table's own key column matters: a table that does not carry
@@ -2601,6 +2639,7 @@ def _normalize_table(
                 code_columns=code_columns,
                 bounds_columns=bounds_columns,
                 region_columns=region_columns,
+                key_normalized_columns=key_normalized_columns,
                 pool=pool,
                 planner=planner,
                 seeded=seeded,
@@ -2679,13 +2718,19 @@ def _destination_types(
     source: Any, table: str, job: Mapping[str, Any], engine: str, source_types: dict[str, str]
 ) -> dict[str, str]:
     """The destination's column types exactly as Phase 1 wrote them."""
+    semantic_types = {c: t for c, t in job["field_configs"].get(table, {}).items() if t}
+    key_columns = _key_columns(source, table)
     overrides, extras, _ = _destination_plan(
-        {c: t for c, t in job["field_configs"].get(table, {}).items() if t},
+        semantic_types,
         engine,
-        _key_columns(source, table),
+        key_columns,
         typed=job.get("typed_destination_columns", True),
     )
-    return {**source_types, **overrides, **extras}
+    text_type = _TEXT_TYPE.get(engine, "TEXT")
+    key_companions = dict.fromkeys(
+        _key_normalized_columns(semantic_types, key_columns).values(), text_type
+    )
+    return {**source_types, **overrides, **extras, **key_companions}
 
 
 def _entity_country_context(

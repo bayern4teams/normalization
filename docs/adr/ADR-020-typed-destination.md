@@ -28,7 +28,10 @@ boolean. Types per engine:
 | MONEY | `NUMERIC(38,4)` | `Decimal(38,4)` |
 | BOOLEAN | `BOOLEAN` | `Bool` |
 
-Everything else, key columns included, stays TEXT/String.
+Every other configured column stays TEXT/String. A column nobody configured keeps
+its source type, key columns included. A configured key column also keeps its source
+type and value; its normalized value goes to `<col>_normalized` (owner, 2026-11-08:
+"b8b. a", C5 "a").
 
 **The gate.** `storage_types.coerce` runs on every value bound for a typed
 column. It returns a clean typed value or `(None, error)`, and never raises. A
@@ -64,8 +67,8 @@ Postgres `DATE` and ClickHouse `Date32`. Only a clean answer gets bounds; an
 AMBIGUOUS or INVALID value gets NULL in both. A bound outside the column's
 range (ClickHouse Date32: 1900-01-01 to 2299-12-31) is NULL plus an error row,
 through the same gate as numbers. A DATETIME's bounds are the dates of its
-period; its time stays in the TEXT column. Key columns get no companions, like
-the other typed columns.
+period; its time stays in the TEXT column. Key columns get no date bounds; they
+keep every other companion (owner, 2026-11-08: C6 "a").
 
 ## Alternatives considered
 

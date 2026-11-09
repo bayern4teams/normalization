@@ -193,7 +193,7 @@ and `FAILED` (`packages/normcore/src/normcore/enums.py::CloneJobStatus`). A
 
 ## Data contract
 
-<!-- verified: 9f27526 -->
+<!-- verified: e65ebbe -->
 
 ### The normalized value
 
@@ -286,7 +286,15 @@ Rules that matter to a database administrator:
   A value a column cannot hold becomes NULL with an error row, never a failed
   insert. Dates stay text because they can be partial. Their bounds go to
   `<col>__from` and `<col>__to` date columns.
-- Companion columns such as `<col>_code` hold derived keys.
+- Companion columns hold what the value alone cannot:
+
+  | Column | Added for | Holds |
+  |---|---|---|
+  | `<col>_currency` | MONEY | the currency code |
+  | `<col>_code` | COUNTRY, LANGUAGE, PHONE | the derived code |
+  | `<col>_region` | PHONE | the region |
+  | `<col>__from`, `<col>__to` | DATE, DATETIME, not on a key column | the first and last day of the period |
+  | `<col>_normalized` | a configured key column | the normalized value; the key keeps the source value |
 
 ## Interfaces for other projects
 
