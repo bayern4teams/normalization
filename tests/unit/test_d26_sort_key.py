@@ -46,7 +46,7 @@ class _Client:
 def _source(key: str, *columns: str) -> tuple[ClickHouseConnector, _Client]:
     source = ClickHouseConnector.__new__(ClickHouseConnector)
     client = _Client(key, columns)
-    source._client, source._database = client, "db"  # type: ignore[assignment]
+    source._client, source._database = client, "db"
     return source, client
 
 
@@ -134,7 +134,7 @@ def test_the_destination_ddl_replays_the_expression() -> None:
             sent.append(sql)
 
     dest = ClickHouseDestination("h", 1, "u", "p")
-    dest._clients["d"] = _Dest()  # type: ignore[assignment]
+    dest._clients["d"] = _Dest()
     cols = [ColumnInfo(name="ts", native_type="DateTime")]
     dest.create_table("d", "t", cols, order_by=["ts"], sort_key_sql=["toDate(ts)"])
     assert "ORDER BY (toDate(ts))" in sent[0]
