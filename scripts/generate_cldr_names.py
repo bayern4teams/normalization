@@ -18,16 +18,12 @@ all four tables is most of the cost), but `_cldr_country_names` alone is
 make `CurrencyNormalizer` pay for the language table it never reads. Each
 normalizer imports only its own.
 
-# ponytail: CLDR's STANDARD territory names only. Babel exposes no
-# `alt-short` variants, so the colloquial short form a person is most likely
-# to type is missing for every territory that has one: `HK` in zh is only
-# `中国香港特别行政区`, never `香港`; `KR` in ko is only `대한민국`, never
-# `한국`. This is a ceiling in the data source, not in the generator —
-# closing it means reading CLDR's own XML (`<territory type="HK"
-# alt="short">`) instead of Babel's parsed locale data, or shipping a hand
-# table of short forms, which is the thing this file exists to avoid.
-# Upgrade path: if Babel ever exposes alt forms, emit them here; until then
-# the gap is real and known rather than surprising.
+Babel exposes no `alt="short"` territory names, so those come from CLDR's own
+XML, and only when a `core.zip` of the same CLDR version is given:
+
+    python scripts/generate_cldr_names.py --cldr-core <path>/core.zip
+
+Without it `_cldr_country_short_names` is left as it is.
 
 Only names the existing authority does NOT already resolve are emitted.
 pycountry stays the authority for countries and languages, so shipping
@@ -38,10 +34,13 @@ name in pycountry, so there is nothing to defer to.
 
 from __future__ import annotations
 
+import argparse
 import datetime as dt
 import unicodedata
+import zipfile
 from pathlib import Path
 from typing import TYPE_CHECKING
+from xml.etree import ElementTree
 
 import babel
 import pycountry
@@ -125,7 +124,7 @@ def _is_too_short_to_be_a_name(key: str) -> bool:
     Non-Latin names are not filtered: "中文" (Chinese) and "美元" (US
     dollar) are two characters and entirely unambiguous.
 
-    Deliberately NOT applied to the country table, where a two-letter
+    Deliberately NOT applied to the standard country names, where a two-letter
     ASCII name is a real win: CLDR is the only source here that resolves
     "UK", which is neither an ISO code nor a pycountry alias.
     """
@@ -242,6 +241,35 @@ def build() -> dict[str, dict[str, str]]:
     }
 
 
+def build_short_names(core_zip: Path) -> dict[str, str]:
+    """CLDR's `alt="short"` territory names. Every other territory name in the
+    XML takes part in the clash check, so a short name that also means another
+    territory in any locale is dropped, as in `build`."""
+    every_name: dict[str, str | None] = {}
+    short: set[str] = set()
+    with zipfile.ZipFile(core_zip) as archive:
+        for member in archive.namelist():
+            if not (member.startswith("common/main/") and member.endswith(".xml")):
+                continue
+            for element in ElementTree.fromstring(archive.read(member)).iter("territory"):
+                code, name = element.get("type", ""), (element.text or "").casefold().strip()
+                if len(code) != _ALPHA2_LEN or not name or name == "↑↑↑":
+                    continue
+                if element.get("draft") == "unconfirmed":
+                    continue
+                _record(every_name, name, code)
+                if element.get("alt") == "short":
+                    short.add(name)
+    return {
+        name: code
+        for name, code in _resolved(every_name)
+        if name in short
+        and code in _ISO_3166_1_ALPHA2
+        and name not in _PYCOUNTRY_COUNTRY_KEYS
+        and not _is_too_short_to_be_a_name(name)  # "su" must stay the withdrawn code
+    }
+
+
 _MODULES: dict[str, tuple[str, ...]] = {
     "_cldr_country_names": ("CLDR_COUNTRY_NAMES",),
     "_cldr_currency_names": (
@@ -250,10 +278,12 @@ _MODULES: dict[str, tuple[str, ...]] = {
         "CLDR_SHARED_CURRENCY_SYMBOLS",
     ),
     "_cldr_language_names": ("CLDR_LANGUAGE_NAMES",),
+    "_cldr_country_short_names": ("CLDR_COUNTRY_SHORT_NAMES",),
 }
 
 _SUMMARIES: dict[str, str] = {
     "CLDR_COUNTRY_NAMES": "country/territory name (casefolded) -> ISO 3166-1 alpha-2",
+    "CLDR_COUNTRY_SHORT_NAMES": "CLDR alt=short country name (casefolded) -> ISO 3166-1 alpha-2",
     "CLDR_CURRENCY_NAMES": "currency name (casefolded) -> ISO 4217 alpha-3",
     "CLDR_CURRENCY_SYMBOLS": "currency symbol (as written) -> ISO 4217 alpha-3",
     "CLDR_SHARED_CURRENCY_SYMBOLS": "currency symbol naming several currencies -> their codes",
@@ -262,8 +292,15 @@ _SUMMARIES: dict[str, str] = {
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--cldr-core", type=Path, help="CLDR core.zip of Babel's CLDR version")
+    core_zip = parser.parse_args().cldr_core
     maps = build()
+    if core_zip:
+        maps["CLDR_COUNTRY_SHORT_NAMES"] = build_short_names(core_zip)
     for module, map_names in _MODULES.items():
+        if map_names[0] not in maps:
+            continue
         lines = [
             f'"""{_SUMMARIES[map_names[0]]}.',
             "",

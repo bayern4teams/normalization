@@ -46,6 +46,7 @@ import pycountry
 
 from normalizers import text_ops
 from normalizers._cldr_country_names import CLDR_COUNTRY_NAMES
+from normalizers._cldr_country_short_names import CLDR_COUNTRY_SHORT_NAMES
 
 _ALPHA2_LEN = 2
 _ALPHA3_LEN = 3
@@ -208,7 +209,7 @@ def _resolve_variant(variant: str) -> str | None:
     except LookupError:
         pass
 
-    cldr_name = CLDR_COUNTRY_NAMES.get(folded)
+    cldr_name = CLDR_COUNTRY_NAMES.get(folded) or CLDR_COUNTRY_SHORT_NAMES.get(folded)
     if cldr_name is not None:
         return cldr_name
 

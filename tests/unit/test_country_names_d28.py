@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from normalizers._cldr_country_short_names import CLDR_COUNTRY_SHORT_NAMES
 from normalizers.country import CountryNormalizer
 from normalizers.country_codes import resolve_country_alpha2
 from normcore.context import NormalizationContext
@@ -65,3 +66,15 @@ def test_stays_invalid(value: str) -> None:
 def test_full_congo_names_stay_distinct() -> None:
     assert _normalize("Republic of the Congo").comparison == "CG"
     assert _normalize("Democratic Republic of the Congo").comparison == "CD"
+
+
+@pytest.mark.parametrize(("value", "code"), [("Cocos Islands", "CC"), ("Palestine", "PS")])
+def test_cldr_short_names_resolve(value: str, code: str) -> None:
+    result = _normalize(value)
+    assert result.normalization_status is NormalizationStatus.NORMALIZED
+    assert result.comparison == code
+
+
+def test_short_names_never_answer_a_shared_name() -> None:
+    assert not {"congo", "korea", "virgin islands"} & set(CLDR_COUNTRY_SHORT_NAMES)
+    assert all(len(code) == 2 for code in CLDR_COUNTRY_SHORT_NAMES.values())
