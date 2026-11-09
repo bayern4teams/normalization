@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import pytest
 from normalizers.currency import CurrencyNormalizer
+from normapi.app import build_dispatcher
+from normapi.scaffold_profile import SCAFFOLD_PROFILE
 from normcore.context import NormalizationContext
 from normcore.enums import FieldSemanticType, NormalizationStatus
 
@@ -32,3 +34,20 @@ def test_real_code_is_untouched() -> None:
 def test_explain_does_not_claim_a_resolution() -> None:
     result = _normalize("XYZ")
     assert "Resolved" not in CurrencyNormalizer().explain(result).plain_language
+
+
+def _through_dispatcher(value: str, semantic_type: FieldSemanticType):
+    context = NormalizationContext(field_name="c", semantic_type=semantic_type)
+    return build_dispatcher(env_id="e" * 64).normalize(
+        value, semantic_type, context, SCAFFOLD_PROFILE
+    )
+
+
+def test_reserved_code_reaches_the_normalizer_before_the_sentinel_check() -> None:
+    result = _through_dispatcher("XXX", FieldSemanticType.CURRENCY)
+    assert result.normalization_status is NormalizationStatus.INVALID
+    assert result.errors
+
+
+def test_xxx_stays_a_sentinel_in_other_columns() -> None:
+    assert _through_dispatcher("XXX", FieldSemanticType.EMAIL).original_kind is not None

@@ -119,6 +119,8 @@ _STATIC_STEPS: tuple[_StaticStepSpec, ...] = (_RESOLVE_STEP,)
 class CurrencyNormalizer:
     name = "CurrencyNormalizer"
     supported_types = frozenset({FieldSemanticType.CURRENCY})
+    # Reach `normalize`, where they get their error, before the dispatcher's sentinel check.
+    reserved_values = frozenset(code.casefold() for code in NON_CURRENCY_CODES)
 
     def can_handle(self, field_type: FieldSemanticType, ctx: NormalizationContext) -> bool:
         return field_type in self.supported_types

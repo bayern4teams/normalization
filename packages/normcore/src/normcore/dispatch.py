@@ -256,7 +256,14 @@ class Dispatcher:
             # format characters, so `-\x00` came out as `-`, which is a token
             # here, and the second pass disagreed with the first (PART1 N8).
             visible = _visible(value)
-            sentinel_kind = self._missing_sentinels.get(visible.casefold())
+            token = visible.casefold()
+            # A normalizer can claim a token as its own domain's code (`xxx` in
+            # CURRENCY is an ISO 4217 reserved code, not a redaction).
+            sentinel_kind = (
+                None
+                if token in getattr(normalizer, "reserved_values", ())
+                else self._missing_sentinels.get(token)
+            )
             if not visible and value.strip():
                 sentinel_kind = MissingKind.EMPTY_STRING.value
             if sentinel_kind is not None:
