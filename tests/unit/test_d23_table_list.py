@@ -45,7 +45,7 @@ def _create(monkeypatch: pytest.MonkeyPatch, **fields: Any) -> _Store:
         "field_configs": {},
         **fields,
     }
-    clone_executor.create_clone_job(store, request=request)  # type: ignore[arg-type]
+    clone_executor.create_clone_job(store, request=request)
     return store
 
 
