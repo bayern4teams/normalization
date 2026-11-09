@@ -260,6 +260,11 @@ class URLNormalizer:
         if not parts.scheme or not parts.netloc:
             return _invalid(value, ctx, reason="not an absolute URL (missing scheme or host)")
 
+        try:
+            source_port = parts.port
+        except ValueError as exc:  # not a number, or outside 0-65535
+            return _invalid(value, ctx, reason=str(exc))
+
         scheme = parts.scheme.lower()
         flags: list[QualityFlag] = []
         warnings: list[str] = []
@@ -278,7 +283,7 @@ class URLNormalizer:
         if parts.username:
             password_part = f":{parts.password}" if parts.password else ""
             userinfo = f"{parts.username}{password_part}@"
-        port = _normalize_port(scheme, parts.port)
+        port = _normalize_port(scheme, source_port)
         netloc = f"{userinfo}{host}{port}"
 
         path = _normalize_percent_encoding(parts.path)
@@ -301,7 +306,7 @@ class URLNormalizer:
         structured = {
             "scheme": scheme,
             "host": host,
-            "port": parts.port,
+            "port": source_port,
             "path": path,
             "query": query,
             "fragment": fragment,
@@ -324,7 +329,7 @@ class URLNormalizer:
                             "url": urlunsplit(
                                 SplitResult(
                                     candidate,
-                                    f"{userinfo}{host}{_normalize_port(candidate, parts.port)}",
+                                    f"{userinfo}{host}{_normalize_port(candidate, source_port)}",
                                     path,
                                     query,
                                     fragment,
