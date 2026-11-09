@@ -39,10 +39,13 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import re
 import uuid
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Response
+from normanalysis.collisions import CollisionGroup
+from normanalysis.handoff import HandoffRecord
 from normcore.pii import safe_preview
 from normexec.cache import NormalizationCache
 
@@ -125,6 +128,56 @@ from normdict import (
 )
 
 router = APIRouter(prefix="/normalization")
+
+# R23: error text is stored with the values it quotes (the metadata database
+# holds them anyway) and masked here, where it leaves, so old rows are covered.
+_MASKED = "[masked]"
+_QUOTED_OR_BOUND = re.compile(r"'[^']*'|\"[^\"]*\"|(?<=date bound )\S+")
+_COLUMN_EXAMPLES = re.compile(
+    r"e\.g\. .*(?=\) — it may be mapped| — normalization is not converging)", re.DOTALL
+)
+_VALUE_FIELDS = ("original", "repaired", "display", "comparison", "search", "ascii")
+
+
+def _masked_collision(group: CollisionGroup) -> CollisionGroup:
+    return group.model_copy(
+        update={
+            "normalized_value": safe_preview(group.normalized_value),
+            "original_values": [safe_preview(v) for v in group.original_values],
+        }
+    )
+
+
+def _masked_handoff_record(record: HandoffRecord) -> HandoffRecord:
+    update: dict[str, Any] = {
+        name: safe_preview(text)
+        for name in ("original", "comparison", "display")
+        if (text := getattr(record, name)) is not None
+    }
+    update["parsed_components"] = _mask_leaves(record.parsed_components)
+    update["country_language_metadata"] = _mask_leaves(record.country_language_metadata)
+    return record.model_copy(update=update)
+
+
+def _masked_error(error: str, original: str | None) -> str:
+    """Error text with the source values it quotes taken out. A row's error
+    can quote that row's value; a column finding (no row) quotes examples."""
+    if original is None:
+        return _COLUMN_EXAMPLES.sub(f"e.g. {_MASKED}", error)
+    if original:
+        error = re.sub(rf"(?<!\w){re.escape(original)}(?!\w)", _MASKED, error)
+    return _QUOTED_OR_BOUND.sub(_MASKED, error)
+
+
+def _masked_result(result: NormalizedValue, original: str | None) -> dict[str, Any]:
+    masked = result.model_dump(mode="json")
+    for field in _VALUE_FIELDS:
+        if masked[field] is not None:
+            masked[field] = safe_preview(masked[field])
+    masked["structured"] = _mask_leaves(masked["structured"])
+    for field in ("warnings", "errors"):
+        masked[field] = [_masked_error(text, original or "") for text in masked[field]]
+    return masked
 
 
 # --- profiles -----------------------------------------------------------
@@ -426,7 +479,7 @@ def get_run_errors(
                     field=execution.field_name,
                     record_ref=str(index),
                     operation="normalize",
-                    error=message,
+                    error=_masked_error(message, original),
                     severity="error",
                     safe_preview=preview,
                     rule_id=None,
@@ -467,7 +520,10 @@ def get_run_values(
     except RunNotFoundError as exc:
         raise HTTPException(status_code=404, detail=f"No such run: {run_id}") from exc
     return [
-        {"original": original, "result": result.model_dump(mode="json")}
+        {
+            "original": safe_preview(original) if original is not None else None,
+            "result": _masked_result(result, original),
+        }
         for original, result in page
     ]
 
@@ -483,7 +539,7 @@ def get_run_collisions(
     if execution is None:
         return []
     groups = find_collisions(execution.originals, execution.results)
-    return [group.model_dump(mode="json") for group in groups]
+    return [_masked_collision(group).model_dump(mode="json") for group in groups]
 
 
 @router.get("/runs/{run_id}/profile")
@@ -524,13 +580,19 @@ def get_run_handoff(
             status_code=409, detail=f"Run {run_id} has not been executed with field values"
         )
     profile = store.get_profile(run.profile_id, run.profile_version)
-    return build_handoff_artifact(
+    artifact = build_handoff_artifact(
         field_name=execution.field_name,
         semantic_type=execution.semantic_type,
         profile=profile,
         env_id=run.env_id,
         originals=execution.originals,
         results=execution.results,
+    )
+    return artifact.model_copy(
+        update={
+            "records": [_masked_handoff_record(record) for record in artifact.records],
+            "collisions": [_masked_collision(group) for group in artifact.collisions],
+        }
     )
 
 
@@ -1139,7 +1201,7 @@ def get_clone_job_errors(
             field=f"{row['table_name']}.{row['field']}",
             record_ref=str(row["row_index"]),
             operation="clone-normalize",
-            error=row["error"],
+            error=_masked_error(row["error"], row["original"]),
             severity="error",
             safe_preview=safe_preview(row["original"]) if row["original"] is not None else "null",
             rule_id=None,

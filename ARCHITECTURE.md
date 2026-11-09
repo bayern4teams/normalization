@@ -337,6 +337,7 @@ Known limits:
 
 | Topic | Rule | Code |
 |---|---|---|
+| Job errors, run values, access log | Source values are masked where they leave the API ([ADR-023](docs/adr/ADR-023-ui-scope-and-technology.md), R23). | `packages/normapi/src/normapi/routes.py::_masked_error` |
 | Traces | Hold hashes and character-class masks, never raw values. `TraceStep` has no field for a raw value. | `packages/normcore/src/normcore/trace.py::TraceStep` |
 | Keys | Cache and verdict keys use `blake3` of the value, not the value. | `packages/normexec/src/normexec/cache.py::make_cache_key` |
 | Previews | The API returns a masked preview unless `pii_visibility` allows more. | `packages/normcore/src/normcore/pii.py::safe_preview` |

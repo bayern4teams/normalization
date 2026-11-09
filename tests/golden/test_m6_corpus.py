@@ -74,7 +74,9 @@ def test_source_txt_79_collision_dashboard_example_over_live_api(client: TestCli
     assert collisions.status_code == 200
     groups = collisions.json()
     assert len(groups) == 1
-    assert set(groups[0]["original_values"]) == {"José García", "JOSÉ GARCÍA"}
+    assert len(groups[0]["original_values"]) == 2
+    assert all(v.startswith("hash=") for v in groups[0]["original_values"])
+    assert "José" not in collisions.text
     assert groups[0]["total_occurrences"] == 2
 
 
