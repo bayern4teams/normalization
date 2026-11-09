@@ -40,7 +40,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.responses import JSONResponse, PlainTextResponse
 from starlette.staticfiles import StaticFiles
 
-from normapi.address_policy import AddressPolicyError, check_caller
+from normapi.address_policy import AddressPolicyError, allowed_networks, check_caller
 from normapi.adjudication import migrate_sources
 from normapi.pg_persistence import PgPersistence
 from normapi.routes import router
@@ -295,6 +295,7 @@ def create_app(
     async def _address_refused(_request: Request, exc: AddressPolicyError) -> JSONResponse:
         return JSONResponse(status_code=422, content={"detail": str(exc)})
 
+    allowed_networks()  # a bad NORM_ALLOWED_NETWORKS stops the API here, not on each request (D18)
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=_allowed_hosts())
     app.add_middleware(HostHeaderForm)
     app.add_middleware(LocalCallersOnly)
