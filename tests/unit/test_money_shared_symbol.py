@@ -45,3 +45,9 @@ def test_no_symbol_at_all_stays_normalized() -> None:
 
 def test_other_shared_symbols_follow_the_same_rule() -> None:
     assert _normalize("£5").normalization_status is NormalizationStatus.AMBIGUOUS
+
+
+def test_validate_accepts_an_amount_whose_currency_is_the_only_question() -> None:
+    ctx = NormalizationContext(field_name="m", semantic_type=FieldSemanticType.MONEY)
+    assert MoneyNormalizer().validate("$5", ctx).is_valid
+    assert not MoneyNormalizer().validate("free", ctx).is_valid

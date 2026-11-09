@@ -151,10 +151,9 @@ class MoneyNormalizer:
         return field_type in self.supported_types
 
     def normalize(self, value: str | None, ctx: NormalizationContext) -> NormalizedValue:
-        if value is None:
-            return _missing(None, MissingKind.NULL, ctx)
-        if value.strip() == "":
-            return _missing(value, MissingKind.EMPTY_STRING, ctx)
+        if value is None or value.strip() == "":
+            kind = MissingKind.NULL if value is None else MissingKind.EMPTY_STRING
+            return _missing(value, kind, ctx)
 
         cleaned = value.strip()
         # Split the halves BEFORE delegating. NumericNormalizer only
@@ -282,7 +281,11 @@ class MoneyNormalizer:
             return ValidationOutcome(
                 is_valid=False, status="MISSING", reason=result.original_kind.value
             )
-        is_valid = result.normalization_status is NormalizationStatus.NORMALIZED
+        # An amount whose only open question is the currency is still money.
+        is_valid = (
+            result.normalization_status is NormalizationStatus.NORMALIZED
+            or result.structured.get("canonical_amount") is not None
+        )
         return ValidationOutcome(
             is_valid=is_valid,
             status=result.validation_status or "UNKNOWN",
