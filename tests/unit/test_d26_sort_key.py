@@ -66,10 +66,20 @@ def _source(key: str, *columns: str) -> tuple[ClickHouseConnector, _Client]:
         ("replaceAll(a, ',', ')'), b", ["a", "b"]),
         ("", []),
         ("tuple()", []),
+        # Reported by ClickHouse 26.4.2.10 on the owner's database machine.
+        ("companyID", ["companyID"]),
+        (
+            "companyID, relatedCompanyID, relationType",
+            ["companyID", "relatedCompanyID", "relationType"],
+        ),
+        (
+            "database, `table`, event_date, event_time",
+            ["database", "table", "event_date", "event_time"],
+        ),
     ],
 )
 def test_the_key_columns_are_what_clickhouse_means(key: str, columns: list[str]) -> None:
-    source, _ = _source(key, "id", "a", "b", "ts", "x,y", "b`t")
+    source, _ = _source(key, "id", "a", "b", "ts", "x,y", "b`t", "companyID")
     assert source.get_table_engine_info("t") == ("ReplacingMergeTree", columns)
 
 
@@ -82,6 +92,7 @@ def test_the_key_columns_are_what_clickhouse_means(key: str, columns: list[str])
         ("toDate(ts)", " ORDER BY toDate(ts)"),
         ("(a) + (b)", " ORDER BY (a) + (b)"),
         ("", ""),
+        ("database, `table`, event_date", " ORDER BY `database`, `table`, `event_date`"),
     ],
 )
 def test_the_read_orders_by_the_key_as_written(key: str, order_by: str) -> None:
