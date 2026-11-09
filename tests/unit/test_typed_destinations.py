@@ -94,7 +94,6 @@ class TestMoneyNormalizer:
     @pytest.mark.parametrize(
         ("value", "amount", "currency"),
         [
-            ("$1,234.56", "1234.56", None),  # bare "$" is ambiguous by design
             ("USD 1234.56", "1234.56", "USD"),
             ("1234.56 USD", "1234.56", "USD"),
             ("1234.56 usd", "1234.56", "USD"),
@@ -114,6 +113,12 @@ class TestMoneyNormalizer:
         result = MoneyNormalizer().normalize(value, _ctx())
         assert result.display == amount
         assert result.structured["currency"] == currency
+
+    def test_a_bare_dollar_keeps_its_amount_but_is_ambiguous(self) -> None:
+        result = MoneyNormalizer().normalize("$1,234.56", _ctx())
+        assert result.normalization_status is NormalizationStatus.AMBIGUOUS
+        assert result.structured["canonical_amount"] == "1234.56"
+        assert result.structured["currency"] is None
 
     def test_display_is_bare_so_the_column_can_be_summed(self) -> None:
         result = MoneyNormalizer().normalize("1234.56 USD", _ctx())
@@ -207,20 +212,22 @@ class TestMoneyMagnitudeWords:
     """
 
     @pytest.mark.parametrize(
-        ("value", "expected"),
+        ("value", "expected", "status"),
         [
-            ("$10.5 Million", "10500000"),
-            ("$17.6 Million", "17600000"),
-            ("$1 Billion", "1000000000"),
-            ("$500 Thousand", "500000"),
-            ("$3.4 trillion", "3400000000000"),
-            ("1.2bn", "1200000000"),
-            ("2 hundred", "200"),
+            ("$10.5 Million", "10500000", NormalizationStatus.AMBIGUOUS),
+            ("$17.6 Million", "17600000", NormalizationStatus.AMBIGUOUS),
+            ("$1 Billion", "1000000000", NormalizationStatus.AMBIGUOUS),
+            ("$500 Thousand", "500000", NormalizationStatus.AMBIGUOUS),
+            ("$3.4 trillion", "3400000000000", NormalizationStatus.AMBIGUOUS),
+            ("1.2bn", "1200000000", NormalizationStatus.NORMALIZED),
+            ("2 hundred", "200", NormalizationStatus.NORMALIZED),
         ],
     )
-    def test_magnitude_words_multiply_the_amount(self, value: str, expected: str) -> None:
+    def test_magnitude_words_multiply_the_amount(
+        self, value: str, expected: str, status: NormalizationStatus
+    ) -> None:
         result = MoneyNormalizer().normalize(value, _ctx())
-        assert result.normalization_status is NormalizationStatus.NORMALIZED
+        assert result.normalization_status is status
         assert result.structured["canonical_amount"] == expected
         # Exact integers, not floats: 10.5 * 10**6 in binary floating point
         # is 10499999.999999998, which would not equal the string above.
@@ -259,11 +266,10 @@ class TestMoneyMagnitudeWords:
         assert result.normalization_status is NormalizationStatus.AMBIGUOUS
 
     def test_ambiguous_symbol_still_keeps_its_amount(self) -> None:
-        """The guard must not catch a bare "$": a symbol we cannot pin to
-        one currency is a known unknown and the amount is still good. Only
-        an unrecognised WORD is refused."""
+        """A bare "$" names no one currency, so it is a question for a reviewer
+        (D30); the amount beside it is still good and stays in `structured`."""
         result = MoneyNormalizer().normalize("$1234.56", _ctx())
-        assert result.normalization_status is NormalizationStatus.NORMALIZED
+        assert result.normalization_status is NormalizationStatus.AMBIGUOUS
         assert result.structured["canonical_amount"] == "1234.56"
         assert result.structured["currency"] is None
 

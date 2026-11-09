@@ -89,3 +89,13 @@ without a locale (`1,234`, `1.234`: one separator, three digits after it).
   `proving_values`, `contradicting_values` = 0); the job keeps the counts under
   `column_evidence`. A context without the field hashes as before.
 - On by default, as the date order (user decision 2026-10-18).
+
+## Amendment 2026-11-08 — MONEY: a shared symbol is a question (round 3, D30)
+
+Owner, 2026-11-08: "b6. a". This replaces the "bare `$`" sentence above for a money value.
+
+- **`$5` with no country that settles it is `AMBIGUOUS`,** so it reaches the review queue (ADR-018).
+  The amount stays in `structured.canonical_amount`. The readings are one whole value per currency
+  CLDR gives the symbol (`5 USD`, `5 CAD`, ...), because a verdict is re-normalized as MONEY.
+- **`5` with no symbol stays `NORMALIZED`:** no currency was stated, so nothing is unresolved.
+- `$5` with a country whose tender is one of the candidates resolves, as before (`5 USD` for `US`).
