@@ -1314,6 +1314,7 @@ dependencies = [
     { name = "pyicu", version = "2.16.2", source = { url = "https://github.com/cgohlke/pyicu-build/releases/download/v2.16.2/pyicu-2.16.2-cp312-cp312-win_amd64.whl" }, marker = "python_full_version < '3.13' and sys_platform == 'win32'" },
     { name = "pyicu", version = "2.16.2", source = { url = "https://github.com/cgohlke/pyicu-build/releases/download/v2.16.2/pyicu-2.16.2-cp313-cp313-win_amd64.whl" }, marker = "python_full_version >= '3.13' and sys_platform == 'win32'" },
     { name = "sqlalchemy" },
+    { name = "starlette" },
     { name = "uvicorn", extra = ["standard"] },
 ]
 
@@ -1334,6 +1335,7 @@ requires-dist = [
     { name = "pyicu", marker = "python_full_version == '3.12.*' and sys_platform == 'win32'", url = "https://github.com/cgohlke/pyicu-build/releases/download/v2.16.2/pyicu-2.16.2-cp312-cp312-win_amd64.whl" },
     { name = "pyicu", marker = "python_full_version == '3.13.*' and sys_platform == 'win32'", url = "https://github.com/cgohlke/pyicu-build/releases/download/v2.16.2/pyicu-2.16.2-cp313-cp313-win_amd64.whl" },
     { name = "sqlalchemy", specifier = ">=2.0,<3" },
+    { name = "starlette", specifier = ">=1.6,<2" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.31,<1" },
 ]
 

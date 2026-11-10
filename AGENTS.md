@@ -269,10 +269,12 @@ with no content in this project are left out, never padded.
 These are not style preferences; each one exists because ignoring it broke something.
 
 - **Run tests in batches, never the whole suite at once, and cap memory.** Why: a single
-  unbounded run has taken this machine down.
+  unbounded run has taken this machine down. `ulimit -v` caps address space, not memory; it did
+  not stop the 2026-11-07 freeze, so the cap is a cgroup:
 
   ```bash
-  ( ulimit -v 16777216; uv run pytest tests/unit/test_a.py tests/unit/test_b.py -q )
+  systemd-run --user --scope -p MemoryMax=4G -p MemorySwapMax=0 \
+    uv run pytest tests/unit/test_a.py tests/unit/test_b.py -q
   ```
 
 - **Never guess on ambiguous data.** Every normalizer returns `AMBIGUOUS` rather than picking a
@@ -283,9 +285,9 @@ These are not style preferences; each one exists because ignoring it broke somet
 - **Changes must be general.** Nothing may be tuned to a specific test database. Prefer
   authoritative data (CLDR, ISO, GLEIF) over a hand-written table that grows one found example
   at a time. Why: tuned tables break on the next corpus.
-- **Benchmark stack, datasets and outputs live outside the repo in `$BENCH_DIR`**
-  (`/home/bayern/Projects/benchmark`, see its README); benchmark scripts need `BENCH_DIR` set.
-  Why: the repo stays small and clean (H1).
+- **Benchmark stack, datasets and outputs live on the benchmark machine**, `/home/benchmark` on
+  `10.10.9.41` (`ssh template@10.10.9.41`; read `/home/benchmark/README.md` first). Benchmark
+  scripts need `BENCH_DIR` set to that folder and run there. Why: the repo stays small and clean (H1).
 - Part 1 of the improvement report is closed and measured:
   [`docs/archive/plans/defects/PART1_COMPLETE.md`](docs/archive/plans/defects/PART1_COMPLETE.md)
   and `docs/benchmarks/REPORT.md` §11. Why: it is the record of what was verified, not a live
@@ -392,7 +394,8 @@ uv run ruff check . && uv run ruff format --check . && uv run mypy packages
 ```
 
 ```bash
-( ulimit -v 16777216; uv run pytest -m "unit or (golden and not slow)" -q )
+systemd-run --user --scope -p MemoryMax=4G -p MemorySwapMax=0 \
+  uv run pytest -m "unit or (golden and not slow)" -q
 ```
 
 CI also runs the guards (`guards.yml`, `dep-check.yml`); run them locally before a push
