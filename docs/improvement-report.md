@@ -31,6 +31,7 @@ run; the build prompts are in [`plans/round3/`](plans/round3/README.md). Proposa
 - [Part 1 — Defects and fixes to apply now](#part-1--defects-and-fixes-to-apply-now)
   - [Part 1, round 2 (2026-10-25)](#part-1-round-2-2026-10-25--found-after-d1-d12-were-closed)
   - [Part 1, round 3 (2026-11-07)](#part-1-round-3-2026-11-07--left-open-by-round-2)
+  - [Part 1, round 4 (2026-11-10)](#part-1-round-4-2026-11-10--planned-not-decided)
 - [Part 2 — Research, cited](#part-2--research-cited)
 - [Part 3 — Architecture](#part-3--architecture)
 - [Part 4 — Appendices](#part-4--appendices)
@@ -743,6 +744,16 @@ under concurrency) goes to Part 3 §3.8.
 | **D30** 🟡 | **`$5` with no country is answered** (finding 6): amount `5`, currency empty, NORMALIZED (reproduced). `$` is used by many currencies (AUD, CAD, MXN, NZD, SGD, USD in seven locales checked; 27 in CLDR per the research, not re-counted). | "b6. a": AMBIGUOUS, the amount kept, the currencies that use `$` as readings, so it reaches the review queue. A bare `5` with no symbol stays NORMALIZED. ADR-011 is amended. | `$5` → AMBIGUOUS with readings; `$5` with country US → `5 USD`; `5` → NORMALIZED. |
 | **D31** 🟡 | **Autodetect leaves most typed columns untyped on small tables** (finding 7). The clone applies a type at confidence ≥ 0.9 (`clone_executor._AUTODETECT_MIN_CONFIDENCE`); LANGUAGE (0.85) and NUMERIC (0.6) have no sample validator (`type_detection._SAMPLE_VALIDATORS`), so they never reach it. One date column was typed DATETIME. | "b7. a": the source column's own type decides DATE versus DATETIME; a language-code validator, used only with a matching column name; the 0.9 line stays; NUMERIC and FREE_TEXT are never inferred from values alone (a wrong NUMERIC loses leading zeros). | A `date` source column → DATE; a `lang` column of valid tags → LANGUAGE; a column of `00123` values → not NUMERIC. |
 | **D32** 🟢 | **Passthrough and key columns keep their source type** (finding 8), while ADR-020 says "key columns included, stays TEXT/String" (`postgres_destination.py::PostgresDestination.create_table`). | "b8. a": the code is right; ADR-020's sentence is limited to configured columns. "b8b. a": a configured column that is also a primary or sort key keeps the source value exactly; its normalized value goes to a companion column, so two keys can never collide (`A@B.com` and `a@b.com`). That companion is new; today's companions are `<col>_currency` (MONEY), `<col>_code` (COUNTRY, LANGUAGE, PHONE), `<col>_region` (PHONE) and `<col>__from`/`<col>__to` (DATE, DATETIME), all in `clone_executor._destination_plan` (checked 2026-11-08). Owner, 2026-11-08, approving C1-C6 "a": the new one is `<col>_normalized`; every existing companion stays (C1-C4); ARCHITECTURE.md's data contract lists all of them, and ADR-020's "Key columns get no companions" is corrected to the code, which skips only the date bounds for key columns (C6). Research: Part 2, "Companion columns". | A key column `email` with `A@B.com` and `a@b.com`: both rows kept, key unchanged, companion holds `a@b.com`. |
+
+## Part 1, round 4 (2026-11-10) — planned, not decided
+
+Found by the round 3 benchmark run on the ClickHouse variant. The evidence is in the run's
+progress notes, `/home/bayern/Projects/normalization-r3-run/r3-bench-p3.md`, task
+"r3-bench-p3-ch" item 2, and in APP_FINDINGS #7 (see D25-D32 above).
+
+| # | Problem (checked 2026-11-10) | Fix (options, not decided) | Test first |
+|---|---|---|---|
+| **D33** 🟡 | **Autodetect leaves small tables' text columns untyped** (APP_FINDINGS #7, after D31). `t_text.notes` gets no semantic type on Postgres, and `t_text_ch.notes` none on ClickHouse. The clone applies a suggestion only at confidence ≥ 0.9 (`clone_executor._AUTODETECT_MIN_CONFIDENCE`); FREE_TEXT is never inferred (`clone_executor._NEVER_INFERRED`); and the sample skips undecodable bytes (`clone_executor._source_text` returns None for them, so `_sample_column_values` drops them). An unconfigured column never reaches `_decode_column` / `_restore_undecodable`, so its non-UTF-8 bytes are copied with no error row. | Planned. Options: (a) change the apply line for small samples; (b) a sample validator for FREE_TEXT. Option (b) conflicts with the owner's "b7. a" (FREE_TEXT is never inferred from values alone), so it needs the owner. | `t_text.notes` on both engines: the planned behaviour, once decided. The configured-column path is already tested: `tests/unit/test_clone_undecodable_bytes.py`. |
 
 ---
 

@@ -3,7 +3,7 @@
 # combined branches, one at a time, each in its own capped cgroup (run_capped.sh: 6 GB, no swap,
 # ulimit -v 16 GB). Run from a checkout of the combined branches; writes $BENCH_DIR/work/part1/bench/.
 set -u
-: "${BENCH_DIR:?set BENCH_DIR to the benchmark folder, e.g. /home/bayern/Projects/benchmark}"
+: "${BENCH_DIR:?set BENCH_DIR to the benchmark folder, e.g. /home/benchmark on the benchmark machine}"
 cd "${1:-.}"
 export TMPDIR="$BENCH_DIR/work/spool"
 mkdir -p "$TMPDIR" "$BENCH_DIR/work/part1/bench"
