@@ -94,7 +94,7 @@ See plan §8 phase tables; they stand unchanged.
 - 2026-11-01 §5.5 DONE (measured): native API on 8090 under MemoryMax=3G; Diffbot full clone
   COMPLETED (13/13 tables, 52,828/52,828 rows, phase2 40.2 s, 472 flagged error rows, all
   location.postalcode vs US; origin untouched, no `__normalizing`); ZoomInfo 100k COMPLETED
-  (7/7 tables match with FINAL, 699,853 rows, phase2 67.1 s, 1,077 error rows); ZoomInfo 1M
+  (7/7 tables match with FINAL, 599,853 rows (corrected 2026-11-10 by direct SQL, FINAL_REPORT §9), phase2 67.1 s, 1,077 error rows); ZoomInfo 1M
   COMPLETED (7/7 tables match with FINAL, 5,999,042 rows, cgroup peak 1.61 GB < 3 GB cap, no
   OOM; the driver client was killed by a tool timeout but the job ran server-side to completion
   — resumed by re-fetching from the API). Review queue: diffbot 1,852 rows/2.8 MB; zi1m
