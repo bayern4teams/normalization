@@ -125,3 +125,22 @@ choice.
 **Limits.** The model is the normalizer's own: the year is the last part. Proofs
 are counted over distinct values, not cells, so one repeated value is one proof.
 The pre-pass is one extra read of the date columns of a table.
+
+## Amendment 2026-11-10: a component the parser filled from its base date is never stated (D24)
+
+**Context.** Non-strict `dateparser` fills every component the text lacks from its base date,
+which was the clock. Under D/M/Y it reads `11/30 10:30 p.m.` as day 11 of 2030. In November the
+filled month matched the `11`, so the value read as November 2030 (AMBIGUOUS). In any other month
+it stayed INVALID (`test_a_time_is_no_day_or_month`, failing since 2026-11-01). The answer
+depended on the date of the run.
+
+**Decision.** The partial path (`normalizers.date._parse_partial`) parses each candidate at two
+fixed base dates that differ in month and day (`_PARTIAL_BASES`). A month or day that moves
+between the two came from the base, and `_stated_precision` never lets it claim a number or a
+month name. The strict path fills nothing (`STRICT_PARSING`), so it is unchanged. Neither path
+reads the clock now. Orchestrator 2026-11-09, under the owner's "All but 4 limits": "Q1: a".
+
+**Limits.** A value whose first reading has month or day equal to the first base's is parsed a
+second time. Measured on 600 sampled distinct movie dates (`bm_round2_movies`, seed 24), with
+the clock pinned to April and November, with no country and with `NO`: 0 results changed, and
+the time was 9.4-11.0 s against 9.5-10.7 s before.

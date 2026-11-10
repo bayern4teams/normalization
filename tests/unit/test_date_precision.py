@@ -11,6 +11,9 @@ stripped, but only when they directly abut a digit, which is what keeps
 
 from __future__ import annotations
 
+from datetime import datetime, tzinfo
+
+import dateparser.parser
 import pytest
 from normalizers.date import DateNormalizer
 from normcore.context import NormalizationContext
@@ -259,3 +262,24 @@ class TestEdtfQualifiedAndRangeDates:
         common path must not be rerouted through a narrower parser."""
         result = normalizer.normalize(value, ctx)
         assert result.structured.get("source_format") != "EDTF"
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("today", [datetime(2026, 11, 9), datetime(2026, 4, 9)])
+def test_a_month_the_parser_took_from_the_clock_is_not_stated(
+    monkeypatch: pytest.MonkeyPatch, normalizer: DateNormalizer, today: datetime
+) -> None:
+    # D24: under D/M/Y the parser reads `11/30` as day 11 of 2030 and fills the
+    # month from today. In November that month matched the `11` and the value
+    # read as November 2030. The clock is a boundary (L5), so it is pinned here.
+    class _Clock(datetime):
+        @classmethod
+        def now(cls, tz: tzinfo | None = None) -> _Clock:
+            return cls.fromtimestamp(today.timestamp(), tz)
+
+    monkeypatch.setattr(dateparser.parser, "datetime", _Clock)
+    ctx = NormalizationContext(
+        field_name="d", semantic_type=FieldSemanticType.DATETIME, country="NO"
+    )
+    result = normalizer.normalize("11/30 10:30 p.m.", ctx)
+    assert result.normalization_status is NormalizationStatus.INVALID
