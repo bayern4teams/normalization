@@ -7,6 +7,7 @@ xfail(strict) marks a confirmed defect: it flips to a failure when the defect is
 
 from __future__ import annotations
 
+import gc
 import itertools
 import json
 import math
@@ -256,6 +257,8 @@ def test_groups_cost_is_linear_in_pairs():
     # with 48 busy processes. Best of 3 at n and 4n: linear is about 4, quadratic about 16.
     # C5: reason=TEST-CHANGE, see above; approved=orchestrator, 2026-11-09; review=2027-02-09
     # (approved under the owner's rule "All but 4 limits", 2026-11-09)
+    # GC is off while timing: a gen-2 pass scans whatever the earlier tests left alive, so in the
+    # full file the ratio was about 10 (it is about 5 alone and with GC off in the full file).
     def best_of_3(n: int) -> float:
         pairs = [(0.5, True)] * n
         groups = [str(i) for i in range(n)]
@@ -266,7 +269,11 @@ def test_groups_cost_is_linear_in_pairs():
             times.append(time.perf_counter() - t)
         return min(times)
 
-    assert best_of_3(16000) / best_of_3(4000) < 8
+    gc.disable()
+    try:
+        assert best_of_3(16000) / best_of_3(4000) < 8
+    finally:
+        gc.enable()
 
 
 # --- pair_types alignment in gold.score, with clean answers that carry no confidence ---
