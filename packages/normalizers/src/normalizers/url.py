@@ -257,8 +257,8 @@ class URLNormalizer:
             if repaired_parts is not None and repaired_parts.netloc:
                 cleaned, parts, scheme_assumed = candidate, repaired_parts, True
 
-        if not parts.scheme or not parts.netloc:
-            return _invalid(value, ctx, reason="not an absolute URL (missing scheme or host)")
+        if reason := _unusable_reason(parts):
+            return _invalid(value, ctx, reason=reason)
 
         scheme = parts.scheme.lower()
         flags: list[QualityFlag] = []
@@ -483,6 +483,16 @@ def _detect_tracking_params(query: str) -> set[str]:
         if key in _KNOWN_TRACKING_PARAMS:
             found.add(key)
     return found
+
+
+def _unusable_reason(parts: SplitResult) -> str | None:
+    if not parts.scheme or not parts.netloc:
+        return "not an absolute URL (missing scheme or host)"
+    try:
+        _ = parts.port  # raises for a non-number or a value outside 0-65535
+    except ValueError as exc:
+        return str(exc)
+    return None
 
 
 def _invalid(value: str, ctx: NormalizationContext, *, reason: str) -> NormalizedValue:

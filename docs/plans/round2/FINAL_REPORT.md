@@ -129,7 +129,7 @@ The 2026-10-28 rerun, same sources and settings, native API on 8090 under
 
 | | Diffbot (13 tables) | ZoomInfo 100k (7 tables) | ZoomInfo 1M (7 tables) |
 |---|---|---|---|
-| Rows copied / expected | **52,828 / 52,828** | **599,853 / 599,853** (Company 99,939; Experience 999,611 — table-exact) | **5,999,042 / 5,999,042** (Company 999,394; Experience 999,611 — table-exact) |
+| Rows copied / expected | **52,828 / 52,828** | **599,853 / 599,853** (Company 99,941; Experience 99,875 — table-exact; re-measured 2026-11-10, §9) | **5,999,042 / 5,999,042** (Company 999,394; Experience 999,611 — table-exact) |
 | Phase 2 wall | 40.2 s | 67 s | 14 m 12 s (5.999M rows) |
 | Throughput | ~1,314 rows/s | ~8,952 rows/s | **~7,000 rows/s** (before: 1,220 / 8,465 / 8,585) |
 | Review-queue rows | 1,852 (2.8 MB; before 1,852) | 193,708 (275 MB; before 188,312/223 MB) | 1,914,572 (2.7 GB; before 1,914,502/2.26 GB) |
@@ -410,8 +410,8 @@ Legend: **yes** = checked in this audit; **record** = the 2026-11-01 run's resul
 
 ### Inconsistencies in this report and its sources
 
-- ZoomInfo 100k rows: §3 says 599,853, HANDOFF.md (2026-11-01 §5.5) says 699,853. Its Experience
-  cell repeats the 1M value 999,611. Cannot be re-measured while the box is down.
+- ZoomInfo 100k rows: re-measured 2026-11-10 by direct SQL (§9): 599,853. HANDOFF.md's 699,853
+  and this report's Company 99,939 and Experience 999,611 were wrong; both files are corrected.
 - §1 "link-local", §3 "j/k accept", §4.4 "k-key is a skip": corrected in the tables above.
 - Eight test files point in their docstrings at `.handoff/` paths that the purge would leave
   dangling: `tests/property/test_second_pass_codes.py`, `tests/unit/test_in_place_removed.py`,
@@ -512,3 +512,41 @@ a step needs:
   seen: 7.2 GB.
 - `uv run` without extras tries to sync from the network; the runs used `uv run --no-sync` after
   `uv sync --all-extras --locked --offline --dry-run` reported "Would make no changes".
+
+## 9. Live re-checks of the "record" results (2026-11-10, D24)
+
+<!-- verified: 5352176 -->
+
+Re-run on `main` b894461 plus `fix/d24-records`, on the benchmark machine `10.10.9.41`. Native API
+on `10.10.9.137:8095` under `systemd-run -p MemoryMax=3G`, app database `norm_app_r3_d24`
+(bench-pg). Language probes ran in-process on the same code.
+
+| Check (§5.3-§5.8, §7 "record") | 2026-11-01 record | Measured 2026-11-10 |
+|---|---|---|
+| Listening sockets (`ss -ltn`) | only the LAN address | `10.10.9.137:8095` only |
+| LAN caller, benchmark machine → `/health` | 200 | 200 |
+| Same caller with `X-Forwarded-For: 203.0.113.9` | ignored | 200 (header ignored) |
+| Outside caller | 403 | **not re-checked**: needs a stub network with a public address; `check_caller` unit-tested only |
+| `Host: evil.example` | 400 | 400 |
+| `Host: localhost:80@evil.com` | 200 (limit, §4 item 7) | **400** (changed: no longer accepted) |
+| Save a connection to `8.8.8.8` | 422 | 422 "outside the allowed local network" |
+| Host name with several addresses, all public (`dns.google`, 2 IPv4 + 2 IPv6) | not checked | 422 "resolves outside the allowed local network" |
+| Host name with several addresses, all local (`localhost`: `127.0.0.1`, `::1`) | not checked | `checked_addresses` checks both; `resolve_and_check` connects to `127.0.0.1` |
+| A name with mixed public and local addresses | not checked | **not checked live**: needs a DNS or hosts change; unit-tested |
+| ClickHouse client address (`system.query_log`, zoominfo-ch) | `::ffff:10.10.9.137` | `::ffff:10.10.9.137` (8 queries) |
+| Postgres client address (`pg_stat_activity`, bench-pg) | API host | `10.10.9.137` |
+| POST clone job with `in_place` | 422 | 422 `extra_forbidden` |
+| Clone job whose destination is its origin | refused | 422 "The destination is the origin" |
+| Saved connections list carries no password | yes | yes |
+| UI served by the API, one port, no CORS, offline | yes | `/` 200 `text/html`; no `Access-Control-Allow-*` on a cross-origin preflight; 0 external `src`/`href` |
+| Five screens, jobs survive reload, key → DOM 14 ms | walk | **not re-checked**: the in-app browser refused the LAN address |
+| Integration suite 33/33 | 33/33 | **not run**: it needs the compose stack on the laptop (rule: databases on the benchmark machine) |
+| Docker Engine ≥ 28.3.3 | 29.7.1 | 29.7.1 |
+| ZoomInfo 100k rows (`count() … FINAL`, `norm_r2_out_zi100k` = `norm_r2_src_zi100k`) | 599,853 or 699,853 | **599,853**: Company 99,941, CompanyIndustry 100,000, Experience 99,875, Industry 37, Location 100,000, Person 100,000, PersonContact 100,000 |
+| R12 cases: `Ga`, `Mon`, `Dan`, `En`; `Mon`+MM; `Dan`+CI | AMBIGUOUS ×4; `mnw`; `dnj` | same |
+| Movies (`bm_round2_movies.dirty`, 502 distinct `language`): code fed back | 0 changed | 1 distinct value gets a code; 0 changed. The rest are multi-language, held |
+| pycountry probe (16,004 inputs: every `alpha_2`, `alpha_3`, `name`): `comparison` fed back | 0 changed | 15,846 get a code. 4 fed back are AMBIGUOUS (`na` from `nau`/`Nauru`, `nil`, `unk`: missing-value words), 0 change to another code |
+| pycountry probe: `display` fed back | 142 held AMBIGUOUS, 0 wrong | 141 held AMBIGUOUS; 1 (`nbt` → display `Na`) reads back as no code; 0 another code |
+
+The 4 new AMBIGUOUS feed-backs follow from D20 (case no longer marks a code), measured, not
+fixed here. Every "not re-checked" row keeps its 2026-11-01 record.

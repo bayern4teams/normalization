@@ -23,7 +23,7 @@ normalizer emits it — its one producer is an adjudicated value, ADR-018.)
 from __future__ import annotations
 
 import re
-from datetime import date
+from datetime import date, datetime
 from functools import cache, lru_cache
 from itertools import permutations
 from typing import TYPE_CHECKING, Any
@@ -54,7 +54,6 @@ from normalizers import text_ops
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping, Sequence
-    from datetime import datetime
 
     from normcore.interfaces import ComponentVersion, Explanation, StepSpec, ValidationResult
 
@@ -144,7 +143,13 @@ def _names_month(text: str, month: int, locale: str | None) -> bool:
     return any(m.group().casefold() in names for m in _LETTER_RUN_RE.finditer(text))
 
 
-def _stated_precision(text: str, parsed: datetime, claimed: str, locale: str | None) -> str | None:
+def _stated_precision(
+    text: str,
+    parsed: datetime,
+    claimed: str,
+    locale: str | None,
+    filled: frozenset[str] = frozenset(),
+) -> str | None:
     """The finest precision, at most `claimed`, whose components `text`
     states: the year and the day each as a number of their own, the month
     as a number or as its name in the detected `locale`. Parsers reuse one
@@ -165,16 +170,18 @@ def _stated_precision(text: str, parsed: datetime, claimed: str, locale: str | N
         # ponytail: compact digits (`03032024`) are not split into components,
         # the parser is trusted; split by length if one is found inventing.
         return claimed
-    has_word = _names_month(date_part, parsed.month, locale)
+    # A component the parser `filled` from its base date claims no number:
+    # under D/M/Y `11/30` is day 11 of 2030, whatever month the base gave.
+    has_word = "month" not in filled and _names_month(date_part, parsed.month, locale)
 
     def year(n: str) -> bool:
         return int(n) == parsed.year or (len(n) == 2 and int(n) == parsed.year % 100)
 
     def month(n: str) -> bool:
-        return int(n) == parsed.month
+        return "month" not in filled and int(n) == parsed.month
 
     def day(n: str) -> bool:
-        return int(n) == parsed.day
+        return "day" not in filled and int(n) == parsed.day
 
     for precision in _PRECISIONS[_PRECISIONS.index(claimed) :]:
         needed = {"day": [year, month, day], "month": [year, month], "year": [year]}[precision]
@@ -212,13 +219,20 @@ _PARTIAL_PARSER_SETTINGS: dict[str, object] = {
 }
 
 
-@lru_cache(maxsize=4)
-def _partial_parser(date_order: str | None) -> DateDataParser:
+# Non-strict parsing fills a component the text lacks from its base date.
+# Two fixed bases that differ in month and day: a component that moves
+# between them came from the base, not the text. Fixed, so no clock is read;
+# only a month or day equal to the first base's needs the second parse.
+_PARTIAL_BASES = (datetime(2000, 1, 1), datetime(2000, 2, 2))
+
+
+@lru_cache(maxsize=8)
+def _partial_parser(date_order: str | None, base: datetime) -> DateDataParser:
     """DateDataParser (not dateparser.parse) because it is the only entry
     point that reports `period` — 'year' / 'month' / 'day' — which IS the
     precision the source stated. Cached: constructing one compiles a large
     locale table, and there are at most three distinct orders."""
-    settings = dict(_PARTIAL_PARSER_SETTINGS)
+    settings = {**_PARTIAL_PARSER_SETTINGS, "RELATIVE_BASE": base}
     if date_order is not None:
         settings["DATE_ORDER"] = date_order
     return DateDataParser(settings=settings)
@@ -314,7 +328,11 @@ def _parse_partial(candidate: str, date_order: str | None) -> tuple[str, str] | 
     """`(iso_text, precision)` at the precision the input actually states,
     or None."""
     try:
-        data = _partial_parser(date_order).get_date_data(candidate)
+        first, second = _PARTIAL_BASES
+        data = _partial_parser(date_order, first).get_date_data(candidate)
+        other = data.date_obj
+        if other is not None and (other.month == first.month or other.day == first.day):
+            other = _partial_parser(date_order, second).get_date_data(candidate).date_obj
     except (ValueError, TypeError, OverflowError, RecursionError):
         return None
     parsed, period = data.date_obj, data.period
@@ -326,8 +344,13 @@ def _parse_partial(candidate: str, date_order: str | None) -> tuple[str, str] | 
         or not _year_is_supported(parsed.year, candidate)
     ):
         return None
-    # Non-strict parsing fills what the text lacks from today's date.
-    period = _stated_precision(candidate, parsed, period, data.locale)
+    # Non-strict parsing fills what the text lacks from its base date.
+    filled = frozenset(
+        part
+        for part in ("month", "day")
+        if other is None or getattr(other, part) != getattr(parsed, part)
+    )
+    period = _stated_precision(candidate, parsed, period, data.locale, filled)
     if period is None:
         return None
     if period == "year":

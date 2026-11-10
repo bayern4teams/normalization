@@ -236,3 +236,14 @@ class TestRegistrableDomain:
         assert result.normalization_status is NormalizationStatus.NORMALIZED
         assert result.structured["registrable_domain"] is None
         assert result.structured["registrable_domain_reason"]
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("value", [":.AA", "http://example.com:abc/", "http://example.com:99999/"])
+def test_a_port_that_is_no_port_is_invalid_not_a_crash(
+    normalizer: URLNormalizer, value: str
+) -> None:
+    # Found by the property test (Hypothesis, `:.AA`, rule L6): `.port` raises ValueError.
+    result = normalizer.normalize(value, _ctx())
+    assert result.normalization_status is NormalizationStatus.INVALID
+    assert result.display == value
