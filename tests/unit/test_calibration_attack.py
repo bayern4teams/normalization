@@ -252,11 +252,21 @@ def test_groups_single_case_and_alignment():
 
 
 def test_groups_cost_is_linear_in_pairs():
-    n = 8000
-    pairs = [(0.5, True)] * n
-    t = time.perf_counter()
-    reliability(pairs, groups=[str(i) for i in range(n)])
-    assert time.perf_counter() - t < 0.5
+    # A fixed 0.5 s limit measured machine load, not cost growth: 1 of 60 runs went over it
+    # with 48 busy processes. Best of 3 at n and 4n: linear is about 4, quadratic about 16.
+    # C5: reason=TEST-CHANGE, see above; approved=orchestrator, 2026-11-09; review=2027-02-09
+    # (approved under the owner's rule "All but 4 limits", 2026-11-09)
+    def best_of_3(n: int) -> float:
+        pairs = [(0.5, True)] * n
+        groups = [str(i) for i in range(n)]
+        times = []
+        for _ in range(3):
+            t = time.perf_counter()
+            reliability(pairs, groups=groups)
+            times.append(time.perf_counter() - t)
+        return min(times)
+
+    assert best_of_3(16000) / best_of_3(4000) < 8
 
 
 # --- pair_types alignment in gold.score, with clean answers that carry no confidence ---
