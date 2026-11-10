@@ -486,6 +486,13 @@ def test_added_dependencies_are_fingerprinted() -> None:
     on_main: set[str] = set()
     for rel in rels:
         on_main |= _runtime_dependencies(_git("show", f"{base}:{rel}"))
+    # TEST-CHANGE: a package main's uv.lock already installs (starlette via fastapi) is not new,
+    # as the 2026-10-24 decision above says; manifests alone missed it.
+    # C5: reason=match the 2026-10-24 rule; approved=user, 2026-11-10; review=2027-11-10
+    on_main |= {
+        n.lower().replace("_", "-")
+        for n in re.findall(r'(?m)^name = "([^"]+)"', _git("show", f"{base}:uv.lock"))
+    }
     now: set[str] = set()
     for rel in rels:
         now |= _runtime_dependencies((ROOT / rel).read_text())
