@@ -370,7 +370,8 @@ defect fixes. The default test paths are in `pyproject.toml` under
 Run tests in batches with a memory cap:
 
 ```bash
-( ulimit -v 16777216; uv run pytest tests/unit/test_dispatch.py tests/unit/test_data_contract.py -q )
+systemd-run --user --scope -p MemoryMax=4G -p MemorySwapMax=0 \
+  uv run pytest tests/unit/test_dispatch.py tests/unit/test_data_contract.py -q
 ```
 
 Before you push, run the four `ci-fast` commands (see [AGENTS.md](AGENTS.md)).
