@@ -298,11 +298,11 @@ Rules that matter to a database administrator:
 
 ## Interfaces for other projects
 
-<!-- verified: 9f27526 -->
+<!-- verified: 01e01ae -->
 
 | Interface | Where | Use |
 |---|---|---|
-| HTTP API | `packages/normapi/src/normapi/routes.py`, prefix `/normalization` | Profiles, runs, dictionaries, connections, clone jobs, adjudication. Interactive docs are served by FastAPI. |
+| HTTP API | `packages/normapi/src/normapi/routes.py`, prefix `/normalization` | Profiles, runs, dictionaries, connections, clone jobs, adjudication. Reference: [docs/API.md](docs/API.md), generated from the schema the API serves at `/openapi.json`. Swagger and ReDoc are off ([ADR-023](docs/adr/ADR-023-ui-scope-and-technology.md)). |
 | Health | `GET /health` | Container health check. |
 | Lineage | `GET /normalization/clone-jobs/{id}/lineage` | OpenLineage events per job and table. |
 | CLI | `packages/normcli/src/normcli/cli.py` | `gold generate`, `gold score`, `calibrate`, `check-traceability`, `mutation-score-gate`. |

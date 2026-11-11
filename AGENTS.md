@@ -288,6 +288,10 @@ These are not style preferences; each one exists because ignoring it broke somet
 - **Benchmark stack, datasets and outputs live on the benchmark machine**, `/home/benchmark` on
   `10.10.9.41` (`ssh template@10.10.9.41`; read `/home/benchmark/README.md` first). Benchmark
   scripts need `BENCH_DIR` set to that folder and run there. Why: the repo stays small and clean (H1).
+- **Every new or changed API route regenerates [`docs/API.md`](docs/API.md) in the same commit**:
+  `uv run python scripts/generate_api_reference.py`. `tests/unit/test_api_reference.py` fails
+  when the file is stale (owner, 2026-11-11: "Rule + CI check"). Why: Swagger and ReDoc are off
+  (ADR-023), so this file is the only API reference other projects read.
 - Part 1 of the improvement report is closed and measured:
   [`docs/archive/plans/defects/PART1_COMPLETE.md`](docs/archive/plans/defects/PART1_COMPLETE.md)
   and `docs/benchmarks/REPORT.md` §11. Why: it is the record of what was verified, not a live
