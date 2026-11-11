@@ -749,13 +749,20 @@ under concurrency) goes to Part 3 §3.8.
 
 ## Part 1, round 4 (2026-11-10) — planned, not decided
 
-Found by the round 3 benchmark run on the ClickHouse variant. The evidence is in the run's
+Owner, 2026-11-11: round 4 holds D33, the three small values (D34-D36), throughput (D37) and the
+resume test (D38). Found by the round 3 benchmark run; D33 on the ClickHouse variant. The build prompt is
+[`plans/round4/PROMPT_ROUND4.md`](plans/round4/PROMPT_ROUND4.md). The evidence is in the run's
 progress notes, `/home/bayern/Projects/normalization-r3-run/r3-bench-p3.md`, task
 "r3-bench-p3-ch" item 2, and in APP_FINDINGS #7 (see D25-D32 above).
 
 | # | Problem (checked 2026-11-10) | Fix (options, not decided) | Test first |
 |---|---|---|---|
 | **D33** 🟡 | **Autodetect leaves small tables' text columns untyped** (APP_FINDINGS #7, after D31). `t_text.notes` gets no semantic type on Postgres, and `t_text_ch.notes` none on ClickHouse. The clone applies a suggestion only at confidence ≥ 0.9 (`clone_executor._AUTODETECT_MIN_CONFIDENCE`); FREE_TEXT is never inferred (`clone_executor._NEVER_INFERRED`); and the sample skips undecodable bytes (`clone_executor._source_text` returns None for them, so `_sample_column_values` drops them). An unconfigured column never reaches `_decode_column` / `_restore_undecodable`, so its non-UTF-8 bytes are copied with no error row. | Planned. Options: (a) change the apply line for small samples; (b) a sample validator for FREE_TEXT. Option (b) conflicts with the owner's "b7. a" (FREE_TEXT is never inferred from values alone), so it needs the owner. | `t_text.notes` on both engines: the planned behaviour, once decided. The configured-column path is already tested: `tests/unit/test_clone_undecodable_bytes.py`. |
+| **D34** 🟡 | **Two country names stay INVALID with no error row** (round 3 benchmark, base run): `Bonaire, Saint Eustatius and Saba` and `Palestinian Territory`; the key expects `BQ` and `PS` (`r3-bench-p2.md`). After D28, `Palestine` (CLDR short name) resolves. Cause not checked. | Not decided: find which name source each form is in (ISO 3166, CLDR, GeoNames) before choosing. A name no authoritative source has stays INVALID, with an error row. | Both values: the answer the cause supports, and an error row whenever INVALID. |
+| **D35** 🟡 | **`XYZ` gets the error class `unclassified`; the key expects `not_in_standard`** (base run, after D29). Cause not checked. | Not decided: see how the error class is chosen for a well-formed code that ISO 4217 lacks. | `XYZ` in a CURRENCY column: class `not_in_standard`. |
+| **D36** 🟡 | **Phone `020 7946 0958` is INVALID in the locale run; the key expects AMBIGUOUS.** The same before round 3. Cause not checked. | Not decided: check the number against libphonenumber's metadata for GB, independently of the app's result. | The value under the locale variant: the status the cause supports. |
+| **D37** 🟡 | **HTTP throughput falls under concurrency** (APP_FINDINGS #9): `POST /preview` 355 req/s at 1 user, 78 at 4, 65 at 16, 208 at 64 (round 3, `b894461`); p99 1.25 s at 16. Not investigated. | Not decided: profile first (event loop blocked by sync work, a lock, the database pool). A fix that changes the architecture moves to Part 3. | A load test with a fixed request mix: throughput at 16 users not below 1 user's by more than the measured noise. |
+| **D38** 🟡 | **Resume after a kill is never tested**: the benchmark's kill point (at the table switch) is never reached, because the dataset is too small (every run since round 2). | Not decided: kill points the small dataset reaches (a row count, a chunk), or a larger dataset. | A clone killed mid-table resumes and ends with the same destination row hashes as an unbroken run. |
 
 ---
 
