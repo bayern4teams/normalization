@@ -466,7 +466,7 @@ names exists. Its ratchet of missing commands stands at zero
 
 ## How to extend
 
-<!-- verified: 9f27526 -->
+<!-- verified: 01e01ae -->
 
 Add a normalizer for an existing semantic type:
 
@@ -490,6 +490,10 @@ hand table. Dictionaries go in `data/dictionaries` and load through
 
 Change a value's contract: edit `NormalizedValue`, the Arrow schema and both
 converters together. `tests/unit/test_data_contract.py` fails if they drift.
+
+Add or change an API route: run `uv run python scripts/generate_api_reference.py` and commit
+the new [docs/API.md](docs/API.md) with the route. `tests/unit/test_api_reference.py` fails
+when the file differs from the app's OpenAPI schema.
 
 Release: tag `milestone/M*` runs `release.yml`.
 
