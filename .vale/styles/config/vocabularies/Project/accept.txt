@@ -88,3 +88,7 @@ Vite
 dev
 lockfile
 env_id
+Mantine
+Starlette
+libpq
+Langfuse
