@@ -20,6 +20,8 @@ Part 3 by the rule in §0; Part 2 adds the research for a self-adapting engine a
 services; Part 3 adds the round 3 target architecture (§3.8). Proposal only; no code changed.
 **Round 3, benchmark findings (2026-11-08):** D25-D32 added to Part 1 from the owner's benchmark
 run; the build prompts are in [`plans/round3/`](plans/round3/README.md). Proposal only.
+**Round 3 status (2026-11-10):** D16-D32 built, verified and merged into `main` (`56578b8`);
+results and open items are in [`plans/round3/FINAL_REPORT.md`](plans/round3/FINAL_REPORT.md).
 **Scope confirmed with project owner** (Q&A round, 2026-09-30)
 
 ---
@@ -680,7 +682,7 @@ Rules for the build:
 Round 2 is merged. These are the items it left open, from
 [`plans/round2/FINAL_REPORT.md`](plans/round2/FINAL_REPORT.md) §4, §6 and §7. The rule in §0
 "Round 3 constraints" sorts them. Owner, 2026-11-07: "B. a", the split proposed that day.
-None is built.
+All are built and merged (2026-11-10): [`plans/round3/FINAL_REPORT.md`](plans/round3/FINAL_REPORT.md).
 
 **Moved to Part 3** because each changes the architecture (§3.8): the Docker API that cannot
 reach the benchmark machine (§4.11) and `/docs` (§4.3). The API start-up memory (§5.6) was moved
