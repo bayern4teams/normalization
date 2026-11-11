@@ -34,13 +34,13 @@ next to it. Every clone writes a separate copy; the origin is never written.
 
 ## Status
 
-<!-- verified: 9f27526 -->
+<!-- verified: c13cd86 -->
 
 All milestones M0 to M8 are complete. Part 1 of the improvement report
 (defects D1 to D12) is complete and measured on public data
-([record](docs/archive/plans/defects/PART1_COMPLETE.md)). Round 2 of Part 1
-(D13 to D15 and a new UI, U1) is built in the cloud and waits for the owner's local checks
-([report](docs/improvement-report.md#part-1-round-2-2026-10-25--found-after-d1-d12-were-closed)). Postgres and
+([record](docs/archive/plans/defects/PART1_COMPLETE.md)). Round 2 (D13 to D15 and the review UI,
+U1) is merged ([report](docs/plans/round2/FINAL_REPORT.md)), and so is round 3 (D16 to D32,
+[report](docs/plans/round3/FINAL_REPORT.md)). Round 4 (D33) is planned. Postgres and
 ClickHouse are supported for the clone feature. MySQL, Mongo and file sources
 exist as read-only connectors, and the clone feature does not use them
 ([ADR-017](docs/adr/ADR-017-clone-normalize-engine-scope.md)).
