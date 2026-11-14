@@ -302,7 +302,10 @@ These are not style preferences; each one exists because ignoring it broke somet
 - Part 1, round 3 (D16-D32) is built and merged (2026-11-10):
   [`docs/plans/round3/FINAL_REPORT.md`](docs/plans/round3/FINAL_REPORT.md). Why: it is the record
   of what was verified and what stayed open.
-- Part 1, round 4 (D33) and the round 3 architecture (Part 3 §3.8) are planned, not built:
+- Part 1, round 4 (D33-D38) is built (2026-11-14):
+  [`docs/plans/round4/FINAL_REPORT.md`](docs/plans/round4/FINAL_REPORT.md). Why: it is the record
+  of what was verified and what stayed open.
+- The round 3 architecture (Part 3 §3.8) is planned, not built:
   [`docs/improvement-report.md`](docs/improvement-report.md). Part 1 holds fixes inside today's
   architecture; an architecture change goes to Part 3; Part 3 starts when Part 1 is empty
   (owner, 2026-11-07, quoted in the report's §0). Why: it is the live plan; build from it, not
