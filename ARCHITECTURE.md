@@ -385,6 +385,12 @@ Throughput depends on the data. In one measured clone, normalization took
 79.6 percent of wall-clock time (`packages/normapi/src/normapi/clone_executor.py`,
 comment above `_WORKER_COUNT`). Measure your own source before you size a job.
 
+`POST /normalization/preview` and `POST /normalization/field-test` normalize on
+one thread per process (`packages/normapi/src/normapi/routes.py::_NORMALIZE`).
+Several threads parsing dates at once ran slower in total than one: 16 callers
+got 27 requests per second against one caller's 263. On one thread, 16 callers
+got 328 to 335 (the round 3 request mix, three runs, 2026-11-14).
+
 ## Quality measurement
 
 <!-- verified: 9f27526 -->

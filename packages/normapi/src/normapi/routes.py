@@ -37,10 +37,12 @@ are all wired to real logic — no remaining 501 stubs on the §98 surface.
 
 from __future__ import annotations
 
+import asyncio
 import datetime as dt
 import json
 import re
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Response
@@ -330,8 +332,18 @@ def suggest_profile_route(
 # --- preview / field-test ---------------------------------------------------
 
 
+# D37: dateparser's `regex` calls slow down sharply when several threads run
+# them at once (12.4 parses/s on one thread, 0.7 on four; stdlib `re` does not).
+# Sync routes run on a pool of threads, so 16 callers got 27 req/s against
+# one caller's 263. These two routes normalize on one thread instead; the
+# event loop stays free for every other route.
+# ponytail: one thread for the whole process, so a slow ADDRESS call (libpostal
+# over HTTP) delays other previews; give ADDRESS its own executor if that shows.
+_NORMALIZE = ThreadPoolExecutor(max_workers=1, thread_name_prefix="normalize")
+
+
 @router.post("/preview", response_model=list[NormalizedValue])
-def preview(
+async def preview(
     body: PreviewRequest,
     dispatcher: Annotated[Dispatcher, Depends(get_dispatcher)],
 ) -> list[NormalizedValue]:
@@ -340,14 +352,17 @@ def preview(
         semantic_type=body.semantic_type,
         error_policy=body.error_policy,
     )
-    return [
-        dispatcher.normalize(value, body.semantic_type, ctx, SCAFFOLD_PROFILE)
-        for value in body.values
-    ]
+    return await asyncio.get_running_loop().run_in_executor(
+        _NORMALIZE,
+        lambda: [
+            dispatcher.normalize(value, body.semantic_type, ctx, SCAFFOLD_PROFILE)
+            for value in body.values
+        ],
+    )
 
 
 @router.post("/field-test", response_model=NormalizedValue)
-def field_test(
+async def field_test(
     body: FieldTestRequest,
     dispatcher: Annotated[Dispatcher, Depends(get_dispatcher)],
 ) -> NormalizedValue:
@@ -356,7 +371,10 @@ def field_test(
         semantic_type=body.semantic_type,
         error_policy=body.error_policy,
     )
-    return dispatcher.normalize(body.value, body.semantic_type, ctx, SCAFFOLD_PROFILE)
+    return await asyncio.get_running_loop().run_in_executor(
+        _NORMALIZE,
+        lambda: dispatcher.normalize(body.value, body.semantic_type, ctx, SCAFFOLD_PROFILE),
+    )
 
 
 # --- runs -------------------------------------------------------------------
