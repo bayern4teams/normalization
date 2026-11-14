@@ -321,7 +321,7 @@ Rules that matter to a database administrator:
 | The original survives. | `original` is never overwritten. A failed value keeps its original in a text destination column. A typed column stores NULL and an error row. |
 | Same input, same output. | `(original, semantic_type, context, profile_version, env_id)` fixes the output. A 1,000,000-row test through two separate processes gave identical Parquet files (`tests/integration/test_byte_identical_replay.py`). |
 | A refusal has an exit. | A verdict settles the value in every later run with the same context and profile version. |
-| A crashed job resumes. | Each block commits a checkpoint, a row offset at a block boundary. A Postgres table is read in primary-key order, else `ctid`, and skips committed blocks. An unfinished ClickHouse table restarts from empty because its read order is not stable ([REPORT §10 item 2](docs/benchmarks/REPORT.md)). |
+| A crashed job resumes. | Each block commits a checkpoint, a row offset at a block boundary. A Postgres table is read in primary-key order, else `ctid`, and skips committed blocks. An unfinished ClickHouse table restarts from empty because its read order is not stable ([REPORT §10 item 2](docs/benchmarks/REPORT.md)). A job killed mid-table ends with the same rows and error rows as an unbroken run (`tests/integration/test_resume_after_kill_live.py`). |
 
 The engine does not discover schemas or keys, extract entities, build
 canonical datasets, or link records. A test fails if any package imports `splink`
