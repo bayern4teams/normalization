@@ -2528,9 +2528,11 @@ def _normalize_table(
     progress: dict[str, Any],
     entity_countries: Mapping[str, str],
     adjudication: Adjudication | None = None,
+    source_types: Mapping[str, str] | None = None,
 ) -> None:
     """One table, end to end: stream it, normalize every configured
-    column, insert, checkpoint.
+    column, insert, checkpoint. `source_types` (column -> the source's
+    native type) names the unconfigured text columns checked for UTF-8.
 
     Extracted from `_run_phase2`, which had grown to 63 statements across
     15 branches doing connection setup, the per-table work and failure
@@ -2571,6 +2573,14 @@ def _normalize_table(
     key_normalized_columns: dict[str, str] = table_plan.get("key_normalized_columns", {})
     stats = {column: _ColumnStats() for column in configured_columns}
     _column_evidence(job, source, table, configured_columns)
+    # D33: an unconfigured text column is copied as is, but bytes that are
+    # not UTF-8 still get the error row a configured column gives them.
+    # Text by the source's own type: a binary column's bytes are its data.
+    passthrough_text = [
+        column
+        for column, native_type in (source_types or {}).items()
+        if _is_textual(native_type) and column not in configured_columns
+    ]
     # Only this table's own key column matters: a table that does not carry
     # it gets no cross-table country, which is the behaviour without the
     # feature. Empty means off for this table.
@@ -2638,6 +2648,15 @@ def _normalize_table(
                 # Phase 1 refuses a clone across engines, so this is the destination too.
                 engine=source_engine,
             )
+            for column in passthrough_text:
+                _restore_undecodable(
+                    pending,
+                    _decode_column(pending, column),
+                    column=column,
+                    table=table,
+                    typed_as=None,
+                    errors_buffer=block_errors,
+                )
             for _, row in pending:
                 row.pop("source_row_key", None)
                 block.append(row)
@@ -2830,6 +2849,7 @@ def _run_phase2(
                     progress=progress,
                     entity_countries=entity_countries,
                     adjudication=adjudication,
+                    source_types=source_types,
                 )
             except Exception:
                 run.fail()

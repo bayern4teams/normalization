@@ -282,6 +282,9 @@ Rules that matter to a database administrator:
 - A value that fails keeps its original in a text destination cell. The cell is
   never blank and never skipped (`ErrorPolicy.RETURN_ORIGINAL`). A full error
   report is available at `GET /clone-jobs/{id}/errors`.
+- A source text value that is not UTF-8 (possible in a ClickHouse `String`)
+  keeps its source bytes in every text column, configured or not, and gets an
+  error row (`packages/normapi/src/normapi/clone_executor.py::_restore_undecodable`).
 - Typed columns exist for numeric, money, boolean and date bounds (ADR-020).
   A value a column cannot hold becomes NULL with an error row, never a failed
   insert. Dates stay text because they can be partial. Their bounds go to
