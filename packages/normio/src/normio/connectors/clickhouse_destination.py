@@ -213,6 +213,15 @@ class ClickHouseDestination:
         # pass column_type_names with pre-quoted names if one turns up.
         full_table = f"{quote_identifier(database)}.{quote_identifier(table)}"
         data = [[row[c] for c in columns] for row in rows]
+        # A String column may hold source bytes that are not UTF-8 (kept by
+        # `clone_executor._restore_undecodable`) beside text; the driver
+        # writes a column of all str or all bytes, never both.
+        for i in range(len(columns)):
+            if any(isinstance(r[i], bytes) for r in data):
+                for r in data:
+                    value = r[i]
+                    if isinstance(value, str):
+                        r[i] = value.encode("utf-8")
         client.insert(full_table, data, column_names=columns)
 
     def truncate_table(self, database: str, table: str) -> None:
