@@ -1,0 +1,65 @@
+# The app machine (ADR-024): the API with its UI, and the app's own database.
+# Nothing else runs here. libpostal and the databases you clone live elsewhere
+# (the benchmark box today); their addresses are settings in deploy/.env.
+#
+# The API is a released image pulled from your private registry
+# (NORM_IMAGE), never built here. Every address, port and password is a
+# setting in deploy/.env (copy deploy/.env.example); change it and run
+# `docker compose up -d` again. The step-by-step guide is docs/DEPLOY.md.
+#
+# Run from this folder: `docker compose --env-file .env up -d`.
+
+name: normalization
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: normalization
+      POSTGRES_PASSWORD: ${NORM_DB_PASSWORD:?set NORM_DB_PASSWORD in deploy/.env}
+      POSTGRES_DB: normalization
+    ports:
+      # Loopback only: for backup and restore from this machine (docs/DEPLOY.md).
+      - "127.0.0.1:${NORM_DB_PORT:-5535}:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U normalization -d normalization"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    image: ${NORM_IMAGE:?set NORM_IMAGE in deploy/.env to the release image}
+    restart: unless-stopped
+    # Every setting in deploy/.env reaches the app (NORM_LIBPOSTAL_URL,
+    # NORM_SECRET_KEY, NORM_ALLOWED_NETWORKS, tuning). The lines below are
+    # container paths and the database address, which are not settings.
+    env_file: .env
+    environment:
+      NORM_PG_DSN: postgresql://normalization:${NORM_DB_PASSWORD}@postgres:5432/normalization
+      NORM_SIDECAR_DUCKDB_PATH: /data/sidecar/catalog.duckdb
+      NORM_SIDECAR_PARQUET_ROOT: /data/sidecar/parquet
+      NORM_CACHE_PATH: /data/sidecar/cache.duckdb
+      NORM_DICTIONARIES_DIR: /app/data/dictionaries
+      NORM_CUSTOM_DICTIONARIES_DIR: /data/sidecar/custom-dictionaries
+    ports:
+      # The API has no authentication, so it binds one private address, never 0.0.0.0.
+      - "${NORM_BIND_ADDR:?set NORM_BIND_ADDR in deploy/.env}:${NORM_PORT:-8080}:8080"
+    mem_limit: ${NORM_MEM_LIMIT:-4g}
+    volumes:
+      - sidecar_data:/data/sidecar
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+volumes:
+  pg_data:
+  sidecar_data:

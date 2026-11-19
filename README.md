@@ -88,6 +88,9 @@ The compose file has no secret key; it reads `NORM_SECRET_KEY` from your `.env`.
 To clone a real database, follow the
 [end-to-end guide](docs/clone-e2e-guide.md).
 
+To run the app on its own machine from a private release, follow
+[docs/DEPLOY.md](docs/DEPLOY.md).
+
 ## Worked example: measure accuracy
 
 <!-- verified: 9f27526 -->
