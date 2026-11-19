@@ -3,8 +3,10 @@ run at the same time. Measured on `main` 8f3b63c with the round 3 benchmark's
 request mix: 263 req/s at 1 user, 42 at 4, 27.5 at 16.
 
 A real uvicorn process and a fixed request mix, replayed at 1 and 16 users,
-RUNS times each. The noise is the spread of the 1-user runs; the 16-user
-median may not fall below the 1-user median by more than that spread.
+RUNS times each. The 16-user median must reach 95 % of the 1-user median
+(owner, 2026-11-19: "Allow 5% tolerance"). The first criterion, "not below by
+more than the noise", failed after the fix by 3.6 % against a 1.1 % spread: one
+thread for the work still shares the GIL with the event loop.
 """
 
 from __future__ import annotations
@@ -27,6 +29,7 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.bench
 
 RUNS = 3
+TOLERATED = 0.95  # owner, 2026-11-19: "Allow 5% tolerance"
 REQUESTS = 600
 
 # Shaped like the round 3 mix: mostly COUNTRY, a few dates that miss the ISO
@@ -105,6 +108,5 @@ def test_throughput_at_16_users_holds_against_1_user(base_url: str) -> None:
     asyncio.run(_level(base_url, 1))  # warm-up: dateparser loads its locales once
     one = [asyncio.run(_level(base_url, 1)) for _ in range(RUNS)]
     sixteen = [asyncio.run(_level(base_url, 16)) for _ in range(RUNS)]
-    noise = max(one) - min(one)
     print(f"req/s 1 user {[round(x) for x in one]}, 16 users {[round(x) for x in sixteen]}")
-    assert statistics.median(sixteen) >= statistics.median(one) - noise, (one, sixteen)
+    assert statistics.median(sixteen) >= TOLERATED * statistics.median(one), (one, sixteen)
