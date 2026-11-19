@@ -84,8 +84,8 @@ event.
 
 | item | next |
 |---|---|
-| D37 (c): upstream report to `regex` drafted, not posted | owner's go on the text |
-| Key batch: D33 `notes` FREE_TEXT/lineage/quality, D34 BQ/PS, D36 ambiguous | ground-truth agent |
+| D37 (c): upstream report to `regex` | dropped: a public issue breaks the owner's rule "nothing should be public at all" (2026-11-19) |
+| Key batch: D33 `notes` FREE_TEXT/lineage/quality, D34 BQ/PS, D36 ambiguous | ground-truth agent: [GROUND_TRUTH_HANDOFF.md](GROUND_TRUTH_HANDOFF.md) |
 | Scorer: D29's currency message; other round 3 messages not checked | ground-truth agent |
 | Benchmark kill points by row count (D38 b) | ground-truth agent |
 | D36 side finding: the job country is tagged `region_source: explicit`, ADR-006 makes it the lowest level | not built |

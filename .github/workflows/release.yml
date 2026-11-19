@@ -1,19 +1,23 @@
 name: release
 
-# Fires on a milestone/M* tag (created after a gate passes and the human
-# sign-off is committed). Builds and publishes: signed container images,
-# the SBOM, the benchmark baseline for the next milestone's no-regression
-# check, and a GitHub Release bundling the verification pack.
+# Fires on a version tag `vX.Y.Z` that equals the packages' version (owner,
+# 2026-11-19, "4. a"). Publishes, all private (owner: "nothing should be
+# public at all"): the API image to this repository's GHCR, and a GitHub
+# Release holding the Python packages. The repository's source archive comes
+# with every release. GitLab does the same in .gitlab-ci.yml (release stage).
+#
+# No image signing: keyless cosign writes every signature to the public
+# Sigstore log, which the owner's rule forbids. The milestone sign-off gate
+# that used to guard this workflow stays in gate.yml's milestone pipeline.
 
 on:
   push:
     tags:
-      - "milestone/M*"
+      - "v*"
 
 permissions:
   contents: write
   packages: write
-  id-token: write # for keyless image signing (cosign)
 
 jobs:
   release:
@@ -22,27 +26,15 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          fetch-depth: 0
+          persist-credentials: false
 
-      - name: Derive milestone from tag
-        id: tag
-        run: |
-          TAG="${GITHUB_REF_NAME}"
-          MILESTONE=$(echo "$TAG" | sed -E 's#milestone/##')
-          echo "milestone=$MILESTONE" >> "$GITHUB_OUTPUT"
+      - uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39 # v3.2.4
 
-      - name: Verify sign-off pack exists and is APPROVED for this exact tag
-        uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39 # v3.2.4
-      - run: uv python install 3.12
-      - run: uv sync --all-extras
-      - env:
-          TAG_MILESTONE: ${{ steps.tag.outputs.milestone }}
-        run: |
-          next=$(python3 -c "import re,sys; n=int(re.findall(r'\d+', sys.argv[1])[0]); print(f'M{n+1}' if n < 8 else 'M8')" "$TAG_MILESTONE")
-          uv run python scripts/check_signoff.py --milestone "$next" --no-commit-check
+      - name: The tag must equal every package's version
+        run: python3 scripts/check_release_version.py "${GITHUB_REF_NAME}"
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+      - name: Build the Python packages
+        run: uv build --all-packages --out-dir dist
 
       - name: Log in to GHCR
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
@@ -51,45 +43,18 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push libpostal sidecar image
-        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
-        with:
-          context: services/libpostal
-          push: true
-          tags: |
-            ghcr.io/${{ github.repository }}/libpostal:${{ steps.tag.outputs.milestone }}
-            ghcr.io/${{ github.repository }}/libpostal:latest
-
-      - name: Build and push API image
+      - name: Build and push the API image
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
           context: .
           file: packages/normapi/Dockerfile
           push: true
-          tags: |
-            ghcr.io/${{ github.repository }}/api:${{ steps.tag.outputs.milestone }}
-            ghcr.io/${{ github.repository }}/api:latest
+          tags: ghcr.io/${{ github.repository }}/api:${{ github.ref_name }}
 
-      - name: Install cosign
-        uses: sigstore/cosign-installer@7e8b541eb2e61bf99390e1afd4be13a184e9ebc5 # v3.10.1
-
-      - name: Sign images (keyless)
-        run: |
-          cosign sign --yes ghcr.io/${{ github.repository }}/libpostal:${{ steps.tag.outputs.milestone }}
-          cosign sign --yes ghcr.io/${{ github.repository }}/api:${{ steps.tag.outputs.milestone }}
-
-      # No SBOM step: `normcli sbom` was never built (PART1 W1, cut 2026-10-14).
-
-      - name: Save current benchmark results as next milestone's baseline
-        run: |
-          uv run pytest -m bench --benchmark-json=bench-baseline.json -q || true
-          cp bench-baseline.json tests/bench/baseline.json
-
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
-        with:
-          tag_name: ${{ github.ref_name }}
-          name: "Milestone ${{ steps.tag.outputs.milestone }}"
-          body_path: docs/verification/${{ steps.tag.outputs.milestone }}-verification-pack.md
-          files: |
-            tests/bench/baseline.json
+      - name: Create the GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: >-
+          gh release create "${GITHUB_REF_NAME}" dist/*
+          --repo "${GITHUB_REPOSITORY}" --title "${GITHUB_REF_NAME}" --generate-notes
+          --notes "Image: ghcr.io/${GITHUB_REPOSITORY}/api:${GITHUB_REF_NAME}. Deploy: docs/DEPLOY.md."

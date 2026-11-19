@@ -79,6 +79,32 @@ binds `NORM_BIND_ADDR`, the host's private LAN address from `.env`. libpostal an
 bind `127.0.0.1`. The API answers only callers inside loopback, RFC 1918 and `fc00::/7`, checks the
 `Host` header, and refuses database hosts that resolve outside that set.
 
+### The app machine
+
+`compose.yaml` above is the development and test stack. In production one machine runs only the
+app, from `deploy/compose.yaml` ([ADR-024](docs/adr/ADR-024-app-machine-and-private-releases.md)).
+Step by step: [docs/DEPLOY.md](docs/DEPLOY.md).
+
+```mermaid
+flowchart LR
+    subgraph app[app machine: deploy/compose.yaml]
+        api[api :NORM_PORT<br/>released image]
+        pg[postgres<br/>127.0.0.1 only]
+    end
+    subgraph box[benchmark box]
+        lp[libpostal :6901]
+        dbs[databases you clone]
+    end
+    api -->|depends on healthy| pg
+    api -->|NORM_LIBPOSTAL_URL| lp
+    api -->|saved connections| dbs
+```
+
+Caption: the API image is pulled from a private registry, never built on the machine. Every
+address, port and password is a line in `deploy/.env` (template: `deploy/.env.example`), which
+also passes every other `NORM_*` setting below to the API. A release is a `vX.Y.Z` tag; it
+publishes the image and the Python packages on both remotes, privately.
+
 ### Configuration
 
 All settings are environment variables. The default is the value in code.

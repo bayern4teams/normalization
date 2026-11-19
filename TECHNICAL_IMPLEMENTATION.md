@@ -70,8 +70,9 @@ Rules between modules:
 | `packages/normcli/src/normcli` | `cli.py`, `traceability.py`, `mutation_gate.py` | Command line. |
 | `ui/src` | `pages/`, `api/`, `app/`, `lib/review*.ts` | React + Mantine UI, five screens (Connections, New clone, Jobs, Review, Quality), hash routes ([ADR-023](docs/adr/ADR-023-ui-scope-and-technology.md)). Review keys: `lib/reviewKeys.ts`. Only `GET /adjudication/review` returns raw values. |
 | `services/libpostal` | `Dockerfile` | Address parsing sidecar. |
+| `deploy` | `compose.yaml`, `.env.example` | The app machine: the released API image and its Postgres ([ADR-024](docs/adr/ADR-024-app-machine-and-private-releases.md), [docs/DEPLOY.md](docs/DEPLOY.md)). |
 | `data/dictionaries` | `honorifics`, `legal-entity-suffixes`, `missing-values`, `name-suffixes` | Shipped dictionaries. |
-| `scripts` | `refresh_graphs.py`, `cloud_setup.sh`, `cloud_environment_setup.sh`, `check_*.py`, `generate_*.py`, `license_policy.toml` | Repository tooling and generators. `refresh_graphs.py::PINS` is the one home of the graph-tool versions. |
+| `scripts` | `refresh_graphs.py`, `cloud_setup.sh`, `cloud_environment_setup.sh`, `check_*.py`, `generate_*.py`, `license_policy.toml` | Repository tooling and generators. `check_release_version.py` holds a release tag to every package's version. `refresh_graphs.py::PINS` is the one home of the graph-tool versions. |
 | `tests` | `unit`, `golden`, `property`, `integration`, `bench`, `defects` | Tests. |
 | `docs/benchmarks` | `REPORT.md`, `scripts/`, `configs/` | Benchmark report and its scripts. |
 
@@ -388,7 +389,7 @@ The last measured CI set is in [REPORT §11.13](docs/benchmarks/REPORT.md) (3,22
 | `dep-check.yml` | push (except `milestone/**`), pull request | `deptry` on each workspace member and the root, plus the `[tool.mutmut].also_copy` paths exist. |
 | `guards.yml` | push (except `milestone/**`), pull request | The guard scripts below, `gitleaks`, `actionlint`, `zizmor`. |
 | `drift.yml` | manual only | Not scheduled: its pieces were never built. |
-| `release.yml` | tag `milestone/M*` | Release. |
+| `release.yml` | tag `vX.Y.Z` | Private release: API image to GHCR, Python packages on a GitHub Release. `.gitlab-ci.yml`'s release stage does the same on GitLab. |
 
 ### Guards
 
@@ -495,7 +496,9 @@ Add or change an API route: run `uv run python scripts/generate_api_reference.py
 the new [docs/API.md](docs/API.md) with the route. `tests/unit/test_api_reference.py` fails
 when the file differs from the app's OpenAPI schema.
 
-Release: tag `milestone/M*` runs `release.yml`.
+Release: set every `pyproject.toml` version, commit, and push a tag `vX.Y.Z` to `origin` (both
+remotes). `release.yml` and the GitLab release stage publish it privately; the app machine then
+runs it ([docs/DEPLOY.md](docs/DEPLOY.md)).
 
 ## Design decisions
 

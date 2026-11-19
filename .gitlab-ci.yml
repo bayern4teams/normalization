@@ -4,7 +4,7 @@
 #
 # Not ported, on purpose:
 #   - the Windows leg of ci-full's test matrix (no Windows runner);
-#   - release.yml (pushes to ghcr.io, signs keyless with GitHub OIDC, creates a GitHub Release);
+#   - release.yml itself: the release stage below does the same here (GitLab registry and Release);
 #   - drift.yml (manual only, and its own header says it has never been able to run);
 #   - gitleaks-action (the guards job already runs the pinned gitleaks binary over full history).
 # Not verified on this runner yet: integration, determinism-replay, e2e (docker-in-docker plus
@@ -18,6 +18,7 @@ workflow:
       when: never
     - if: $CI_COMMIT_BRANCH
     - if: $CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "api"
+    - if: $CI_COMMIT_TAG =~ /^v/
 
 default:
   # The instance runner (git.n4t.com) is tag-gated: run_untagged is off, so every job
@@ -25,7 +26,7 @@ default:
   tags: [bayern]
   image: python:3.12-bookworm
 
-stages: [fast, full, gate]
+stages: [fast, full, gate, release]
 
 variables:
   GIT_DEPTH: "0"
@@ -415,3 +416,48 @@ e2e:
     - npm --prefix ui run test:e2e
   after_script:
     - docker compose down -v || true
+
+
+# --- release: a `vX.Y.Z` tag (owner, 2026-11-19, "4. a"), after the fast stage passes ----------
+# The same as .github/workflows/release.yml, here: the API image to this project's container
+# registry, the Python packages to its package registry, and a GitLab Release linking them.
+# All private: they take the project's visibility (owner: "nothing should be public at all").
+.on-release:
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/
+
+release-image:
+  extends: [.on-release, .docker-cli]
+  stage: release
+  timeout: 30m
+  script:
+    - python3 scripts/check_release_version.py "$CI_COMMIT_TAG"
+    - *docker_setup
+    - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
+    - docker build -f packages/normapi/Dockerfile -t "$CI_REGISTRY_IMAGE/api:$CI_COMMIT_TAG" .
+    - docker push "$CI_REGISTRY_IMAGE/api:$CI_COMMIT_TAG"
+
+release-packages:
+  extends: [.on-release]
+  stage: release
+  script:
+    - python3 scripts/check_release_version.py "$CI_COMMIT_TAG"
+    - python -m pip install --quiet "uv==${UV_VERSION}"
+    - uv build --all-packages --out-dir dist
+    - |
+      base="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/normalization/${CI_COMMIT_TAG#v}"
+      for f in dist/*; do
+        curl --fail -sS --header "JOB-TOKEN: ${CI_JOB_TOKEN}" --upload-file "$f" "$base/$(basename "$f")" >/dev/null
+      done
+
+release:
+  extends: [.on-release]
+  stage: release
+  needs: [release-image, release-packages]
+  image: registry.gitlab.com/gitlab-org/release-cli:v0.24.0
+  script:
+    - echo "Release $CI_COMMIT_TAG, image $CI_REGISTRY_IMAGE/api:$CI_COMMIT_TAG"
+  release:
+    tag_name: $CI_COMMIT_TAG
+    name: $CI_COMMIT_TAG
+    description: "Image: $CI_REGISTRY_IMAGE/api:$CI_COMMIT_TAG. Packages: this project's package registry, normalization/$CI_COMMIT_TAG. Deploy: docs/DEPLOY.md."
