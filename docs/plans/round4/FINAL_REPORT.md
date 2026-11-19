@@ -55,8 +55,9 @@ Round 3 request mix, the benchmark's `loadtest.py`, 2,000 requests a level, thre
 
 The repo test `tests/bench/test_preview_concurrency_benchmark.py` (own mix, failed first: 229 vs
 15 req/s) now measures 1 user 229-231 and 16 users 222-223. That is 3.6 % below, with a 1-user
-spread of 2.6 req/s, so the report's criterion ("not below by more than the noise") still fails
-by about 6 req/s on this mix. The owner decides whether that criterion stands (§4).
+spread of 2.6 req/s, so the report's first criterion ("not below by more than the noise") failed
+by about 6 req/s on this mix. Owner, 2026-11-19: "Allow 5% tolerance"; the test now asks for
+95 % of the 1-user median (`TEST-CHANGE:` commit on `fix/d37-tolerance`).
 
 ## 3. How it was verified
 
@@ -83,7 +84,6 @@ event.
 
 | item | next |
 |---|---|
-| D37 criterion: 16 users 3.6 % below 1 user on the repo mix, noise 1.1 % | owner decision |
 | D37 (c): upstream report to `regex` drafted, not posted | owner's go on the text |
 | Key batch: D33 `notes` FREE_TEXT/lineage/quality, D34 BQ/PS, D36 ambiguous | ground-truth agent |
 | Scorer: D29's currency message; other round 3 messages not checked | ground-truth agent |
