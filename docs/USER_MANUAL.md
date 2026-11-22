@@ -99,7 +99,8 @@ There is no "edit". To change a connection, press **Delete** on its row and add 
    - Press **Next**.
 2. Step 2 is **Columns**. Every table of the chosen schema is copied; untick a table to skip it. Open a
    table to see its columns. For each column you want normalized, choose its semantic type from
-   the list (`PHONE`, `EMAIL`, `DATE`, `COUNTRY`, ...). **Every column you leave empty is copied
+   the list (`PHONE`, `EMAIL`, `DATE`, `COUNTRY`, ...); every type in the list is explained in
+   [3.2.1](#321-the-type-list-explained). **Every column you leave empty is copied
    unchanged.** Press **Next**.
 3. Step 3 is **Check your answers**. Read the table; **Change origin**, **Change destination**
    and **Change columns** take you back. Press **Start**.
@@ -109,6 +110,49 @@ There is no "edit". To change a connection, press **Delete** on its row and add 
 The UI does not ask for a country or a language. Without them the app stays careful: a national
 phone number such as `(650) 253-0000` becomes `AMBIGUOUS`, because no country says how to read it.
 If your data needs a country or a locale, set them with the API ([section 4.4](#44-settings-only-the-api-has)).
+
+#### 3.2.1 The type list, explained
+
+<!-- verified: 3113d88 -->
+
+The drop-down in step 2 holds the list below, in its order, after **Copy unchanged** (the default:
+no type, the column is copied as it is). These same names are what you put in `field_configs` and
+`semantic_type` in the API. "Needs country/locale" means the type reads correctly only when the
+job carries one — and the UI never sends one ([4.4](#44-settings-only-the-api-has)).
+
+| Type | Choose it for | What the app does | Watch out |
+|---|---|---|---|
+| `FREE_TEXT` | Any text with no more specific type: notes, descriptions, titles. | Repairs broken encodings, normalizes to NFC, trims, collapses repeated spaces, tidies punctuation; notices values like `N/A`. | It folds punctuation and spaces — lossy. It is the most general pipeline: if the content is actually structured (e-mails, dates), pick that type instead. |
+| `PERSON_NAME` | A person's full name. | Unicode repair, then name parsing. Keeps an accent-preserved display form plus a folded comparison form. | A bare two-word name with no comma is genuinely ambiguous (given-family or family-given): the app reports `AMBIGUOUS` with both readings rather than guessing. |
+| `GIVEN_NAME` | First name only. | Same pipeline as `PERSON_NAME`, one component. | One component cannot reveal a swapped name order — that check needs both halves. |
+| `FAMILY_NAME` | Last name only. | Same pipeline as `PERSON_NAME`, one component. | Multi-word family names (compound or particled surnames) are kept whole, never split. |
+| `COMPANY_NAME` | A company or organization name. | Unicode normalization; for the comparison form only, strips legal-entity suffixes (`GmbH`, `Inc.`) against a curated list. The display form keeps the suffix. | The suffix list is a curated subset, not the full GLEIF list — an uncommon suffix may not be recognized. |
+| `PHONE` | Telephone numbers. | Parses with libphonenumber; the machine key is E.164 (`+165****0000`). Companion columns: `<column>_code` (E.164) and `<column>_region`. | A bare local number with no `+` and no country on the job stays `AMBIGUOUS` — the app will not guess a country. |
+| `EMAIL` | E-mail addresses. | Validates and normalizes: domain lowercased, local-part case kept in the display form. | Syntax only. The app never checks whether the address can receive mail (no DNS lookup). |
+| `ADDRESS` | A postal address line. | Parses with libpostal; validates the postcode against per-country rules when a country resolves from the address itself. | libpostal's statistical parser can mis-segment unusual formats. |
+| `POSTCODE` | A postal/ZIP code on its own. | Collapses whitespace and checks the format against per-country rules. | Without a country on the job there is no format to check: the value is cleaned but stays `AMBIGUOUS`. |
+| `DATE` | Dates (no clock time). | ISO dates parse directly; anything else reads its field order (D/M/Y vs M/D/Y) from the job's country/locale. Companions: `<column>__from`, `<column>__to` (first/last day of the stated period). | `03/04/2024` with no country/locale is `AMBIGUOUS`, never guessed. |
+| `DATETIME` | Timestamps. | As `DATE`, plus explicit timezone handling — a naive timestamp is never silently called UTC. Companions: `__from`/`__to`. | Non-Gregorian calendars (Jalali, Hijri, …) are not converted — a known gap, reported not mishandled. |
+| `COUNTRY` | Country names or codes. | Resolves to ISO 3166-1 through codes and names, with a small alias table (`UK` → `GB`). Companion: `<column>_code`. | An alias-resolved value is flagged at reduced confidence — it is an approximation, not an exact code. |
+| `LANGUAGE` | Language names or codes. | ISO 639 code lookup first, name lookup only if no code matches. Companion: `<column>_code`. | Names alone can collide with unrelated codes; that is why codes win. |
+| `SCRIPT` | Text where the writing system matters (Latin, Arabic, Cyrillic, …). | Detects the dominant Unicode script, with a language hint on short strings. Purely diagnostic. | It never transliterates. A mixed-script value reports only the dominant script; the minority characters are not called out separately. |
+| `IDENTIFIER` | Codes that identify a record: order numbers, SKUs, account codes. | Normalizes Unicode digits without numeric casting (leading zeros always preserved) and uppercases. | `AB-001` and `AB001` are NOT equated — the separator variant is flagged for a human, since collapsing them could be wrong. |
+| `TAX_ID` | Tax numbers (VAT, EIN, national IDs with check digits). | As `IDENTIFIER`, plus per-country check-digit validation where a validator exists for the job's country. | The per-country validator list is small; an unregistered country skips the check instead of guessing a scheme. |
+| `CODE` | A generic code with no jurisdiction (status codes, category codes). | Canonicalization only: digit normalization and uppercase. | Nothing is validated — a code carries no jurisdiction, so the result honestly says "not checked". |
+| `UUID` | UUID/GUID columns. | Re-emits in canonical lowercase-hyphenated form. | Anything not a syntactically valid UUID is `INVALID`, never repaired into one. |
+| `NUMERIC` | Plain numbers: counts, quantities without units, bare prices. | Parses with locale rules (Babel/CLDR) when a country/locale is known. The destination column gets a real SQL number type, so `SUM` works. | `1,234` with no locale context is `AMBIGUOUS` (a thousand and 234, or 1 point 234?). If the cell carries a unit, use `QUANTITY`; if it carries a currency, use `MONEY` — `NUMERIC` drops the symbol. |
+| `CURRENCY` | A column of currencies themselves (`EUR`, `Euro`, `€`), not amounts. | Resolves ISO 4217 codes and names; the unambiguous symbols `€` `£` `¥` resolve directly. The display form is the ISO code. | A bare `$` needs a country on the job to say USD/CAD/AUD — without one it stays `AMBIGUOUS`. |
+| `QUANTITY` | A magnitude with a unit: `5 km`, `500 g`, `12 L`. | Parses with Pint; the canonical form is SI base units, so `5 km` and `5000 m` land as the same value and compare correctly. | Only `.` is accepted as decimal mark (`1,5 kg` is refused, not guessed). A bare number with no unit is kept honestly as "dimensionless", not rejected. |
+| `BOOLEAN` | Yes/no columns (`true`, `yes`, `Y`, `1`). | Matches a small explicit true/false dictionary. The destination column gets a real SQL boolean type. | No fuzzy matching on purpose: `maybe`, `unknown`, `N/A` are never coerced to true or false — they are reported as unknown values. |
+| `URL` | Web addresses. | Lowercases scheme/host, strips a default port, encodes a non-ASCII host to punycode, tidies percent-encoding where RFC 3986 guarantees it is safe. | Query parameters are never stripped — not even tracking parameters. They are flagged; you decide. |
+| `UNKNOWN` | When you do not know what a column holds. | Nothing: it is copied unchanged, like leaving the column empty. | If you notice later what it holds, set the real type before starting the job. |
+| `MONEY` | An amount **with** its currency in the cell: `$1,234.56`, `17.6 €`. | The **API only** — it is not in the UI's list. The destination column is a real number (so `SUM` works) and the currency is kept beside it in `<column>_currency` instead of being dropped. | Create with `field_configs` and `"MONEY"` ([4.3](#43-copy-a-database-with-the-api)). Detection only suggests `MONEY` for names like `revenue`/`salary` once the values really parse as money. |
+
+Two pairs people mix up: **`NUMERIC` vs `QUANTITY`** — NUMERIC is "how much" as a pure number,
+QUANTITY is "how much of what"; on a `5 km` column NUMERIC strips the unit and QUANTITY on a
+unitless count keeps everything dimensionless. **`NUMERIC` vs `MONEY`** — NUMERIC parses
+`$1,234.56` to `1234.56` and sets the `$` aside; you cannot sum a column whose currency was
+discarded, so money that arrives with its symbol belongs in MONEY (API), not NUMERIC.
 
 ### 3.3 Create the destination database (by hand)
 
