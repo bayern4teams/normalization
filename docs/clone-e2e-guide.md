@@ -127,6 +127,7 @@ a saved connection (decision #13) — it's picked fresh on the next screen.
      actually hold tables. One schema per job, so the clone's own table
      names stay unqualified: `diffbot.company` is cloned as `company` in
      the destination's `public`.
+     The UI sets it from its "Origin schema" drop-down (version 0.1.1 and later).
    - Leave it unset for ClickHouse, which has no layer between database
      and table.
    - **A job with no tables is rejected** (422) rather than created. It

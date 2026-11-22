@@ -90,9 +90,14 @@ There is no "edit". To change a connection, press **Delete** on its row and add 
 
 1. Open **New clone**. Step 1 is **Origin and destination**:
    - **Origin connection (read only)**, then **Origin database**: pick from the list.
+   - **Origin schema** (Postgres only): it appears once you pick the database. It lists the
+     schemas that hold tables; pick the one to copy. A job copies **one schema**: the tables
+     arrive in the destination under their plain names, without the schema. To copy another
+     schema, run another job with its own new destination database. ClickHouse has no schemas,
+     so the field does not appear.
    - **Destination connection (can write)**, then **Destination database**: type the new name.
    - Press **Next**.
-2. Step 2 is **Columns**. Every table of the origin is copied; untick a table to skip it. Open a
+2. Step 2 is **Columns**. Every table of the chosen schema is copied; untick a table to skip it. Open a
    table to see its columns. For each column you want normalized, choose its semantic type from
    the list (`PHONE`, `EMAIL`, `DATE`, `COUNTRY`, ...). **Every column you leave empty is copied
    unchanged.** Press **Next**.
@@ -360,7 +365,7 @@ Fields (all but the first four are optional; an unknown field is refused with `4
 | Field | Default | Effect |
 |---|---|---|
 | `source_connection_id`, `source_database`, `destination_connection_id`, `destination_database` | required | Where from and to. The destination must not be the origin. |
-| `source_schema` | `public` | Postgres only: the schema the tables live in. |
+| `source_schema` | `public` | Postgres only: the schema the tables live in. The UI sets it from "Origin schema". Without it the app looks in `public` only, which may hold no table. |
 | `tables` | all tables | A list of table names to copy. An empty list is refused. |
 | `field_configs` | none | `{"<table>": {"<column>": "<TYPE>"}}`. A column that is missing or `null` is copied unchanged. Types: see [API.md](API.md#fieldsemantictype). |
 | `autodetect_field_types` | `false` | `true` applies every confident type guess to columns you did not list. Your own entries always win. |
@@ -418,7 +423,7 @@ Look at `status`, `progress` (`tables_completed`, `rows_done`, `current_table`),
 
 `country`, `locale`, `autodetect_field_types`, `normalize_unconfigured_text`,
 `cross_table_entity_key`, `max_new_null_rate`, `confirmed_missing`, `calibrated_abstention`,
-`source_schema`, the plan and the lineage are API-only; the UI sends none of them.
+the plan and the lineage are API-only; the UI sends none of them.
 A UI job runs with every default of the table in 4.3. To use them, create the job with the API
 (you can still watch it in the UI), or amend a UI-created job with `PATCH .../plan` before you
 press **Verify database**.
@@ -473,6 +478,7 @@ Not needed for a copy. One line each; the fields are in [API.md](API.md).
 | `409` "is RUNNING, expected ..." | The call does not fit the job's state. | Read the state on the job page, call the step that matches. |
 | Job `failed` with a red box | The box names the reason. | Fix that, then `POST .../start` again; it resumes. |
 | Orange "stale" | No progress for 15 minutes. | `POST .../start`. If it stays stale, ask the person who runs the app to read `docker compose logs api`. |
+| New clone lists no tables (Postgres) | The app is version 0.1.0, which looked only in the `public` schema. | Update the app to 0.1.1 or later. Until then, create the job with the API and `"source_schema": "<schema>"` (4.3). |
 | A column is mostly `AMBIGUOUS` | No country or locale. | Create a new job with `country` and `locale` (4.4). |
 | Quality "Emptied" is high | Values did not fit the chosen type; they became `NULL`. | Check the type; read those rows in Errors. |
 | A saved connection stopped working after a move | The app's secret key changed. | Delete the connection and add it again. |
@@ -480,6 +486,7 @@ Not needed for a copy. One line each; the fields are in [API.md](API.md).
 ## 6. Limits you should know
 
 - Postgres and ClickHouse only.
+- A job copies one Postgres schema. Several schemas need several jobs.
 - A job has no stop, delete or "start over" button or route. To redo a copy, create a new job
   with a new destination database; the old destination stays until you drop it with the
   database's own tools.

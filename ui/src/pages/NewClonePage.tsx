@@ -19,7 +19,7 @@ import {
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { createCloneJob, listColumns, listConnections, listDatabases, listTables } from "../api/client";
+import { createCloneJob, listColumns, listConnections, listDatabases, listSchemas, listTables } from "../api/client";
 import { FIELD_SEMANTIC_TYPES, type Connection, type FieldSemanticType } from "../api/types";
 import { QueryState } from "../components/QueryState";
 
@@ -45,19 +45,21 @@ function configured(config: Record<string, FieldSemanticType | null> | undefined
 function ColumnTable({
   connectionId,
   database,
+  schema,
   table,
   config,
   onChange,
 }: {
   connectionId: string;
   database: string;
+  schema: string | undefined;
   table: string;
   config: Record<string, FieldSemanticType | null>;
   onChange: (table: string, column: string, value: FieldSemanticType | null) => void;
 }) {
   const columnsQuery = useQuery({
-    queryKey: ["clone-columns", connectionId, database, table],
-    queryFn: () => listColumns(connectionId, database, table),
+    queryKey: ["clone-columns", connectionId, database, schema, table],
+    queryFn: () => listColumns(connectionId, database, table, schema),
   });
   return (
     <QueryState isLoading={columnsQuery.isPending} isError={columnsQuery.isError} error={columnsQuery.error}>
@@ -101,6 +103,7 @@ export function NewClonePage() {
 
   const [sourceConnectionId, setSourceConnectionId] = useState("");
   const [sourceDatabase, setSourceDatabase] = useState("");
+  const [chosenSchema, setChosenSchema] = useState("");
   const [destConnectionId, setDestConnectionId] = useState("");
   const [destDatabase, setDestDatabase] = useState("");
   const [fieldConfigs, setFieldConfigs] = useState<FieldConfigs>({});
@@ -112,10 +115,18 @@ export function NewClonePage() {
     queryFn: () => listDatabases(sourceConnectionId),
     enabled: Boolean(sourceConnectionId),
   });
-  const tablesQuery = useQuery({
-    queryKey: ["clone-tables", sourceConnectionId, sourceDatabase],
-    queryFn: () => listTables(sourceConnectionId, sourceDatabase),
+  // Postgres only: the schemas that hold tables. ClickHouse answers [] and has none.
+  const schemasQuery = useQuery({
+    queryKey: ["clone-schemas", sourceConnectionId, sourceDatabase],
+    queryFn: () => listSchemas(sourceConnectionId, sourceDatabase),
     enabled: Boolean(sourceConnectionId && sourceDatabase),
+  });
+  const schemas = schemasQuery.data ?? [];
+  const sourceSchema = schemas.includes(chosenSchema) ? chosenSchema : schemas[0];
+  const tablesQuery = useQuery({
+    queryKey: ["clone-tables", sourceConnectionId, sourceDatabase, sourceSchema],
+    queryFn: () => listTables(sourceConnectionId, sourceDatabase, sourceSchema),
+    enabled: schemasQuery.isSuccess,
   });
 
   const startMutation = useMutation({
@@ -123,6 +134,7 @@ export function NewClonePage() {
       createCloneJob({
         source_connection_id: sourceConnectionId,
         source_database: sourceDatabase,
+        ...(sourceSchema && { source_schema: sourceSchema }),
         destination_connection_id: destConnectionId,
         destination_database: destDatabase,
         ...(skippedTables.length > 0 && { tables: chosenTables }),
@@ -132,6 +144,7 @@ export function NewClonePage() {
   });
 
   function resetColumns() {
+    setChosenSchema("");
     setFieldConfigs({});
     setOpenTables([]);
     setSkippedTables([]);
@@ -185,6 +198,23 @@ export function NewClonePage() {
               resetColumns();
             }}
           />
+          {schemasQuery.isError && (
+            <Alert color="red" title="Could not list the schemas">
+              {(schemasQuery.error as Error).message}
+            </Alert>
+          )}
+          {schemas.length > 0 && (
+            <NativeSelect
+              label="Origin schema"
+              description="Postgres: the schema whose tables are cloned. Clone another schema with another job."
+              data={schemas}
+              value={sourceSchema}
+              onChange={(e) => {
+                resetColumns();
+                setChosenSchema(e.currentTarget.value);
+              }}
+            />
+          )}
           <NativeSelect
             label="Destination connection (can write)"
             data={connectionOptions(connections)}
@@ -240,6 +270,7 @@ export function NewClonePage() {
                       <ColumnTable
                         connectionId={sourceConnectionId}
                         database={sourceDatabase}
+                        schema={sourceSchema}
                         table={table}
                         config={fieldConfigs[table] ?? {}}
                         onChange={setColumnType}

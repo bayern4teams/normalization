@@ -282,7 +282,7 @@ def create_app(
     app = FastAPI(
         title="Normalization Engine API",
         description="Source.txt §98 API surface.",
-        version="0.1.0",
+        version="0.1.1",
         # ADR-023: Swagger UI and ReDoc load their code from a CDN. No allowed
         # dependency supplies them locally, so they are off; /openapi.json stays.
         docs_url=None,

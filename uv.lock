@@ -1066,7 +1066,7 @@ wheels = [
 
 [[package]]
 name = "normalization-engine"
-version = "0.1.0"
+version = "0.1.1"
 source = { virtual = "." }
 dependencies = [
     { name = "anyascii" },
@@ -1202,7 +1202,7 @@ provides-extras = ["dev"]
 
 [[package]]
 name = "normalizers"
-version = "0.1.0"
+version = "0.1.1"
 source = { editable = "packages/normalizers" }
 dependencies = [
     { name = "anyascii" },
@@ -1271,7 +1271,7 @@ requires-dist = [
 
 [[package]]
 name = "normanalysis"
-version = "0.1.0"
+version = "0.1.1"
 source = { editable = "packages/normanalysis" }
 dependencies = [
     { name = "babel" },
@@ -1296,7 +1296,7 @@ requires-dist = [
 
 [[package]]
 name = "normapi"
-version = "0.1.0"
+version = "0.1.1"
 source = { editable = "packages/normapi" }
 dependencies = [
     { name = "blake3" },
@@ -1341,7 +1341,7 @@ requires-dist = [
 
 [[package]]
 name = "normcli"
-version = "0.1.0"
+version = "0.1.1"
 source = { editable = "packages/normcli" }
 dependencies = [
     { name = "normanalysis" },
@@ -1352,7 +1352,7 @@ requires-dist = [{ name = "normanalysis", editable = "packages/normanalysis" }]
 
 [[package]]
 name = "normcore"
-version = "0.1.0"
+version = "0.1.1"
 source = { editable = "packages/normcore" }
 dependencies = [
     { name = "blake3" },
@@ -1369,7 +1369,7 @@ requires-dist = [
 
 [[package]]
 name = "normdict"
-version = "0.1.0"
+version = "0.1.1"
 source = { editable = "packages/normdict" }
 dependencies = [
     { name = "blake3" },
@@ -1384,7 +1384,7 @@ requires-dist = [
 
 [[package]]
 name = "normexec"
-version = "0.1.0"
+version = "0.1.1"
 source = { editable = "packages/normexec" }
 dependencies = [
     { name = "blake3" },
@@ -1413,7 +1413,7 @@ requires-dist = [
 
 [[package]]
 name = "normio"
-version = "0.1.0"
+version = "0.1.1"
 source = { editable = "packages/normio" }
 dependencies = [
     { name = "clickhouse-connect" },
