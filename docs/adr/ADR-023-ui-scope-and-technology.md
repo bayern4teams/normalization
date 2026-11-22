@@ -60,3 +60,12 @@ candidate readings (tested: `tests/unit/test_u1_review_route.py`).
 
 `ui/` builds into the API image; `app.py` mounts it. A new route returns the unmasked queue
 entry. Pages not in the list above are not rebuilt.
+
+## Amendment 2026-11-22: New clone picks the origin schema
+
+A teammate saw no tables for `company_intel`: the screen asked for tables without a schema, the API
+then looked in `public`, and `public` held none (the tables lived in `iees` and others). The
+screen now asks for the schemas that hold tables (`GET .../schemas`), shows an "Origin schema"
+drop-down for Postgres, and sends `source_schema`. A job copies one schema; another schema is
+another job. Owner decisions 2026-11-22: "1. a" (one schema per job, drop-down in step 1) and
+"2. a" (version 0.1.1).

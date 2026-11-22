@@ -11,6 +11,7 @@ test("new clone: origin, columns, then check answers; Start exists only on the l
   const seen = await stubApi(page, {
     "GET /connections": () => ({ body: CONNECTIONS }),
     "POST /connections/src/databases": () => ({ body: ["orders"] }),
+    "GET /connections/src/databases/orders/schemas": () => ({ body: [] }),
     "GET /connections/src/databases/orders/tables": () => ({ body: ["customers", "invoices"] }),
     "GET /connections/src/databases/orders/tables/customers/columns": () => ({
       body: [
@@ -69,6 +70,7 @@ test("new clone: a table left unticked is not cloned, and Next needs at least on
   const seen = await stubApi(page, {
     "GET /connections": () => ({ body: CONNECTIONS }),
     "POST /connections/src/databases": () => ({ body: ["orders"] }),
+    "GET /connections/src/databases/orders/schemas": () => ({ body: [] }),
     "GET /connections/src/databases/orders/tables": () => ({ body: ["customers", "invoices", "notes"] }),
     "POST /clone-jobs": () => ({ status: 201, body: { job_id: "job-2", status: "PENDING_DB_CREATE", create_database_sql: "" } }),
   });
@@ -91,4 +93,40 @@ test("new clone: a table left unticked is not cloned, and Next needs at least on
   await expect(page).toHaveURL(/#\/jobs\/job-2$/);
   const post = seen.find((r) => r.method() === "POST" && r.url().endsWith("/clone-jobs"));
   expect(post?.postDataJSON().tables).toEqual(["invoices"]);
+});
+
+test("new clone: tables outside public: pick the origin schema, its tables load, and the job names it", async ({ page }) => {
+  const schemaOf = (url: string) => new URL(url).searchParams.get("schema");
+  const seen = await stubApi(page, {
+    "GET /connections": () => ({ body: CONNECTIONS }),
+    "POST /connections/src/databases": () => ({ body: ["company_intel"] }),
+    "GET /connections/src/databases/company_intel/schemas": () => ({ body: ["company_intel", "iees"] }),
+    // Like the API: no `schema` means `public`, which holds no table here.
+    "GET /connections/src/databases/company_intel/tables": (r) => ({
+      body: { company_intel: ["firms"], iees: ["surveys", "answers"] }[schemaOf(r.url()) ?? "public"] ?? [],
+    }),
+    "GET /connections/src/databases/company_intel/tables/surveys/columns": () => ({
+      body: [{ name: "id", native_type: "integer" }],
+    }),
+    "POST /clone-jobs": () => ({ status: 201, body: { job_id: "job-3", status: "PENDING_DB_CREATE", create_database_sql: "" } }),
+  });
+  await page.goto("/#/new-clone");
+  await page.getByLabel("Origin connection (read only)").selectOption({ label: "postgres db.internal:5432 (reader)" });
+  await page.getByLabel("Origin database").selectOption("company_intel");
+  const schema = page.getByLabel("Origin schema");
+  await expect(schema.locator("option")).toHaveText(["company_intel", "iees"]);
+  await schema.selectOption("iees");
+  await page.getByLabel("Destination connection (can write)").selectOption({ label: "postgres db.internal:5432 (writer)" });
+  await page.getByLabel("Destination database").fill("iees_clone");
+  await page.getByRole("button", { name: "Next" }).click();
+
+  await expect(page.getByText("All 2 table(s) of")).toBeVisible();
+  await page.getByRole("button", { name: "surveys" }).click();
+  await expect(page.getByLabel("Semantic type of surveys.id")).toBeVisible();
+  expect(seen.some((r) => r.url().includes("/surveys/columns") && schemaOf(r.url()) === "iees")).toBe(true);
+  await page.getByRole("button", { name: "Next" }).click();
+  await page.getByRole("button", { name: "Start", exact: true }).click();
+  await expect(page).toHaveURL(/#\/jobs\/job-3$/);
+  const post = seen.find((r) => r.method() === "POST" && r.url().endsWith("/clone-jobs"));
+  expect(post?.postDataJSON().source_schema).toBe("iees");
 });

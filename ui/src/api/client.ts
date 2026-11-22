@@ -95,16 +95,26 @@ export function listDatabases(connectionId: string): Promise<string[]> {
   return request(`/connections/${connectionId}/databases`, { method: "POST" });
 }
 
-export function listTables(connectionId: string, database: string): Promise<string[]> {
-  return request(`/connections/${connectionId}/databases/${database}/tables`);
+// Postgres tables live in a schema; `schema` unset means `public`, which may hold no table.
+const inSchema = (schema?: string) => (schema ? `schema=${encodeURIComponent(schema)}` : "");
+
+export function listSchemas(connectionId: string, database: string): Promise<string[]> {
+  return request(`/connections/${connectionId}/databases/${database}/schemas`);
+}
+
+export function listTables(connectionId: string, database: string, schema?: string): Promise<string[]> {
+  return request(`/connections/${connectionId}/databases/${database}/tables?${inSchema(schema)}`);
 }
 
 export function listColumns(
   connectionId: string,
   database: string,
   table: string,
+  schema?: string,
 ): Promise<ColumnInfo[]> {
-  return request(`/connections/${connectionId}/databases/${database}/tables/${table}/columns?limit=1000`);
+  return request(
+    `/connections/${connectionId}/databases/${database}/tables/${table}/columns?limit=1000&${inSchema(schema)}`,
+  );
 }
 
 // --- DB-clone-and-normalize: clone jobs --------------------------------------
@@ -112,6 +122,7 @@ export function listColumns(
 export function createCloneJob(body: {
   source_connection_id: string;
   source_database: string;
+  source_schema?: string;
   destination_connection_id: string;
   destination_database: string;
   tables?: string[];

@@ -36,8 +36,9 @@ anything and address parsing fails.
 
 A release builds the image the app machine runs. It is private on both remotes.
 
-1. The version in every `pyproject.toml` must equal the tag. Today they are `0.1.0`, so the
-   first tag is `v0.1.0`. A later release: change every version, commit, then tag.
+1. The version in every `pyproject.toml` must equal the tag. The first release was `v0.1.0`;
+   today they are `0.1.1`. A later release: change every version, commit, then tag.
+   The commands below are the first release's; for later ones use the new version.
 2. **[laptop]**, in the repository, on `main`:
 
    ```bash
