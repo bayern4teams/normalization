@@ -44,7 +44,8 @@ def test_every_fallback_text_for_containers_parses_as_json() -> None:
     ]
     for text in _to_arrow(values).tolist():
         if text is not None:
-            json.loads(text)  # must not raise
+            parsed = json.loads(text)
+            assert isinstance(parsed, (dict, list))
 
 
 def test_non_container_fallbacks_keep_str() -> None:
