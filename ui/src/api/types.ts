@@ -26,6 +26,7 @@ export type FieldSemanticType =
   | "NUMERIC"
   | "CURRENCY"
   | "QUANTITY"
+  | "MONEY"
   | "BOOLEAN"
   | "URL"
   | "UNKNOWN";
@@ -87,29 +88,34 @@ export interface CloneJobCreateResponse {
   create_database_sql: string;
 }
 
+// Alphabetical: the New clone type list shows these in this order, so a
+// user scanning for QUANTITY knows where to look. "Copy unchanged" stays
+// first in the drop-down (it is the default, not a type) — see
+// NewClonePage's TYPE_OPTIONS. Members mirror FieldSemanticType exactly.
 export const FIELD_SEMANTIC_TYPES: FieldSemanticType[] = [
-  "FREE_TEXT",
-  "PERSON_NAME",
-  "GIVEN_NAME",
-  "FAMILY_NAME",
-  "COMPANY_NAME",
-  "PHONE",
-  "EMAIL",
   "ADDRESS",
-  "POSTCODE",
+  "BOOLEAN",
+  "CODE",
+  "COMPANY_NAME",
+  "COUNTRY",
+  "CURRENCY",
   "DATE",
   "DATETIME",
-  "COUNTRY",
-  "LANGUAGE",
-  "SCRIPT",
+  "EMAIL",
+  "FAMILY_NAME",
+  "FREE_TEXT",
+  "GIVEN_NAME",
   "IDENTIFIER",
-  "TAX_ID",
-  "CODE",
-  "UUID",
+  "LANGUAGE",
+  "MONEY",
   "NUMERIC",
-  "CURRENCY",
+  "PERSON_NAME",
+  "PHONE",
+  "POSTCODE",
   "QUANTITY",
-  "BOOLEAN",
-  "URL",
+  "SCRIPT",
+  "TAX_ID",
   "UNKNOWN",
+  "URL",
+  "UUID",
 ];
