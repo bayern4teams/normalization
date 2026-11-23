@@ -435,7 +435,11 @@ release-image:
     - *docker_setup
     - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
     - docker build -f packages/normapi/Dockerfile -t "$CI_REGISTRY_IMAGE/api:$CI_COMMIT_TAG" .
+    # :latest mirrors release.yml: the newest release, so deploy/.env can
+    # pin :latest and update with `docker compose pull && up -d`.
+    - docker tag "$CI_REGISTRY_IMAGE/api:$CI_COMMIT_TAG" "$CI_REGISTRY_IMAGE/api:latest"
     - docker push "$CI_REGISTRY_IMAGE/api:$CI_COMMIT_TAG"
+    - docker push "$CI_REGISTRY_IMAGE/api:latest"
 
 release-packages:
   extends: [.on-release]

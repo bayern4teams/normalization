@@ -31,10 +31,32 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
+# Layer order is deliberate, for update pulls on the app machine: the
+# heavy dependency layer's cache key is the lockfile plus the members'
+# pyproject.toml files ONLY, so a code-only release reuses it entirely
+# and downloads the few-MB code layer instead of ~1 GB of wheels. The
+# first sync installs every third-party dependency without touching any
+# member's source (`--no-install-workspace`: members install editable —
+# verified, uv writes _editable_impl_*.pth pointing into the source tree
+# — so no member is compiled here and none is needed yet). PyICU's sdist
+# build needs the libicu-dev apt step above, which is a stable
+# instruction, so its own layer caches too.
 WORKDIR /app
 COPY pyproject.toml uv.lock ./
-COPY packages/ packages/
+COPY packages/normapi/pyproject.toml packages/normapi/
+COPY packages/normcore/pyproject.toml packages/normcore/
+COPY packages/normdict/pyproject.toml packages/normdict/
+COPY packages/normanalysis/pyproject.toml packages/normanalysis/
+COPY packages/normexec/pyproject.toml packages/normexec/
+COPY packages/normio/pyproject.toml packages/normio/
+COPY packages/normalizers/pyproject.toml packages/normalizers/
+COPY packages/normcli/pyproject.toml packages/normcli/
 
+RUN uv sync --frozen --no-dev --no-install-workspace
+
+# The second sync is the real one: it links the workspace members and
+# no-ops on every already-installed dependency.
+COPY packages/ packages/
 RUN uv sync --frozen --no-dev --package normapi
 
 FROM python:3.12-slim-bookworm

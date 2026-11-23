@@ -177,8 +177,8 @@ Check:
 |---|---|
 | Change a setting (libpostal address, port, memory) | edit `.env`, then `docker compose --env-file .env up -d` |
 | Add, change or remove a database connection | in the UI, Connections. To change one: remove it and add it again. |
-| Update to a new release | set `NORM_IMAGE` to the new tag, then `pull` and `up -d` as in step 7 |
-| Roll back | set `NORM_IMAGE` to the old tag, then `up -d` |
+| Update to a new release | set `NORM_IMAGE` to the new tag, then `pull` and `up -d` as in step 7. If `.env` pins `...api:latest` instead of a version tag, the tag edit is not needed: releases publish `latest` too, and `pull` + `up -d` updates the app. Pinning the version tag and editing it stays the exact, auditable way. |
+| Roll back | set `NORM_IMAGE` to the old tag (never `latest` — it points at the newest), then `up -d` |
 | Update the source | `git pull` in `~/normalization` |
 | Back up the app's data | `docker compose exec -T postgres pg_dump -U normalization -Fc normalization > backup-$(date +%F).dump` |
 | See what the app does | `docker compose logs -f api` |

@@ -49,7 +49,14 @@ jobs:
           context: .
           file: packages/normapi/Dockerfile
           push: true
-          tags: ghcr.io/${{ github.repository }}/api:${{ github.ref_name }}
+          # `:latest` always points at the newest release (only ever pushed
+          # from a vX.Y.Z tag, past the version check), so an app machine's
+          # deploy/.env can pin `...api:latest` and update with one
+          # `docker compose pull && up -d` instead of an .env edit per
+          # release. Layer dedup (see the Dockerfile) keeps that pull small.
+          tags: |
+            ghcr.io/${{ github.repository }}/api:${{ github.ref_name }}
+            ghcr.io/${{ github.repository }}/api:latest
 
       - name: Create the GitHub Release
         env:
