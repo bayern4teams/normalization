@@ -1,6 +1,6 @@
 [project]
 name = "normalization-engine"
-version = "0.1.1"
+version = "0.1.2"
 description = "Data Normalization & Standardization Engine for the Entity Resolution platform (upstream of Data Discovery and Splink)."
 readme = "README.md"
 requires-python = ">=3.12,<3.14"

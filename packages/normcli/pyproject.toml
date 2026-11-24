@@ -1,6 +1,6 @@
 [project]
 name = "normcli"
-version = "0.1.1"
+version = "0.1.2"
 description = "normalization-engine :: normcli"
 requires-python = ">=3.12,<3.14"
 dependencies = ["normanalysis"]
