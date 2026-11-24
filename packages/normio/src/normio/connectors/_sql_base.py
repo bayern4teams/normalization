@@ -18,6 +18,7 @@ path even though this is an internal, not user-facing, component.
 
 from __future__ import annotations
 
+import json
 import os
 from typing import TYPE_CHECKING, Any
 
@@ -154,8 +155,28 @@ def _to_arrow(values: list[object]) -> pa.Array:
     """Arrow's own type inference, and for a Python type it has none for
     (`uuid.UUID`: Pagila's PG18 uuidv7 key failed Phase 2 on its first
     batch; also ranges, `inet`) the value's text, which is how the source
-    prints it and what Postgres casts back on insert."""
+    prints it and what Postgres casts back on insert.
+
+    One type family needs more than `str()`: jsonb/json values. psycopg
+    hands back parsed `dict`/`list`, and when Arrow cannot unify a column
+    of them (mixed shapes — null, array, object) the fallback used to
+    `str()` them, which prints PYTHON syntax (`['A', 'B']`, `{'k': True}`)
+    — invalid JSON. A `company.aliases` jsonb column hit exactly that on
+    a live clone: the destination rejected the chunk with
+    `invalid input syntax for type json` (InvalidTextRepresentation),
+    which the job cannot report per-value because the insert itself, not
+    a normalization, failed. `json.dumps` emits the JSON the column holds;
+    every other unmapped type keeps `str()`, which is what its SQL type
+    casts back (uuid, inet, ranges)."""
     try:
         return pa.array(values)
     except (pa.ArrowInvalid, pa.ArrowTypeError):
-        return pa.array([None if v is None else str(v) for v in values], type=pa.string())
+        return pa.array([_fallback_text(v) for v in values], type=pa.string())
+
+
+def _fallback_text(value: object) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, ensure_ascii=False)
+    return str(value)
