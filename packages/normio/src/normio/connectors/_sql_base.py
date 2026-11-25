@@ -114,7 +114,7 @@ class SqlConnectorBase:
         # fires when Arrow cannot unify, so it could never see a
         # uniform-shape batch. Text is a faithful carrier — the
         # destination's jsonb cast parses it back to the same document.
-        select_columns = [
+        query_columns: list[Any] = [
             c.cast(sa.String()).label(c.name) if isinstance(c.type, sa.JSON) else c
             for c in select_columns
         ]
@@ -124,7 +124,7 @@ class SqlConnectorBase:
         # reason). An unordered Postgres scan can join a scan already in
         # flight and start mid-table (synchronize_seqscans): a resumed UK
         # Price Paid clone wrote 406,000 rows twice and 406,000 never.
-        query = sa.select(*select_columns).order_by(*self._row_order(sql_table))
+        query = sa.select(*query_columns).order_by(*self._row_order(sql_table))
 
         with self._engine.connect() as raw_conn:
             # execution_options(readonly=True) is honored by dialects that

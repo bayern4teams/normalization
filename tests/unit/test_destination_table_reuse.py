@@ -30,7 +30,7 @@ def _require(
     existing_key: list[str],
     expected: dict[str, str],
     expected_key: list[str] | None = None,
-) -> None:
+) -> bool:
     _require_matching_destination_table(
         _FakeDest(columns, existing_key, expected),
         "dst",
@@ -41,19 +41,20 @@ def _require(
         column_overrides={},
         extra_columns={},
     )
+    return True
 
 
 def test_identical_structure_is_reused() -> None:
-    _require(
+    assert _require(
         {"id": "uuid", "aliases": "jsonb", "name": "text"},
         ["id"],
         {"id": "uuid", "aliases": "jsonb", "name": "text"},
-    )  # must not raise: the reuse decision is silent
+    ), "reuse decision must be silent (no raise, reached the end)"
 
 
 def test_type_length_suffix_differences_still_match() -> None:
     # information_schema reports `character varying`, DDL says `varchar(255)`.
-    _require({"n": "character varying"}, [], {"n": "character varying"})
+    assert _require({"n": "character varying"}, [], {"n": "character varying"})
 
 
 def test_mismatching_type_names_the_column_and_both_types() -> None:
