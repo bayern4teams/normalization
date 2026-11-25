@@ -94,6 +94,17 @@ export function JobDetailPage() {
               </Button>
             </Group>
           )}
+          {job.status === "FAILED" && (
+            <Group>
+              <Text size="sm">
+                A failed job keeps its checkpoints: starting it again resumes from the last
+                committed chunk, it does not redo finished tables or duplicate committed rows.
+              </Text>
+              <Button variant="default" loading={start.isPending} onClick={() => start.mutate()}>
+                Resume clone
+              </Button>
+            </Group>
+          )}
           {(verify.isError || start.isError) && <Alert color="red">{apiMessage(verify.error ?? start.error)}</Alert>}
 
           <Title order={2}>Errors{total !== null ? ` (${total})` : ""}</Title>
