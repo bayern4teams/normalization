@@ -40,6 +40,7 @@ def _normalise_pg_type_name(sql_type: str) -> str:
         return "character varying" if t == "varchar" else "character"
     return t
 
+
 # FieldSemanticType -> Postgres column type when the column is NOT typed
 # natively: TEXT, which can always hold both a normalized `display` and
 # decision #8's ORIGINAL raw string for a failed value. Native types for

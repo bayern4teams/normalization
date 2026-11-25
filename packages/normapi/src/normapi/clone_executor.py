@@ -1190,7 +1190,6 @@ def _create_or_reuse_destination_table(
         raise CloneJobStateError(msg)
 
 
-
 def verify_and_create_schema(persistence: PgPersistence, job_id: str) -> dict[str, Any]:
     """Phase 1 (decision #5): verifies the user has run the returned
     `CREATE DATABASE` command, then creates every table completely empty
