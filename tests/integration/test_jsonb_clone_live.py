@@ -144,14 +144,10 @@ def test_jsonb_uniform_and_mixed_chunks_clone_into_jsonb_columns(
         ).fetchall()
         assert dict(payload) == {"array": 1333, None: 1333, "object": 1334}
         # Round-trip faithfulness, not just validity.
-        row = conn.execute(
-            "SELECT payload, tags FROM jsonb_source WHERE id = 1"
-        ).fetchone()
+        row = conn.execute("SELECT payload, tags FROM jsonb_source WHERE id = 1").fetchone()
         assert row[0] == {"k": 1}
         assert row[1] == ["x"]
-        row = conn.execute(
-            "SELECT payload, tags FROM jsonb_source WHERE id = 2001"
-        ).fetchone()
+        row = conn.execute("SELECT payload, tags FROM jsonb_source WHERE id = 2001").fetchone()
         assert row[1] == {"deep": {"n": [1, 2]}}
 
     admin_dsn = f"postgresql://writable_user:***@{PG_HOST}:{PG_PORT}/postgres"

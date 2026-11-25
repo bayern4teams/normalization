@@ -8,7 +8,6 @@ non-Arrow-native drivers.
 
 from __future__ import annotations
 
-import contextlib
 import errno
 import os
 import queue
@@ -23,6 +22,7 @@ import pyarrow as pa
 
 from normio.connector import ColumnInfo
 from normio.connectors.clickhouse_destination import quote_identifier
+from normio.connectors.sort_keys import split_sorting_key
 
 # A name in `system.tables.sorting_key`, which ClickHouse formats with a
 # name backquoted (and escaped) only when it needs it: `a.b`, `b\`t`, id.
@@ -41,51 +41,6 @@ class SortKey(NamedTuple):
     sql: list[str]
     # Every column the key reads, in key order.
     columns: list[str]
-
-
-def _split_top_level(text: str) -> list[str]:
-    """`text` cut at commas outside quotes and brackets; ValueError if unbalanced."""
-    parts, start, depth, quote, i = [], 0, 0, "", 0
-    while i < len(text):
-        char = text[i]
-        if quote:
-            if char == "\\":
-                i += 1
-            elif char == quote:
-                quote = ""
-        elif char in "`'\"":
-            quote = char
-        elif char in "([":
-            depth += 1
-        elif char in ")]":
-            depth -= 1
-        elif char == "," and depth == 0:
-            parts.append(text[start:i].strip())
-            start = i + 1
-        if depth < 0:
-            break
-        i += 1
-    if depth or quote:
-        msg = f"Cannot parse sorting_key {text!r}: unbalanced quotes or brackets"
-        raise ValueError(msg)
-    parts.append(text[start:].strip())
-    return parts
-
-
-def split_sorting_key(text: str) -> list[str]:
-    """The elements of `system.tables.sorting_key`, parsed by its syntax.
-
-    26.8.2.7 reports `ORDER BY (id)` as `(id)` and `ORDER BY (a, b)` as
-    `a, b`, so one outer pair of brackets is optional. `tuple()` means no key.
-    """
-    text = text.strip()
-    if text in ("", "tuple()"):
-        return []
-    parts = _split_top_level(text)
-    if len(parts) == 1 and text[0] == "(" and text[-1] == ")":
-        with contextlib.suppress(ValueError):  # `(a) + (b)` is not one outer pair
-            return _split_top_level(text[1:-1])
-    return parts
 
 
 def _key_name(match: re.Match[str]) -> str:

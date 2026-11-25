@@ -9,6 +9,8 @@ from typing import TYPE_CHECKING, Any
 
 import clickhouse_connect
 
+from normio.connectors.sort_keys import split_sorting_key
+
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
@@ -125,10 +127,6 @@ class ClickHouseDestination:
         )
         if not result.result_rows:
             return []
-        # Local import: clickhouse.py imports THIS module (quote_identifier),
-        # so a module-level import back would be a cycle.
-        from normio.connectors.clickhouse import split_sorting_key  # noqa: PLC0415
-
         return split_sorting_key(result.result_rows[0][0] or "")
 
     def expected_columns(
