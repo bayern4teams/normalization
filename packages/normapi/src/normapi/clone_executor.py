@@ -73,7 +73,7 @@ from normcore import (
 from normio import storage_types
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Collection, Iterator, Mapping
+    from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
 
     from normcore.dispatch import NormalizerRegistry
     from normexec.cache import NormalizationCache
@@ -1034,6 +1034,163 @@ def _require_separate_copy(
         raise CloneJobStateError(msg)
 
 
+def _require_matching_destination_table(
+    dest: Any,
+    database: str,
+    table: str,
+    *,
+    columns: Sequence[Any],
+    key_columns: Sequence[str],
+    semantic_types: Mapping[str, str],
+    column_overrides: Mapping[str, str],
+    extra_columns: Mapping[str, str],
+    order_by: Sequence[str] | None = None,
+) -> None:
+    """Reuse-or-fail for a destination table that already exists (a
+    crashed run's leftover, or a re-created job over the same database).
+
+    The comparison is NOT a heuristic: `expected_columns` is the very
+    mapping `create_table` uses, and a match means a table identical to
+    the one this job would have built — so phase 2's checkpoint-skip plus
+    `ON CONFLICT DO NOTHING` make continuing safe (an identical empty
+    table just refills; an identical filled table re-runs as a no-op).
+    Any difference — extra/missing columns, a different type, a
+    different key — is a table from a DIFFERENT plan; cloning into it
+    would mix shapes, so it fails with exactly what differs (names and
+    types only, never row values).
+    """
+    existing = dest.table_columns(database, table) or {}
+    if order_by is None:
+        expected = dest.expected_columns(
+            columns,
+            semantic_types=semantic_types,
+            column_overrides=column_overrides,
+            extra_columns=extra_columns,
+        )
+        expected_key = list(key_columns)
+        existing_key = dest.primary_key_columns(database, table)
+    else:
+        expected = dest.expected_columns(
+            order_by=order_by,
+            columns=columns,
+            semantic_types=semantic_types,
+            column_overrides=column_overrides,
+            extra_columns=extra_columns,
+        )
+        expected_key = [c.strip() for c in order_by]
+        existing_key = [c.strip() for c in dest.primary_key_columns(database, table)]
+    problems: list[str] = []
+    for name, want in expected.items():
+        got = existing.get(name)
+        if got is None:
+            problems.append(f"column {name!r} is missing")
+        elif _normalise_dest_type(got) != _normalise_dest_type(want):
+            problems.append(f"column {name!r} is {got}, the plan expects {want}")
+    for name in existing:
+        if name not in expected:
+            problems.append(f"column {name!r} exists but the plan does not create it")
+    if [k.lower() for k in existing_key] != [k.lower() for k in expected_key]:
+        problems.append(
+            f"key is ({', '.join(existing_key)}), the plan expects ({', '.join(expected_key)})"
+        )
+    if problems:
+        msg = (
+            f"Destination table {table!r} already exists in {database!r} and does not "
+            f"match this job's plan: {'; '.join(problems)}. Drop it in the destination "
+            "database (or choose another one) and start the job again."
+        )
+        raise CloneJobStateError(msg)
+
+
+def _normalise_dest_type(type_name: str) -> str:
+    """Type-name equality across the DDL-reporting spaces: lowercase,
+    whitespace-free (`Nullable(String)` == `nullable (string)`), with
+    Postgres' `character varying` and ClickHouse's plain names
+    untouched — each engine compares inside its own namespace."""
+    return "".join(type_name.lower().split())
+
+
+def _create_or_reuse_destination_table(
+    source: Any,
+    dest: Any,
+    job: dict[str, Any],
+    table: str,
+    plan: dict[str, Any],
+) -> None:
+    """Phase 1's one table: create it, reuse an identical leftover, or
+    fail with what differs. Extracted from `verify_and_create_schema`
+    (the engine pairings were its last two branch pairs)."""
+    shared = {
+        "semantic_types": plan["ddl_semantic_types"],
+        "column_overrides": plan["column_overrides"],
+        "extra_columns": plan["extra_columns"],
+    }
+    exists = dest.table_columns(job["destination_database"], table) is not None
+    # isinstance, not `engine == "postgres"`: the two branches call
+    # methods that exist on only one connector/destination each, and the
+    # engine string is opaque to the type checker even though it does
+    # decide which pair was built.
+    if isinstance(source, PostgresConnector) and isinstance(dest, PostgresDestination):
+        if exists:
+            # A table left behind by an earlier crashed/failed run of
+            # this same clone (live incident: every re-run died on
+            # `CREATE TABLE ... already exists` with a withheld, useless
+            # message). Reuse it when its structure is exactly what
+            # create_table would have built — phase 2 then skips finished
+            # tables and ON CONFLICT DO NOTHING makes re-inserted chunks
+            # no-ops, which IS the resume story. A different structure is
+            # a different job's table: fail with the names, never guess.
+            _require_matching_destination_table(
+                dest,
+                job["destination_database"],
+                table,
+                columns=plan["columns"],
+                key_columns=plan["key_columns"],
+                semantic_types=plan["ddl_semantic_types"],
+                column_overrides=plan["column_overrides"],
+                extra_columns=plan["extra_columns"],
+            )
+        else:
+            dest.create_table(
+                job["destination_database"],
+                table,
+                plan["columns"],
+                primary_key=plan["key_columns"],
+                **shared,
+            )
+    elif isinstance(source, ClickHouseConnector) and isinstance(dest, ClickHouseDestination):
+        if exists:
+            _require_matching_destination_table(
+                dest,
+                job["destination_database"],
+                table,
+                columns=plan["columns"],
+                key_columns=plan["key_columns"],
+                semantic_types=plan["ddl_semantic_types"],
+                column_overrides=plan["column_overrides"],
+                extra_columns=plan["extra_columns"],
+                order_by=plan["key_columns"],
+            )
+        else:
+            dest.create_table(
+                job["destination_database"],
+                table,
+                plan["columns"],
+                order_by=plan["key_columns"],
+                sort_key_sql=plan["sort_key_sql"],
+                engine=plan["table_engine"],
+                **shared,
+            )
+    else:
+        msg = (
+            f"Source {type(source).__name__} and destination "
+            f"{type(dest).__name__} are different engines; a clone "
+            "replicates schema in place and cannot translate between them."
+        )
+        raise CloneJobStateError(msg)
+
+
+
 def verify_and_create_schema(persistence: PgPersistence, job_id: str) -> dict[str, Any]:
     """Phase 1 (decision #5): verifies the user has run the returned
     `CREATE DATABASE` command, then creates every table completely empty
@@ -1070,42 +1227,7 @@ def verify_and_create_schema(persistence: PgPersistence, job_id: str) -> dict[st
         try:
             for table in job["tables"]:
                 plan = plan_one_table(source, dest_conn["engine"], table, job)
-                shared = {
-                    "semantic_types": plan["ddl_semantic_types"],
-                    "column_overrides": plan["column_overrides"],
-                    "extra_columns": plan["extra_columns"],
-                }
-                # isinstance, not `engine == "postgres"`: the two branches
-                # call methods that exist on only one connector/destination
-                # each, and the engine string is opaque to the type checker
-                # even though it does decide which pair was built.
-                if isinstance(source, PostgresConnector) and isinstance(dest, PostgresDestination):
-                    dest.create_table(
-                        job["destination_database"],
-                        table,
-                        plan["columns"],
-                        primary_key=plan["key_columns"],
-                        **shared,
-                    )
-                elif isinstance(source, ClickHouseConnector) and isinstance(
-                    dest, ClickHouseDestination
-                ):
-                    dest.create_table(
-                        job["destination_database"],
-                        table,
-                        plan["columns"],
-                        order_by=plan["key_columns"],
-                        sort_key_sql=plan["sort_key_sql"],
-                        engine=plan["table_engine"],
-                        **shared,
-                    )
-                else:
-                    msg = (
-                        f"Source {type(source).__name__} and destination "
-                        f"{type(dest).__name__} are different engines; a clone "
-                        "replicates schema in place and cannot translate between them."
-                    )
-                    raise CloneJobStateError(msg)
+                _create_or_reuse_destination_table(source, dest, job, table, plan)
                 # Recorded, not recomputed in Phase 2: the INSERT must
                 # agree with the DDL that was actually executed here, even
                 # if the source's keys or the job's flags changed since.
