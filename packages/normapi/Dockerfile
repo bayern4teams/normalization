@@ -55,9 +55,22 @@ COPY packages/normcli/pyproject.toml packages/normcli/
 RUN uv sync --frozen --no-dev --no-install-workspace
 
 # The second sync is the real one: it links the workspace members and
-# no-ops on every already-installed dependency.
+# no-ops on every already-installed dependency — this is the full install
+# check, so a lockfile that cannot resolve the members fails the build.
 COPY packages/ packages/
 RUN uv sync --frozen --no-dev --package normapi
+
+# A third sync then REMOVES the member installs again: the venv is frozen
+# to exactly the third-party dependencies, byte-stable across code-only
+# releases (uv's member install is editable — it rewrites .pth files and
+# wheel stamps INSIDE .venv, so without this step the 800 MB venv layer
+# changes digest on every build, verified with two local builds whose
+# entire layer set differed on a one-line code change). The members are
+# plain src/-layout packages with no console entry point and no
+# importlib.metadata lookup at runtime (checked: env_fingerprint only
+# reads third-party versions), so PYTHONPATH below is all they need.
+# `--exact` matters: plain sync would re-add the members.
+RUN uv sync --frozen --no-dev --no-install-workspace --exact
 
 FROM python:3.12-slim-bookworm
 
@@ -71,6 +84,11 @@ COPY data/dictionaries /app/data/dictionaries
 COPY --from=ui /ui/dist /app/ui/dist
 
 ENV PATH="/app/.venv/bin:$PATH"
+# The workspace members are not pip-installed in this image (see the
+# builder's third sync); the source copied next to the venv is their
+# import path. Explicit list, not a glob, so an image missing a member
+# fails at import with that member's name, not silently without it.
+ENV PYTHONPATH="/app/packages/normapi/src:/app/packages/normcore/src:/app/packages/normdict/src:/app/packages/normanalysis/src:/app/packages/normexec/src:/app/packages/normio/src:/app/packages/normalizers/src:/app/packages/normcli/src"
 WORKDIR /app
 
 EXPOSE 8080
