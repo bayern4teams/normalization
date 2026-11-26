@@ -182,6 +182,14 @@ the job ([section 4.3](#43-copy-a-database-with-the-api)).
 
 ### 3.4 Verify and start
 
+Before verifying, open the job's **Plan** page to review what the detector suggests. Each table
+shows one row per suggested column: the suggested type, the share of sampled values that actually
+validate, the confidence, and the rule that fired. Tick the columns to accept (or **Accept
+confident suggestions** to take every suggestion with confidence ≥ 0.85 that is not contradicted by
+its sample), then **Save to plan**. What you save becomes part of the destination columns — and can
+add companion columns (for example a normalized country code beside a country column). The plan
+locks when you verify: after **Verify database** the page is read-only and shows what was applied.
+
 1. On the job page, press **Verify database**. The app checks that the destination exists, then
    creates every table in it, empty. The state becomes **schema ready**. If the database is
    missing you get: `Destination database '...' does not exist yet`. Create it (3.3) and press

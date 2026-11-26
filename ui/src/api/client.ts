@@ -10,6 +10,7 @@ import type {
   Connection,
   ConnectionEngine,
   FieldSemanticType,
+  PlanResponse,
 } from "./types";
 
 // Same origin: the API serves this UI (ADR-023, one port, no CORS). `npm run dev` and
@@ -137,4 +138,20 @@ export function verifyCloneJobDatabase(jobId: string): Promise<CloneJob> {
 
 export function startCloneJob(jobId: string): Promise<CloneJob> {
   return request(`/clone-jobs/${jobId}/start`, { method: "POST" });
+}
+
+// The plan Phase 1 will execute, per column with the detector's suggestion
+// (confidence, validated share, reason). Read-only until patched.
+export function getCloneJobPlan(jobId: string): Promise<PlanResponse> {
+  return request(`/clone-jobs/${jobId}/plan`);
+}
+
+// Reviewer edits, only while PENDING_DB_CREATE; `field_configs` merges
+// per column server-side, so sending the accepted columns never clears the
+// others. An explicit null clears a column back to passthrough.
+export function patchCloneJobPlan(
+  jobId: string,
+  body: { field_configs?: Record<string, Record<string, FieldSemanticType | null>> },
+): Promise<PlanResponse> {
+  return request(`/clone-jobs/${jobId}/plan`, { method: "PATCH", body: JSON.stringify(body) });
 }

@@ -5,6 +5,7 @@ import { ConnectionsPage } from "../pages/ConnectionsPage";
 import { JobDetailPage } from "../pages/JobDetailPage";
 import { JobsPage } from "../pages/JobsPage";
 import { NewClonePage } from "../pages/NewClonePage";
+import { PlanPage } from "../pages/PlanPage";
 import { QualityPage } from "../pages/QualityPage";
 import { ReviewPage } from "../pages/ReviewPage";
 import { Layout } from "./Layout";
@@ -19,6 +20,7 @@ export const router = createHashRouter([
       { path: "new-clone", element: <NewClonePage /> },
       { path: "jobs", element: <JobsPage /> },
       { path: "jobs/:jobId", element: <JobDetailPage /> },
+      { path: "jobs/:jobId/plan", element: <PlanPage /> },
       { path: "review", element: <ReviewPage /> },
       { path: "quality", element: <QualityPage /> },
       { path: "*", element: <NotFound /> },

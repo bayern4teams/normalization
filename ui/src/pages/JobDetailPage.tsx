@@ -43,6 +43,7 @@ export function JobDetailPage() {
       <Group mb="md" gap="md">
         <Title order={1}>Job</Title>
         <Link to="/jobs">All jobs</Link>
+        <Link to={`/jobs/${encodeURIComponent(jobId)}/plan`}>Plan</Link>
         <Link to={`/quality?job=${encodeURIComponent(jobId)}`}>Quality report</Link>
       </Group>
       {jobQuery.isPending && <Loader size="sm" aria-label="Loading" />}
