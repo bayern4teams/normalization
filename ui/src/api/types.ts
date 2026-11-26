@@ -82,6 +82,41 @@ export interface CloneJob {
   error: string | null;
 }
 
+// --- The plan a job holds before Phase 1 (GET/PATCH /clone-jobs/{id}/plan) ---
+
+export interface PlanSuggestion {
+  semantic_type: FieldSemanticType;
+  confidence: number;
+  validated_share: number | null;
+  sampled: number;
+  reason: string;
+}
+
+export interface PlanColumn {
+  column: string;
+  source_type: string;
+  semantic_type: FieldSemanticType | null;
+  decided_by: string | null;
+  suggestion: PlanSuggestion | null;
+  destination_type: string | null;
+  companion_column: string | null;
+}
+
+export interface PlanTable {
+  table: string;
+  destination_table: string;
+  key_columns: string[];
+  columns: PlanColumn[];
+  extra_columns: Record<string, string>;
+}
+
+export interface PlanResponse {
+  job_id: string;
+  status: string;
+  amendable: boolean;
+  tables: PlanTable[];
+}
+
 export interface CloneJobCreateResponse {
   job_id: string;
   status: CloneJobStatus;
