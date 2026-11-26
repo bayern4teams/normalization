@@ -105,13 +105,26 @@ class SqlConnectorBase:
             select_columns = list(sql_table.columns)
 
         column_names = [c.name for c in select_columns]
+        # json/jsonb columns must leave the source as JSON *text*, not as
+        # parsed dict/list: psycopg adapts a bare list to a SQL array, so
+        # a `jsonb` destination chunk of same-shaped rows (all lists —
+        # the common case) died with `invalid input syntax for type json`
+        # (`company.aliases`, live incident). The cast also dodges Arrow's
+        # per-batch inference entirely: `_to_arrow`'s text fallback only
+        # fires when Arrow cannot unify, so it could never see a
+        # uniform-shape batch. Text is a faithful carrier — the
+        # destination's jsonb cast parses it back to the same document.
+        query_columns: list[Any] = [
+            c.cast(sa.String()).label(c.name) if isinstance(c.type, sa.JSON) else c
+            for c in select_columns
+        ]
         # `source_row_key` is the arrival offset, and a resume skips every
         # offset up to its checkpoint, so arrival order must not change
         # between two reads (the ClickHouse connector orders for the same
         # reason). An unordered Postgres scan can join a scan already in
         # flight and start mid-table (synchronize_seqscans): a resumed UK
         # Price Paid clone wrote 406,000 rows twice and 406,000 never.
-        query = sa.select(*select_columns).order_by(*self._row_order(sql_table))
+        query = sa.select(*query_columns).order_by(*self._row_order(sql_table))
 
         with self._engine.connect() as raw_conn:
             # execution_options(readonly=True) is honored by dialects that

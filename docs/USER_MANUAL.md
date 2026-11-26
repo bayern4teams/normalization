@@ -198,7 +198,11 @@ destination, tables done and rows.
 shown no progress for 15 minutes (`NORM_CLONE_HEARTBEAT_TIMEOUT_SECONDS`), for example because
 the app restarted. A started job resumes where it stopped and skips rows already written. The UI has
 no button for that; use the API: `POST /normalization/clone-jobs/<job id>/start` ([4.3](#43-copy-a-database-with-the-api)).
-The same call restarts a **failed** job after you fix the cause.
+A **failed** job does have a **Resume clone** button — the same call restarts it from its last
+committed chunk after you fix the cause. Starting a new job over a destination whose tables a
+crashed run already created is fine when the structure matches this job's plan (the table is
+reused, committed rows are not written twice); a structurally different table fails with a message
+naming the difference — drop it in the destination or pick another database.
 
 ### 3.5 Check the job
 
@@ -534,8 +538,8 @@ Not needed for a copy. One line each; the fields are in [API.md](API.md).
 - A job has no stop, delete or "start over" button or route. To redo a copy, create a new job
   with a new destination database; the old destination stays until you drop it with the
   database's own tools.
-- The UI shows no export, no `CREATE DATABASE` command, no country or locale, and no resume
-  button. The API covers the last three; the first is section 3.7.
+- The UI shows no export, no `CREATE DATABASE` command, and no country or locale. The API
+  covers the latter two; the first is section 3.7.
 - Connections have no edit.
 
 Not checked by this manual's author: how long a clone of your databases takes; that the

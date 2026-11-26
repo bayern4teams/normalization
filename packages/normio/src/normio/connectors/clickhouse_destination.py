@@ -9,6 +9,8 @@ from typing import TYPE_CHECKING, Any
 
 import clickhouse_connect
 
+from normio.connectors.sort_keys import split_sorting_key
+
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
@@ -103,6 +105,51 @@ class ClickHouseDestination:
             "SELECT 1 FROM system.databases WHERE name = {db:String}", parameters={"db": database}
         )
         return len(result.result_rows) > 0
+
+    def table_columns(self, database: str, table: str) -> dict[str, str] | None:
+        """The destination table's columns as name -> ClickHouse type
+        string (Nullable wrappers included, exactly as DDL writes them),
+        or None when the table does not exist."""
+        result = self._client_for("default").query(
+            "SELECT name, type FROM system.columns "
+            "WHERE database = {d:String} AND table = {t:String} ORDER BY position",
+            parameters={"d": database, "t": table},
+        )
+        return {r[0]: r[1] for r in result.result_rows} if result.result_rows else None
+
+    def primary_key_columns(self, database: str, table: str) -> list[str]:
+        """The replicated sorting key's bare column names (expressions
+        included verbatim — the comparison side normalises by whitespace)."""
+        result = self._client_for("default").query(
+            "SELECT sorting_key FROM system.tables "
+            "WHERE database = {d:String} AND name = {t:String}",
+            parameters={"d": database, "t": table},
+        )
+        if not result.result_rows:
+            return []
+        return split_sorting_key(result.result_rows[0][0] or "")
+
+    def expected_columns(
+        self,
+        columns: Sequence[ColumnInfo],
+        *,
+        order_by: Sequence[str],
+        semantic_types: Mapping[str, str],
+        column_overrides: Mapping[str, str],
+        extra_columns: Mapping[str, str],
+    ) -> dict[str, str]:
+        """The exact name -> type mapping `create_table` would issue
+        (Nullable wrapping included), so reuse compares under the same
+        rules that build the DDL."""
+        order_by_set = set(order_by)
+        out = {
+            col.name: self._column_type(
+                col, semantic_types, column_overrides, nullable=col.name not in order_by_set
+            )
+            for col in columns
+        }
+        out.update({name: f"Nullable({t})" for name, t in extra_columns.items()})
+        return out
 
     def create_table(
         self,

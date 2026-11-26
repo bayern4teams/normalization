@@ -21,6 +21,26 @@ if TYPE_CHECKING:
 
     from normio.connector import ColumnInfo
 
+
+def _normalise_pg_type_name(sql_type: str) -> str:
+    """A DDL type string (as `get_columns`/format_type report them, or as
+    the semantic mapping emits them) in the same normalised shape
+    information_schema.data_type reports it, so `create_table`'s expected
+    mapping and a pre-existing table are compared in one space: length/
+    precision suffixes dropped (`character varying(255)` -> `character
+    varying`), arrays collapsed to `ARRAY` (data_type says `ARRAY` for
+    every element type — coarse, and deliberately so: an element-type
+    change is rare and a wrong `ARRAY` verdict only costs the user a
+    clear mismatch message, never a silent wrong clone)."""
+    t = sql_type.strip().lower()
+    if t.endswith("[]"):
+        return "ARRAY"
+    t = re.sub(r"\s*\([^)]*\)", "", t)
+    if t in ("varchar", "char"):  # aliases format_type can emit for domains
+        return "character varying" if t == "varchar" else "character"
+    return t
+
+
 # FieldSemanticType -> Postgres column type when the column is NOT typed
 # natively: TEXT, which can always hold both a normalized `display` and
 # decision #8's ORIGINAL raw string for a failed value. Native types for
@@ -144,6 +164,60 @@ class PostgresDestination:
                 sa.text("SELECT 1 FROM pg_database WHERE datname = :db"), {"db": database}
             ).first()
         return row is not None
+
+    def table_columns(self, database: str, table: str) -> dict[str, str] | None:
+        """The destination table's columns as name -> `data_type`, or None
+        when the table does not exist. `data_type` is the normalised name
+        (`text`, `jsonb`, `uuid`, `smallint`, `ARRAY`), which is exactly
+        the space the expected-DDL mapping's scalar types live in."""
+        with self._engine_for(database).connect() as conn:
+            rows = conn.execute(
+                sa.text(
+                    "SELECT column_name, data_type FROM information_schema.columns "
+                    "WHERE table_schema = current_schema() AND table_name = :t "
+                    "ORDER BY ordinal_position"
+                ),
+                {"t": table},
+            ).all()
+        return {str(r[0]): str(r[1]) for r in rows} if rows else None
+
+    def primary_key_columns(self, database: str, table: str) -> list[str]:
+        with self._engine_for(database).connect() as conn:
+            rows = conn.execute(
+                sa.text(
+                    "SELECT a.attname FROM pg_index i "
+                    "JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey) "
+                    "WHERE i.indrelid = CAST(:t AS regclass) AND i.indisprimary "
+                    "ORDER BY array_position(i.indkey, a.attnum)"
+                ),
+                {"t": table},
+            ).all()
+        return [r[0] for r in rows]
+
+    def expected_columns(
+        self,
+        columns: Sequence[ColumnInfo],
+        *,
+        semantic_types: Mapping[str, str],
+        column_overrides: Mapping[str, str],
+        extra_columns: Mapping[str, str],
+    ) -> dict[str, str]:
+        """The exact name -> type mapping `create_table` would issue, as
+        normalised data_type names — the comparison half of reuse, so a
+        table `create_table` would build and a table already there can
+        never be judged by two different rules."""
+        out: dict[str, str] = {}
+        for col in columns:
+            sql_type = (
+                column_overrides.get(col.name)
+                or SEMANTIC_TYPE_TO_PG_TYPE.get(semantic_types[col.name], PASSTHROUGH_PG_TYPE)
+                if col.name in semantic_types
+                else col.native_type
+            )
+            out[col.name] = _normalise_pg_type_name(sql_type)
+        for name, sql_type in extra_columns.items():
+            out[name] = _normalise_pg_type_name(sql_type)
+        return out
 
     def create_table(
         self,
